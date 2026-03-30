@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Xian Wallet Shell",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Browser extension wallet for Xian built in xian-wallet-browser",
   "action": {
     "default_title": "Xian Wallet",

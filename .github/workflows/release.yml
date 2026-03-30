@@ -125,7 +125,7 @@ jobs:
       - name: Publish wallet-core to npm
         run: |
           for package in release-dist/*.tgz; do
-            npm publish "$package" --provenance --access public
+            npm publish "./$package" --provenance --access public
           done
 
   github-release:
