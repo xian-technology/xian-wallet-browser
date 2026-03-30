@@ -37,6 +37,19 @@ jobs:
         working-directory: xian-js
         run: |
           npm install
+          node <<'NODE'
+          const { execFileSync } = require("node:child_process");
+          const { arch, platform } = process;
+
+          if (platform === "linux" && arch === "x64") {
+            const version = require("./node_modules/rollup/package.json").version;
+            execFileSync(
+              "npm",
+              ["install", "--no-save", `@rollup/rollup-linux-x64-gnu@${version}`],
+              { stdio: "inherit" }
+            );
+          }
+          NODE
           npm run build
 
       - name: Install and validate xian-wallet-browser
