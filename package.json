@@ -1,0 +1,30 @@
+{
+  "name": "xian-wallet-browser",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Browser wallet workspace for Xian",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xian-technology/xian-wallet-browser.git"
+  },
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "overrides": {
+    "@xian/client": "file:../xian-js/packages/client",
+    "@xian/provider": "file:../xian-js/packages/provider"
+  },
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "vitest run",
+    "validate": "npm run typecheck && npm run build && npm run test"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.3",
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.1"
+  }
+}

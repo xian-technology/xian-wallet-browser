@@ -1,0 +1,65 @@
+name: Validate
+
+on:
+  push:
+    branches:
+      - "*"
+  pull_request:
+    branches:
+      - "*"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out xian-wallet-browser
+        uses: actions/checkout@v6
+        with:
+          path: xian-wallet-browser
+
+      - name: Check out xian-js
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/xian-js
+          ref: main
+          path: xian-js
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            xian-js/package-lock.json
+            xian-wallet-browser/package-lock.json
+
+      - name: Install and build xian-js
+        working-directory: xian-js
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install and validate xian-wallet-browser
+        working-directory: xian-wallet-browser
+        run: |
+          npm ci
+          npm run validate
+
+      - name: Install Playwright Chromium
+        working-directory: xian-wallet-browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run browser wallet visual checks
+        working-directory: xian-wallet-browser
+        run: npm run test:visual --workspace xian-wallet-extension
+
+      - name: Upload Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: xian-wallet-browser-playwright
+          path: |
+            xian-wallet-browser/apps/wallet-extension/test-results
+            xian-wallet-browser/apps/wallet-extension/playwright-report
+          if-no-files-found: ignore
+          retention-days: 14

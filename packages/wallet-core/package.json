@@ -1,0 +1,30 @@
+{
+  "name": "@xian/wallet-core",
+  "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xian-technology/xian-wallet-browser.git",
+    "directory": "packages/wallet-core"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@scure/bip39": "^1.6.0",
+    "@xian/client": "0.1.0",
+    "@xian/provider": "0.1.0"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Xian Wallet Shell",
+  "version": "0.1.0",
+  "description": "Browser extension wallet for Xian built in xian-wallet-browser",
+  "action": {
+    "default_title": "Xian Wallet",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": ["storage", "tabs", "windows"],
+  "host_permissions": ["<all_urls>"],
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["inpage.js"],
+      "matches": ["http://*/*", "https://*/*"]
+    }
+  ]
+}

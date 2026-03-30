@@ -1,0 +1,19 @@
+{
+  "name": "xian-wallet-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node ./scripts/build.mjs",
+    "test:visual": "npm run build && playwright test -c ./playwright.config.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@xian/provider": "0.1.0",
+    "@xian/wallet-core": "0.1.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.54.2",
+    "esbuild": "^0.25.4"
+  }
+}

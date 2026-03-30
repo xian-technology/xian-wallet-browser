@@ -1,0 +1,161 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import {
+  STORAGE_KEY,
+  STORAGE_SCHEMA_VERSION,
+  loadApprovalState,
+  loadRequestState,
+  loadWalletState,
+  saveApprovalState,
+  saveRequestState
+} from "./storage";
+
+let storage: Record<string, unknown>;
+
+function installChromeMock(): void {
+  vi.stubGlobal("chrome", {
+    runtime: {
+      lastError: undefined
+    },
+    storage: {
+      local: {
+        get(keys: string[], callback: (result: Record<string, unknown>) => void) {
+          const [key] = keys;
+          if (!key) {
+            callback({});
+            return;
+          }
+          callback({ [key]: storage[key] });
+        },
+        set(value: Record<string, unknown>, callback: () => void) {
+          Object.assign(storage, value);
+          callback();
+        }
+      }
+    }
+  });
+}
+
+describe("wallet-extension storage", () => {
+  beforeEach(() => {
+    storage = {};
+    installChromeMock();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("migrates legacy wallet state into the versioned envelope", async () => {
+    storage[STORAGE_KEY] = {
+      publicKey: "a".repeat(64),
+      encryptedPrivateKey: "ciphertext",
+      rpcUrl: "http://legacy-rpc",
+      dashboardUrl: "http://legacy-dashboard",
+      watchedAssets: [],
+      connectedOrigins: ["https://app.example"],
+      createdAt: "2026-01-01T00:00:00.000Z"
+    };
+
+    const state = await loadWalletState();
+
+    expect(state).toMatchObject({
+      publicKey: "a".repeat(64),
+      seedSource: "privateKey",
+      connectedOrigins: ["https://app.example"],
+      activeNetworkId: "custom-network",
+      networkPresets: [
+        expect.objectContaining({
+          id: "local-node"
+        }),
+        expect.objectContaining({
+          id: "custom-network",
+          rpcUrl: "http://legacy-rpc",
+          dashboardUrl: "http://legacy-dashboard"
+        })
+      ]
+    });
+    expect(storage[STORAGE_KEY]).toMatchObject({
+      version: STORAGE_SCHEMA_VERSION,
+      wallet: expect.objectContaining({
+        publicKey: "a".repeat(64),
+        seedSource: "privateKey",
+        activeNetworkId: "custom-network"
+      })
+    });
+  });
+
+  it("round-trips bigint data in persisted requests and approvals", async () => {
+    await saveRequestState({
+      requestId: "request-1",
+      origin: "https://app.example",
+      request: {
+        method: "xian_sendCall",
+        params: [
+          {
+            intent: {
+              contract: "currency",
+              function: "transfer",
+              kwargs: { amount: 5n },
+              stamps: 500n
+            }
+          }
+        ]
+      },
+      createdAt: 1,
+      updatedAt: 2,
+      status: "fulfilled",
+      result: {
+        payload: {
+          nonce: 7n,
+          stamps_supplied: 500n
+        }
+      }
+    });
+
+    await saveApprovalState({
+      id: "approval-1",
+      requestId: "request-1",
+      record: {
+        id: "approval-1",
+        origin: "https://app.example",
+        kind: "sendCall",
+        request: {
+          method: "xian_sendCall"
+        },
+        createdAt: 3
+      },
+      view: {
+        id: "approval-1",
+        origin: "https://app.example",
+        kind: "sendCall",
+        title: "Send contract call",
+        description: "desc",
+        payload: "{}",
+        createdAt: 3
+      },
+      windowId: 42
+    });
+
+    const request = await loadRequestState("request-1");
+    const approval = await loadApprovalState("approval-1");
+
+    expect(request?.request.params).toEqual([
+      {
+        intent: {
+          contract: "currency",
+          function: "transfer",
+          kwargs: { amount: 5n },
+          stamps: 500n
+        }
+      }
+    ]);
+    expect(request?.result).toEqual({
+      payload: {
+        nonce: 7n,
+        stamps_supplied: 500n
+      }
+    });
+    expect(approval?.windowId).toBe(42);
+  });
+});

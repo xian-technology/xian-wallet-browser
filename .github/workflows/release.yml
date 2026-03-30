@@ -1,0 +1,140 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out xian-wallet-browser
+        uses: actions/checkout@v6
+        with:
+          path: xian-wallet-browser
+
+      - name: Check out xian-js
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/xian-js
+          ref: main
+          path: xian-js
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            xian-js/package-lock.json
+            xian-wallet-browser/package-lock.json
+
+      - name: Install and build xian-js
+        working-directory: xian-js
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install xian-wallet-browser dependencies
+        working-directory: xian-wallet-browser
+        run: npm ci
+
+      - name: Validate xian-wallet-browser
+        working-directory: xian-wallet-browser
+        run: npm run validate
+
+      - name: Verify repo versions match tag
+        working-directory: xian-wallet-browser
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+
+          const expected = process.env.GITHUB_REF_NAME.replace(/^v/, "");
+          const packageFiles = [
+            "package.json",
+            "packages/wallet-core/package.json",
+            "apps/wallet-extension/package.json"
+          ];
+
+          for (const file of packageFiles) {
+            const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
+            if (pkg.version !== expected) {
+              throw new Error(`${file} has version ${pkg.version}, expected ${expected}`);
+            }
+          }
+          NODE
+
+      - name: Pack wallet-core and archive extension
+        working-directory: xian-wallet-browser
+        run: |
+          mkdir -p release-dist
+          npm pack --workspace @xian/wallet-core --pack-destination release-dist
+          (
+            cd apps/wallet-extension/dist
+            zip -r "../../../release-dist/xian-wallet-extension-${GITHUB_REF_NAME#v}.zip" .
+          )
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-dist
+          path: xian-wallet-browser/release-dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    environment:
+      name: npm
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v6
+        with:
+          name: release-dist
+          path: release-dist
+
+      - name: Publish wallet-core to npm
+        run: |
+          for package in release-dist/*.tgz; do
+            npm publish "$package" --provenance --access public
+          done
+
+  github-release:
+    needs:
+      - build
+      - publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v6
+        with:
+          name: release-dist
+          path: release-dist
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" release-dist/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
+            --title "xian-wallet-browser ${GITHUB_REF_NAME#v}" \
+            --generate-notes
