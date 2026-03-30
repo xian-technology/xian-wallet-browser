@@ -1,4 +1,4 @@
-import { Ed25519Signer, XianClient } from "@xian/client";
+import { Ed25519Signer, XianClient } from "@xian-tech/client";
 import {
   ProviderChainMismatchError,
   ProviderUnauthorizedError,
@@ -13,7 +13,7 @@ import {
   type XianWalletDescriptor,
   type XianWalletInfo,
   type XianWatchAssetRequest
-} from "@xian/provider";
+} from "@xian-tech/provider";
 
 import { approvalKindFromMethod, buildApprovalView } from "./approvals";
 import {

@@ -1,4 +1,4 @@
-import type { XianProviderRequest } from "@xian/provider";
+import type { XianProviderRequest } from "@xian-tech/provider";
 
 import type {
   ApprovalDetail,

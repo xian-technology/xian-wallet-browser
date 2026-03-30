@@ -9,8 +9,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@xian/provider": "0.1.0",
-    "@xian/wallet-core": "0.1.0"
+    "@xian-tech/provider": "0.1.0",
+    "@xian-tech/wallet-core": "0.1.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.54.2",

@@ -1,6 +1,6 @@
 import { generateMnemonic, mnemonicToSeed, validateMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english";
-import { Ed25519Signer, isValidEd25519Key } from "@xian/client";
+import { Ed25519Signer, isValidEd25519Key } from "@xian-tech/client";
 
 import type { WalletSeedSource } from "./types";
 

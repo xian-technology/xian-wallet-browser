@@ -2,7 +2,7 @@ import {
   registerInjectedXianProvider,
   type XianProvider,
   type XianProviderRequest
-} from "@xian/provider";
+} from "@xian-tech/provider";
 
 import {
   PAGE_BRIDGE_SOURCE,

@@ -12,9 +12,9 @@
     "packages/*",
     "apps/*"
   ],
-  "overrides": {
-    "@xian/client": "file:../xian-js/packages/client",
-    "@xian/provider": "file:../xian-js/packages/provider"
+  "dependencies": {
+    "@xian-tech/client": "file:../xian-js/packages/client",
+    "@xian-tech/provider": "file:../xian-js/packages/provider"
   },
   "scripts": {
     "build": "npm run build --workspaces --if-present",

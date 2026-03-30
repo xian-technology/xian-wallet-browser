@@ -1,9 +1,9 @@
-# @xian/wallet-core
+# @xian-tech/wallet-core
 
 Reusable wallet-domain logic for Xian browser wallets.
 
 This package lives in `xian-wallet-browser` and depends on the official
-`@xian/client` and `@xian/provider` packages from the sibling `xian-js` repo.
+`@xian-tech/client` and `@xian-tech/provider` packages from the sibling `xian-js` repo.
 
 It is intentionally UI-agnostic. It owns:
 

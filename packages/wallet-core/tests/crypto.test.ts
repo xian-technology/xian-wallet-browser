@@ -14,7 +14,7 @@ import {
   normalizePrivateKeyInput
 } from "../src/crypto";
 
-describe("@xian/wallet-core crypto helpers", () => {
+describe("@xian-tech/wallet-core crypto helpers", () => {
   it("encrypts and decrypts a private key", async () => {
     const privateKey = createPrivateKey();
     const encrypted = await encryptPrivateKey(privateKey, "secret-password");

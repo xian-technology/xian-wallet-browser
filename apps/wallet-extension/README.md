@@ -1,10 +1,10 @@
 # Wallet Extension App
 
 This app is the current production-oriented Manifest V3 wallet foundation for
-Xian. It is built on top of `@xian/provider` and `@xian/wallet-core`.
+Xian. It is built on top of `@xian-tech/provider` and `@xian-tech/wallet-core`.
 
 The extension lives in the `xian-wallet-browser` repo and consumes
-`@xian/provider` from the sibling `xian-js` checkout during local development.
+`@xian-tech/provider` from the sibling `xian-js` checkout during local development.
 
 It includes:
 
@@ -67,7 +67,7 @@ It currently supports:
 - per-origin connect permissions
 - provider methods for wallet info, asset watching, tx preparation, signing,
   sending, and intent-based send calls
-- a reusable wallet controller in `@xian/wallet-core` so future wallet UIs can
+- a reusable wallet controller in `@xian-tech/wallet-core` so future wallet UIs can
   share custody and approval logic
 
 It does not yet include:

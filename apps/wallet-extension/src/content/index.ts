@@ -1,6 +1,6 @@
 import {
   errorFromSerializedWalletError,
-} from "@xian/wallet-core";
+} from "@xian-tech/wallet-core";
 
 import {
   PAGE_BRIDGE_SOURCE,

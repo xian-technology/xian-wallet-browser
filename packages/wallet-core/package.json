@@ -1,5 +1,5 @@
 {
-  "name": "@xian/wallet-core",
+  "name": "@xian-tech/wallet-core",
   "version": "0.1.0",
   "repository": {
     "type": "git",
@@ -24,7 +24,7 @@
   },
   "dependencies": {
     "@scure/bip39": "^1.6.0",
-    "@xian/client": "0.1.0",
-    "@xian/provider": "0.1.0"
+    "@xian-tech/client": "0.1.0",
+    "@xian-tech/provider": "0.1.0"
   }
 }

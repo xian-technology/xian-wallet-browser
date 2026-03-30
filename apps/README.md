@@ -1,7 +1,7 @@
 # Apps
 
 This folder contains user-facing browser wallet applications built on top of
-`@xian/wallet-core`.
+`@xian-tech/wallet-core`.
 
 Current apps:
 

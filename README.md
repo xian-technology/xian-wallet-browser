@@ -10,13 +10,13 @@ official JS / TS SDK still lives in the sibling `xian-js` repo.
 - `packages/wallet-core/`: reusable wallet-domain logic for custody, recovery,
   approvals, durable request state, and provider enforcement
 - `apps/wallet-extension/`: the MV3 browser-extension wallet built on
-  `@xian/wallet-core`
+  `@xian-tech/wallet-core`
 - `docs/`: repo-local architecture notes and backlog
 
 ## Local Dependency Model
 
-During local development this repo consumes `@xian/client` and
-`@xian/provider` from the sibling `../xian-js` checkout.
+During local development this repo consumes `@xian-tech/client` and
+`@xian-tech/provider` from the sibling `../xian-js` checkout.
 
 That means the expected local layout is:
 
@@ -56,7 +56,7 @@ npm run test:visual --workspace xian-wallet-extension
 - browser wallets are product code, not SDK examples
 - provider and client contract changes should land in `xian-js`
 - wallet UX, approvals, permissions, recovery, and storage live here
-- keep extension transport and UI outside `@xian/wallet-core`
+- keep extension transport and UI outside `@xian-tech/wallet-core`
 
 ## Release Model
 

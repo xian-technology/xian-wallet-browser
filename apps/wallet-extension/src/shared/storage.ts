@@ -8,7 +8,7 @@ import {
   type StoredProviderRequest,
   type StoredWalletState,
   type WalletNetworkPreset
-} from "@xian/wallet-core";
+} from "@xian-tech/wallet-core";
 
 export const STORAGE_KEY = "xianWalletShellState";
 export const STORAGE_SCHEMA_VERSION = 3;

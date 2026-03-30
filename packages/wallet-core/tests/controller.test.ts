@@ -4,7 +4,7 @@ import type {
   TransactionSubmission,
   XianSignedTransaction,
   XianUnsignedTransaction
-} from "@xian/provider";
+} from "@xian-tech/provider";
 
 import {
   WalletController,
@@ -107,7 +107,7 @@ function createClient(): WalletNetworkClient {
   };
 }
 
-describe("@xian/wallet-core controller", () => {
+describe("@xian-tech/wallet-core controller", () => {
   it("creates connect approvals and emits provider lifecycle events", async () => {
     const store = createStore();
     const client = createClient();

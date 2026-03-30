@@ -75,7 +75,7 @@ jobs:
         working-directory: xian-wallet-browser
         run: |
           mkdir -p release-dist
-          npm pack --workspace @xian/wallet-core --pack-destination release-dist
+          npm pack --workspace @xian-tech/wallet-core --pack-destination release-dist
           (
             cd apps/wallet-extension/dist
             zip -r "../../../release-dist/xian-wallet-extension-${GITHUB_REF_NAME#v}.zip" .

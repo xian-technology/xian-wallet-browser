@@ -16,7 +16,7 @@ function makeRecord(
   };
 }
 
-describe("@xian/wallet-core approvals", () => {
+describe("@xian-tech/wallet-core approvals", () => {
   it("builds a structured connect approval view", () => {
     const view = buildApprovalView(
       makeRecord("connect", {

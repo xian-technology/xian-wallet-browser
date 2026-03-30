@@ -1,4 +1,4 @@
-import type { ApprovalView } from "@xian/wallet-core";
+import type { ApprovalView } from "@xian-tech/wallet-core";
 
 import { sendRuntimeMessage } from "../shared/messages";
 

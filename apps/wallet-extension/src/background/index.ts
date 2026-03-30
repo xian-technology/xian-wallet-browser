@@ -1,4 +1,4 @@
-import { WalletController } from "@xian/wallet-core";
+import { WalletController } from "@xian-tech/wallet-core";
 
 import { fail, ok, type RuntimeMessage } from "../shared/messages";
 import {

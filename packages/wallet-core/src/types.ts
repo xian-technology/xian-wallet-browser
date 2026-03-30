@@ -1,7 +1,7 @@
 import type {
   XianProviderRequest,
   XianWatchedAsset
-} from "@xian/provider";
+} from "@xian-tech/provider";
 
 export type WalletSeedSource = "privateKey" | "mnemonic";
 export type WalletNetworkStatus = "ready" | "unreachable" | "mismatch";

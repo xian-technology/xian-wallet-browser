@@ -1,4 +1,4 @@
-import { truncateAddress, type ApprovalView, type PopupState } from "@xian/wallet-core";
+import { truncateAddress, type ApprovalView, type PopupState } from "@xian-tech/wallet-core";
 
 import {
   popupStateBanner,

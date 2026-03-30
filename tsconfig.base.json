@@ -17,9 +17,9 @@
     "forceConsistentCasingInFileNames": true,
     "baseUrl": ".",
     "paths": {
-      "@xian/client": ["../xian-js/packages/client/dist/index.d.ts"],
-      "@xian/provider": ["../xian-js/packages/provider/dist/index.d.ts"],
-      "@xian/wallet-core": ["packages/wallet-core/src/index.ts"]
+      "@xian-tech/client": ["../xian-js/packages/client/dist/index.d.ts"],
+      "@xian-tech/provider": ["../xian-js/packages/provider/dist/index.d.ts"],
+      "@xian-tech/wallet-core": ["packages/wallet-core/src/index.ts"]
     }
   }
 }

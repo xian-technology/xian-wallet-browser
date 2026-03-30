@@ -1,4 +1,4 @@
-import type { XianWalletCapabilities } from "@xian/provider";
+import type { XianWalletCapabilities } from "@xian-tech/provider";
 
 import type { WalletNetworkPreset } from "./types";
 

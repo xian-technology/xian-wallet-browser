@@ -1,11 +1,11 @@
-import type { XianProviderRequest } from "@xian/provider";
+import type { XianProviderRequest } from "@xian-tech/provider";
 import type {
   ApprovalView,
   PopupState,
   ProviderRequestStartResult,
   ProviderRequestStatusResult,
   WalletCreateResult
-} from "@xian/wallet-core";
+} from "@xian-tech/wallet-core";
 
 export const PAGE_BRIDGE_SOURCE = "xian-wallet-shell";
 
