@@ -6,11 +6,19 @@ import {
   LOCAL_NETWORK_PRESET_NAME,
   type PersistedApproval,
   type StoredProviderRequest,
+  type StoredUnlockedSession,
   type StoredWalletState,
   type WalletNetworkPreset
 } from "@xian-tech/wallet-core";
 
+import {
+  DEFAULT_WALLET_SHELL_MODE,
+  type WalletShellMode
+} from "./preferences";
+
 export const STORAGE_KEY = "xianWalletShellState";
+export const SESSION_STORAGE_KEY = "xianWalletShellSession";
+export const PREFERENCES_STORAGE_KEY = "xianWalletShellPreferences";
 export const STORAGE_SCHEMA_VERSION = 3;
 
 interface WalletStorageEnvelope {
@@ -88,6 +96,61 @@ async function storageSet(value: Record<string, unknown>): Promise<void> {
       resolve();
     });
   });
+}
+
+async function sessionStorageGet<T>(key: string): Promise<T | undefined> {
+  return new Promise<T | undefined>((resolve, reject) => {
+    chrome.storage.session.get([key], (result: Record<string, unknown>) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(result[key] as T | undefined);
+    });
+  });
+}
+
+async function sessionStorageSet(value: Record<string, unknown>): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    chrome.storage.session.set(value, () => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+async function sessionStorageRemove(key: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    chrome.storage.session.remove(key, () => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function normalizeUnlockedSession(value: unknown): StoredUnlockedSession | null {
+  if (
+    !isRecord(value) ||
+    typeof value.privateKey !== "string" ||
+    typeof value.expiresAt !== "number"
+  ) {
+    return null;
+  }
+
+  return {
+    privateKey: value.privateKey,
+    expiresAt: value.expiresAt
+  };
+}
+
+function normalizeShellMode(value: unknown): WalletShellMode {
+  return value === "sidePanel" ? "sidePanel" : DEFAULT_WALLET_SHELL_MODE;
 }
 
 function normalizeWalletState(value: unknown): StoredWalletState | null {
@@ -290,6 +353,33 @@ export async function saveWalletState(state: StoredWalletState): Promise<void> {
     ...envelope,
     wallet: state
   }));
+}
+
+export async function loadUnlockedSession(): Promise<StoredUnlockedSession | null> {
+  return normalizeUnlockedSession(await sessionStorageGet<unknown>(SESSION_STORAGE_KEY));
+}
+
+export async function saveUnlockedSession(
+  state: StoredUnlockedSession
+): Promise<void> {
+  await sessionStorageSet({
+    [SESSION_STORAGE_KEY]: state
+  });
+}
+
+export async function clearUnlockedSession(): Promise<void> {
+  await sessionStorageRemove(SESSION_STORAGE_KEY);
+}
+
+export async function loadWalletShellMode(): Promise<WalletShellMode> {
+  const value = await storageGet<unknown>(PREFERENCES_STORAGE_KEY);
+  return normalizeShellMode(value);
+}
+
+export async function saveWalletShellMode(mode: WalletShellMode): Promise<void> {
+  await storageSet({
+    [PREFERENCES_STORAGE_KEY]: mode
+  });
 }
 
 export async function loadRequestState(

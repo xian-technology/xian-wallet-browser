@@ -1,16 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  PREFERENCES_STORAGE_KEY,
+  SESSION_STORAGE_KEY,
   STORAGE_KEY,
   STORAGE_SCHEMA_VERSION,
+  clearUnlockedSession,
+  loadUnlockedSession,
+  loadWalletShellMode,
   loadApprovalState,
   loadRequestState,
   loadWalletState,
+  saveUnlockedSession,
+  saveWalletShellMode,
   saveApprovalState,
   saveRequestState
 } from "./storage";
 
 let storage: Record<string, unknown>;
+let sessionStorage: Record<string, unknown>;
 
 function installChromeMock(): void {
   vi.stubGlobal("chrome", {
@@ -31,6 +39,24 @@ function installChromeMock(): void {
           Object.assign(storage, value);
           callback();
         }
+      },
+      session: {
+        get(keys: string[], callback: (result: Record<string, unknown>) => void) {
+          const [key] = keys;
+          if (!key) {
+            callback({});
+            return;
+          }
+          callback({ [key]: sessionStorage[key] });
+        },
+        set(value: Record<string, unknown>, callback: () => void) {
+          Object.assign(sessionStorage, value);
+          callback();
+        },
+        remove(key: string, callback: () => void) {
+          delete sessionStorage[key];
+          callback();
+        }
       }
     }
   });
@@ -39,6 +65,7 @@ function installChromeMock(): void {
 describe("wallet-extension storage", () => {
   beforeEach(() => {
     storage = {};
+    sessionStorage = {};
     installChromeMock();
   });
 
@@ -157,5 +184,33 @@ describe("wallet-extension storage", () => {
       }
     });
     expect(approval?.windowId).toBe(42);
+  });
+
+  it("round-trips unlocked session state through chrome.storage.session", async () => {
+    await saveUnlockedSession({
+      privateKey: "11".repeat(32),
+      expiresAt: 12345
+    });
+
+    expect(sessionStorage[SESSION_STORAGE_KEY]).toEqual({
+      privateKey: "11".repeat(32),
+      expiresAt: 12345
+    });
+    expect(await loadUnlockedSession()).toEqual({
+      privateKey: "11".repeat(32),
+      expiresAt: 12345
+    });
+
+    await clearUnlockedSession();
+    expect(await loadUnlockedSession()).toBeNull();
+  });
+
+  it("persists the preferred wallet shell mode", async () => {
+    expect(await loadWalletShellMode()).toBe("popup");
+
+    await saveWalletShellMode("sidePanel");
+
+    expect(storage[PREFERENCES_STORAGE_KEY]).toBe("sidePanel");
+    expect(await loadWalletShellMode()).toBe("sidePanel");
   });
 });

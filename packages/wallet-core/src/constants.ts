@@ -6,6 +6,7 @@ export const DEFAULT_RPC_URL = "http://127.0.0.1:26657";
 export const DEFAULT_DASHBOARD_URL = "http://127.0.0.1:8080";
 export const LOCAL_NETWORK_PRESET_ID = "local-node";
 export const LOCAL_NETWORK_PRESET_NAME = "Local node";
+export const UNLOCKED_SESSION_TIMEOUT_MS = 5 * 60 * 1000;
 
 export const DEFAULT_NETWORK_PRESETS: WalletNetworkPreset[] = [
   {

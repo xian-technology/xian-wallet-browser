@@ -42,6 +42,11 @@ export interface WalletSerializedError {
   data?: unknown;
 }
 
+export interface StoredUnlockedSession {
+  privateKey: string;
+  expiresAt: number;
+}
+
 export type StoredProviderRequestStatus =
   | "pending"
   | "fulfilled"
@@ -68,6 +73,9 @@ export interface PersistedApproval {
 }
 
 export interface WalletControllerStore extends WalletStateStore {
+  loadUnlockedSession(): Promise<StoredUnlockedSession | null>;
+  saveUnlockedSession(state: StoredUnlockedSession): Promise<void>;
+  clearUnlockedSession(): Promise<void>;
   loadRequestState(requestId: string): Promise<StoredProviderRequest | null>;
   saveRequestState(state: StoredProviderRequest): Promise<void>;
   deleteRequestState(requestId: string): Promise<void>;

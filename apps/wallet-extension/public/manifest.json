@@ -7,11 +7,14 @@
     "default_title": "Xian Wallet",
     "default_popup": "popup.html"
   },
+  "side_panel": {
+    "default_path": "popup.html"
+  },
   "background": {
     "service_worker": "background.js",
     "type": "module"
   },
-  "permissions": ["storage", "tabs", "windows"],
+  "permissions": ["sidePanel", "storage", "tabs", "windows"],
   "host_permissions": ["<all_urls>"],
   "content_scripts": [
     {

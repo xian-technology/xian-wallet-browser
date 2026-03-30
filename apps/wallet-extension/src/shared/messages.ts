@@ -7,6 +7,8 @@ import type {
   WalletCreateResult
 } from "@xian-tech/wallet-core";
 
+import type { WalletShellMode } from "./preferences";
+
 export const PAGE_BRIDGE_SOURCE = "xian-wallet-shell";
 
 export interface SerializedError {
@@ -129,6 +131,11 @@ export interface WalletRevealMnemonicRuntimeMessage {
   password: string;
 }
 
+export interface WalletSetShellModeRuntimeMessage {
+  type: "wallet_set_shell_mode";
+  shellMode: WalletShellMode;
+}
+
 export interface ApprovalGetRuntimeMessage {
   type: "approval_get";
   approvalId: string;
@@ -162,6 +169,7 @@ export type RuntimeMessage =
   | WalletRemoveAssetRuntimeMessage
   | WalletGetPopupStateRuntimeMessage
   | WalletRevealMnemonicRuntimeMessage
+  | WalletSetShellModeRuntimeMessage
   | ApprovalGetRuntimeMessage
   | ApprovalResolveRuntimeMessage
   | ProviderEventRuntimeMessage;
@@ -170,7 +178,12 @@ export type ProviderRequestRuntimeResult =
   | ProviderRequestStartResult
   | ProviderRequestStatusResult;
 
-export type WalletCreateRuntimeResult = WalletCreateResult;
+export type PopupRuntimeState = PopupState & {
+  shellMode: WalletShellMode;
+};
+export type WalletCreateRuntimeResult = Omit<WalletCreateResult, "popupState"> & {
+  popupState: PopupRuntimeState;
+};
 
 export interface RuntimeFailure {
   ok: false;

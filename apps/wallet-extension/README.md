@@ -12,6 +12,8 @@ It includes:
 - a background worker that keeps key custody away from the page
 - versioned extension storage with migration handling
 - encrypted private-key and recovery-phrase storage in `chrome.storage.local`
+- five-minute unlocked session persistence in `chrome.storage.session` so MV3
+  worker suspension does not immediately relock the wallet
 - a popup split into overview, connected-app, and security workflows
 - an approval window that leads with structured summaries and warnings before
   exposing raw payloads
@@ -32,10 +34,11 @@ npm install
 npm run build --workspace xian-wallet-extension
 ```
 
-For the visual wallet flow checks:
+For browser-level wallet checks:
 
 ```bash
 npx playwright install chromium
+npm run test:browser --workspace xian-wallet-extension
 npm run test:visual --workspace xian-wallet-extension
 ```
 
@@ -74,3 +77,10 @@ It does not yet include:
 
 - hardware wallets
 - transaction history and portfolio views
+
+## Manual Review
+
+- use [../../docs/QA_CHECKLIST.md](../../docs/QA_CHECKLIST.md) for release-path
+  functional checks
+- use [../../docs/UX_REVIEW.md](../../docs/UX_REVIEW.md) for task-based flow and
+  interface review before shipping meaningful UX changes

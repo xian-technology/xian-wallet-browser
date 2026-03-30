@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "node ./scripts/build.mjs",
-    "test:visual": "npm run build && playwright test -c ./playwright.config.ts",
+    "test:browser": "npm run build && playwright test -c ./playwright.config.ts",
+    "test:visual": "npm run build && playwright test -c ./playwright.config.ts ./tests/visual.spec.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

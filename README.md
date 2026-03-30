@@ -48,6 +48,7 @@ Browser-level wallet checks:
 
 ```bash
 npx playwright install chromium
+npm run test:browser --workspace xian-wallet-extension
 npm run test:visual --workspace xian-wallet-extension
 ```
 
@@ -71,4 +72,6 @@ npm run test:visual --workspace xian-wallet-extension
 - `../xian-js`: official JS / TS SDK workspace
 - `../xian-docs-web`: end-user and developer docs
 - `../xian-meta/docs/XIAN_JS_SDK_MVP.md`: original JS SDK and wallet split note
+- [docs/QA_CHECKLIST.md](docs/QA_CHECKLIST.md)
+- [docs/UX_REVIEW.md](docs/UX_REVIEW.md)
 - [docs/RELEASING.md](docs/RELEASING.md)

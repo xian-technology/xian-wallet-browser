@@ -1,10 +1,12 @@
 import { truncateAddress, type ApprovalView, type PopupState } from "@xian-tech/wallet-core";
 
 import {
+  type PopupRuntimeState,
   popupStateBanner,
   sendRuntimeMessage,
   type WalletCreateRuntimeResult
 } from "../shared/messages";
+import type { WalletShellMode } from "../shared/preferences";
 
 const appRoot = document.querySelector<HTMLElement>("#app");
 if (!appRoot) {
@@ -31,7 +33,7 @@ interface FlashMessage {
   tone: FlashTone;
 }
 
-let currentState: PopupState | null = null;
+let currentState: PopupRuntimeState | null = null;
 let generatedMnemonic: string | null = null;
 let revealedMnemonic: string | null = null;
 let activeTab: PopupTab = "overview";
@@ -119,7 +121,7 @@ function draftFromPreset(
   };
 }
 
-function defaultNetworkDraft(state: PopupState): NetworkDraft {
+function defaultNetworkDraft(state: PopupRuntimeState): NetworkDraft {
   return {
     name: "Custom network",
     chainId: "",
@@ -145,7 +147,7 @@ async function refresh(nextFlash?: FlashMessage | null): Promise<void> {
   if (nextFlash !== undefined) {
     flash = nextFlash;
   }
-  currentState = await sendRuntimeMessage<PopupState>({
+  currentState = await sendRuntimeMessage<PopupRuntimeState>({
     type: "wallet_get_popup_state"
   });
 
@@ -160,7 +162,7 @@ async function refresh(nextFlash?: FlashMessage | null): Promise<void> {
   render(currentState);
 }
 
-function render(state: PopupState | null): void {
+function render(state: PopupRuntimeState | null): void {
   if (!state || !state.hasWallet) {
     renderSetup(state);
     return;
@@ -174,7 +176,7 @@ function render(state: PopupState | null): void {
   renderUnlocked(state);
 }
 
-function renderSetup(state: PopupState | null): void {
+function renderSetup(state: PopupRuntimeState | null): void {
   const createSelected = setupMode === "create";
   const mnemonicSelected = setupMode === "importMnemonic";
   const privateKeySelected = setupMode === "importPrivateKey";
@@ -315,7 +317,11 @@ function renderSetup(state: PopupState | null): void {
   bindSetupEvents();
 }
 
-function renderLocked(state: PopupState): void {
+function shellModeLabel(mode: WalletShellMode): string {
+  return mode === "sidePanel" ? "Chrome side panel" : "Toolbar popup";
+}
+
+function renderLocked(state: PopupRuntimeState): void {
   root.innerHTML = `
     <div class="app-shell stack">
       <section class="hero-panel stack">
@@ -381,7 +387,7 @@ function renderLocked(state: PopupState): void {
     });
 }
 
-function renderUnlocked(state: PopupState): void {
+function renderUnlocked(state: PopupRuntimeState): void {
   const pendingLabel =
     state.pendingApprovalCount === 1 ? "1 request waiting" : `${state.pendingApprovalCount} requests waiting`;
   const networkTone = toneForNetworkStatus(state.networkStatus);
@@ -459,7 +465,7 @@ function renderUnlocked(state: PopupState): void {
   bindUnlockedEvents(state);
 }
 
-function renderTabPanel(state: PopupState): string {
+function renderTabPanel(state: PopupRuntimeState): string {
   switch (activeTab) {
     case "overview":
       return renderOverviewTab(state);
@@ -470,7 +476,7 @@ function renderTabPanel(state: PopupState): string {
   }
 }
 
-function renderOverviewTab(state: PopupState): string {
+function renderOverviewTab(state: PopupRuntimeState): string {
   const assetsHtml =
     state.watchedAssets.length === 0
       ? `<div class="empty muted">No assets added yet.</div>`
@@ -590,7 +596,7 @@ function renderOverviewTab(state: PopupState): string {
   `;
 }
 
-function renderAppsTab(state: PopupState): string {
+function renderAppsTab(state: PopupRuntimeState): string {
   const appsHtml =
     state.connectedOrigins.length === 0
       ? `
@@ -626,7 +632,7 @@ function renderAppsTab(state: PopupState): string {
   `;
 }
 
-function renderSecurityTab(state: PopupState): string {
+function renderSecurityTab(state: PopupRuntimeState): string {
   const networkWarning =
     state.networkStatus === "mismatch"
       ? `
@@ -742,6 +748,32 @@ function renderSecurityTab(state: PopupState): string {
           </div>
           ${renderNetworkEditor(state)}
         </article>
+
+        <article class="detail-card stack">
+          <div class="section-head">
+            <div>
+              <h3>Open behavior</h3>
+              <p class="muted">Choose whether the toolbar icon opens a popup or Chrome's side panel.</p>
+            </div>
+          </div>
+          <div class="detail-grid">
+            <div class="detail-row">
+              <span>Current mode</span>
+              <strong>${escapeHtml(shellModeLabel(state.shellMode))}</strong>
+            </div>
+          </div>
+          <div class="segmented tab-bar" role="tablist" aria-label="Wallet open behavior">
+            <button type="button" class="tab-button ${state.shellMode === "popup" ? "is-active" : ""}" data-shell-mode="popup">
+              Popup
+            </button>
+            <button type="button" class="tab-button ${state.shellMode === "sidePanel" ? "is-active" : ""}" data-shell-mode="sidePanel">
+              Side panel
+            </button>
+          </div>
+          <p class="muted">
+            Approval requests still open focused approval windows. This only changes what happens when you click the wallet icon in Chrome.
+          </p>
+        </article>
       </div>
 
       ${recoverySection}
@@ -759,7 +791,7 @@ function renderPhraseCard(title: string, phrase: string, tone: "warning" | "info
 }
 
 function toneForNetworkStatus(
-  status: PopupState["networkStatus"]
+  status: PopupRuntimeState["networkStatus"]
 ): "info" | "warning" | "danger" {
   switch (status) {
     case "ready":
@@ -771,7 +803,7 @@ function toneForNetworkStatus(
   }
 }
 
-function networkStatusLabel(state: PopupState): string {
+function networkStatusLabel(state: PopupRuntimeState): string {
   switch (state.networkStatus) {
     case "ready":
       return `Ready on ${state.chainId ?? "current chain"}`;
@@ -782,7 +814,7 @@ function networkStatusLabel(state: PopupState): string {
   }
 }
 
-function networkStatusDescription(state: PopupState): string {
+function networkStatusDescription(state: PopupRuntimeState): string {
   switch (state.networkStatus) {
     case "ready":
       return state.chainId ?? "Connected";
@@ -796,7 +828,7 @@ function networkStatusDescription(state: PopupState): string {
 }
 
 function renderNetworkPresetCard(
-  state: PopupState,
+  state: PopupRuntimeState,
   preset: PopupState["networkPresets"][number]
 ): string {
   const isActive = preset.id === state.activeNetworkId;
@@ -828,7 +860,7 @@ function renderNetworkPresetCard(
   `;
 }
 
-function renderNetworkEditor(state: PopupState): string {
+function renderNetworkEditor(state: PopupRuntimeState): string {
   if (!networkDraft) {
     return `
       <div class="surface surface-quiet">
@@ -999,7 +1031,7 @@ function bindSetupEvents(): void {
     });
 }
 
-function bindUnlockedEvents(state: PopupState): void {
+function bindUnlockedEvents(state: PopupRuntimeState): void {
   for (const button of root.querySelectorAll<HTMLButtonElement>("[data-tab]")) {
     button.addEventListener("click", () => {
       clearFlash();
@@ -1137,6 +1169,32 @@ function bindUnlockedEvents(state: PopupState): void {
       clearFlash();
       setNetworkDraft(defaultNetworkDraft(state));
     });
+
+  for (const button of root.querySelectorAll<HTMLButtonElement>("[data-shell-mode]")) {
+    button.addEventListener("click", async () => {
+      const shellMode = button.dataset.shellMode as WalletShellMode | undefined;
+      if (!shellMode || shellMode === state.shellMode) {
+        return;
+      }
+
+      try {
+        currentState = await sendRuntimeMessage<PopupRuntimeState>({
+          type: "wallet_set_shell_mode",
+          shellMode
+        });
+        setFlash(
+          shellMode === "sidePanel"
+            ? "Toolbar clicks will open the Chrome side panel."
+            : "Toolbar clicks will open the wallet popup.",
+          "success"
+        );
+        render(currentState);
+      } catch (error) {
+        setFlash(formatError(error), "danger");
+        render(state);
+      }
+    });
+  }
 
   for (const button of root.querySelectorAll<HTMLButtonElement>("[data-switch-network]")) {
     button.addEventListener("click", async () => {

@@ -30,4 +30,6 @@
 - Build packages and apps with `npm run build`.
 - Run unit tests with `npm run test`.
 - Run browser-level checks with
+  `npm run test:browser --workspace xian-wallet-extension`.
+- Run visual regression captures with
   `npm run test:visual --workspace xian-wallet-extension`.

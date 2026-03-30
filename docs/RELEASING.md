@@ -44,9 +44,10 @@ normally through npm.
    to the new `@xian-tech/client` or `@xian-tech/provider` versions.
 4. Run `npm install`.
 5. Run `npm run validate`.
-6. Run `npm run test:visual --workspace xian-wallet-extension`.
-7. Commit the release version changes.
-8. Create and push a tag in the form `vX.Y.Z`.
+6. Run `npm run test:browser --workspace xian-wallet-extension`.
+7. Run `npm run test:visual --workspace xian-wallet-extension`.
+8. Commit the release version changes.
+9. Create and push a tag in the form `vX.Y.Z`.
 
 ## What The Release Workflow Does
 

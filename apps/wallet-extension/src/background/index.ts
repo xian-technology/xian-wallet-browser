@@ -2,16 +2,25 @@ import { WalletController } from "@xian-tech/wallet-core";
 
 import { fail, ok, type RuntimeMessage } from "../shared/messages";
 import {
+  DEFAULT_WALLET_SHELL_MODE,
+  type WalletShellMode
+} from "../shared/preferences";
+import {
   deleteApprovalState,
   listApprovalStates,
   listRequestStates,
+  loadUnlockedSession,
   loadApprovalState,
   loadRequestState,
   loadWalletState,
+  loadWalletShellMode,
+  saveUnlockedSession,
   saveApprovalState,
   saveRequestState,
   saveWalletState,
-  deleteRequestState
+  saveWalletShellMode,
+  deleteRequestState,
+  clearUnlockedSession
 } from "../shared/storage";
 
 const WALLET_METADATA = {
@@ -22,6 +31,41 @@ const WALLET_METADATA = {
 
 const approvalWindowIds = new Map<number, string>();
 let syncApprovalsPromise: Promise<void> | null = null;
+
+async function applyShellMode(shellMode: WalletShellMode): Promise<void> {
+  const popup = shellMode === "sidePanel" ? "" : "popup.html";
+  await chrome.action.setPopup({ popup });
+
+  if (!chrome.sidePanel) {
+    return;
+  }
+
+  await chrome.sidePanel.setOptions({
+    path: "popup.html",
+    enabled: true
+  });
+  await chrome.sidePanel.setPanelBehavior({
+    openPanelOnActionClick: shellMode === "sidePanel"
+  });
+}
+
+async function getPopupRuntimeState() {
+  const [popupState, shellMode] = await Promise.all([
+    controller.getPopupState(),
+    loadWalletShellMode()
+  ]);
+  return {
+    ...popupState,
+    shellMode
+  };
+}
+
+async function setShellMode(shellMode: WalletShellMode) {
+  const normalized = shellMode === "sidePanel" ? "sidePanel" : DEFAULT_WALLET_SHELL_MODE;
+  await saveWalletShellMode(normalized);
+  await applyShellMode(normalized);
+  return getPopupRuntimeState();
+}
 
 async function openApprovalWindow(approvalId: string): Promise<number> {
   const url = chrome.runtime.getURL(`approval.html?approvalId=${approvalId}`);
@@ -67,6 +111,9 @@ const controller = new WalletController({
   store: {
     loadState: loadWalletState,
     saveState: saveWalletState,
+    loadUnlockedSession,
+    saveUnlockedSession,
+    clearUnlockedSession,
     loadRequestState,
     saveRequestState,
     deleteRequestState,
@@ -125,8 +172,21 @@ async function syncApprovalWindows(): Promise<void> {
 }
 
 void syncApprovalWindows();
+void loadWalletShellMode()
+  .then((shellMode) => applyShellMode(shellMode))
+  .catch(() => applyShellMode(DEFAULT_WALLET_SHELL_MODE));
+
+chrome.runtime.onInstalled.addListener(() => {
+  void loadWalletShellMode()
+    .then((shellMode) => applyShellMode(shellMode))
+    .catch(() => applyShellMode(DEFAULT_WALLET_SHELL_MODE));
+});
+
 chrome.runtime.onStartup?.addListener(() => {
   void syncApprovalWindows();
+  void loadWalletShellMode()
+    .then((shellMode) => applyShellMode(shellMode))
+    .catch(() => applyShellMode(DEFAULT_WALLET_SHELL_MODE));
 });
 
 chrome.windows.onRemoved.addListener((windowId: number) => {
@@ -151,10 +211,18 @@ chrome.runtime.onMessage.addListener(
 
         switch (message.type) {
           case "wallet_get_popup_state":
-            sendResponse(ok(await controller.getPopupState()));
+            sendResponse(ok(await getPopupRuntimeState()));
             return;
           case "wallet_create":
-            sendResponse(ok(await controller.createOrImportWallet(message)));
+            {
+              const created = await controller.createOrImportWallet(message);
+              sendResponse(
+                ok({
+                  ...created,
+                  popupState: await getPopupRuntimeState()
+                })
+              );
+            }
             return;
           case "wallet_unlock":
             sendResponse(ok(await controller.unlockWallet(message.password)));
@@ -185,6 +253,9 @@ chrome.runtime.onMessage.addListener(
             return;
           case "wallet_reveal_mnemonic":
             sendResponse(ok(await controller.revealMnemonic(message.password)));
+            return;
+          case "wallet_set_shell_mode":
+            sendResponse(ok(await setShellMode(message.shellMode)));
             return;
           case "approval_get":
             sendResponse(ok(await controller.getApprovalView(message.approvalId)));

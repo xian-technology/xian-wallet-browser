@@ -22,7 +22,8 @@ import {
   DEFAULT_RPC_URL,
   LOCAL_NETWORK_PRESET_NAME,
   DEFAULT_WALLET_CAPABILITIES,
-  LOCAL_NETWORK_PRESET_ID
+  LOCAL_NETWORK_PRESET_ID,
+  UNLOCKED_SESSION_TIMEOUT_MS
 } from "./constants";
 import {
   createWalletSecret,
@@ -40,6 +41,7 @@ import type {
   ProviderRequestStartResult,
   ProviderRequestStatusResult,
   StoredProviderRequest,
+  StoredUnlockedSession,
   StoredWalletState,
   WalletControllerStore,
   WalletCreateResult,
@@ -316,13 +318,52 @@ export class WalletController {
     };
   }
 
-  private getUnlockedSigner(): Ed25519Signer {
+  private async restoreUnlockedSession(): Promise<boolean> {
+    if (this.unlockedPrivateKey) {
+      return true;
+    }
+
+    const session = await this.store.loadUnlockedSession();
+    if (!session) {
+      return false;
+    }
+
+    if (session.expiresAt <= this.now()) {
+      await this.store.clearUnlockedSession();
+      return false;
+    }
+
+    this.unlockedPrivateKey = session.privateKey;
+    this.unlockedSigner = new Ed25519Signer(session.privateKey);
+    return true;
+  }
+
+  private async persistUnlockedSession(
+    privateKey: string,
+    expiresAt = this.now() + UNLOCKED_SESSION_TIMEOUT_MS
+  ): Promise<void> {
+    const session: StoredUnlockedSession = {
+      privateKey,
+      expiresAt
+    };
+    await this.store.saveUnlockedSession(session);
+  }
+
+  private async clearUnlockedSession(): Promise<void> {
+    this.unlockedPrivateKey = null;
+    this.unlockedSigner = null;
+    await this.store.clearUnlockedSession();
+  }
+
+  private async getUnlockedSigner(): Promise<Ed25519Signer> {
+    await this.restoreUnlockedSession();
     if (!this.unlockedPrivateKey) {
       throw new ProviderUnauthorizedError("wallet is locked");
     }
     if (!this.unlockedSigner) {
       this.unlockedSigner = new Ed25519Signer(this.unlockedPrivateKey);
     }
+    await this.persistUnlockedSession(this.unlockedPrivateKey);
     return this.unlockedSigner;
   }
 
@@ -467,7 +508,7 @@ export class WalletController {
     }
 
     const connected = state.connectedOrigins.includes(origin);
-    const unlocked = this.unlockedPrivateKey != null;
+    const unlocked = await this.restoreUnlockedSession();
     const preset = this.activeNetworkPreset(state);
     const resolvedChainId = await this.safeGetChainId(state);
 
@@ -622,7 +663,7 @@ export class WalletController {
     state: StoredWalletState,
     intent: XianTransactionIntent
   ): Promise<XianUnsignedTransaction> {
-    const signer = this.getUnlockedSigner();
+    const signer = await this.getUnlockedSigner();
     const client = this.currentClient(state);
     const activeChainId = await client.getChainId();
 
@@ -647,7 +688,7 @@ export class WalletController {
     state: StoredWalletState,
     tx: XianUnsignedTransaction
   ): Promise<XianSignedTransaction> {
-    const signer = this.getUnlockedSigner();
+    const signer = await this.getUnlockedSigner();
     const activeChainId = await this.currentClient(state).getChainId();
     if (tx.payload.sender !== signer.address) {
       throw new ProviderUnauthorizedError(
@@ -684,7 +725,7 @@ export class WalletController {
 
     switch (request.method) {
       case "xian_requestAccounts": {
-        this.getUnlockedSigner();
+        await this.getUnlockedSigner();
         const chainId = this.displayChainId(
           this.activeNetworkPreset(state),
           await this.safeGetChainId(state)
@@ -700,7 +741,7 @@ export class WalletController {
 
       case "xian_watchAsset": {
         this.requireConnectedOrigin(state, origin);
-        this.getUnlockedSigner();
+        await this.getUnlockedSigner();
         const assetRequest = firstParamObject(
           request.params
         ) as unknown as XianWatchAssetRequest;
@@ -715,7 +756,7 @@ export class WalletController {
 
       case "xian_signMessage": {
         this.requireConnectedOrigin(state, origin);
-        const signer = this.getUnlockedSigner();
+        const signer = await this.getUnlockedSigner();
         const { message } = firstParamObject(request.params);
         if (typeof message !== "string") {
           throw new TypeError("xian_signMessage requires a message string");
@@ -730,14 +771,14 @@ export class WalletController {
 
       case "xian_signTransaction": {
         this.requireConnectedOrigin(state, origin);
-        this.getUnlockedSigner();
+        await this.getUnlockedSigner();
         const { tx } = firstParamObject(request.params);
         return this.signPreparedTransaction(state, tx as XianUnsignedTransaction);
       }
 
       case "xian_sendTransaction": {
         this.requireConnectedOrigin(state, origin);
-        this.getUnlockedSigner();
+        await this.getUnlockedSigner();
         const { tx, mode, waitForTx, timeoutMs, pollIntervalMs } =
           firstParamObject(request.params);
 
@@ -751,7 +792,7 @@ export class WalletController {
 
       case "xian_sendCall": {
         this.requireConnectedOrigin(state, origin);
-        this.getUnlockedSigner();
+        await this.getUnlockedSigner();
         const { intent, mode, waitForTx, timeoutMs, pollIntervalMs } =
           firstParamObject(request.params);
         const tx = await this.prepareTransaction(
@@ -882,7 +923,7 @@ export class WalletController {
 
       case "xian_requestAccounts": {
         const walletState = this.requireStoredWallet(state);
-        this.getUnlockedSigner();
+        await this.getUnlockedSigner();
         const approvalChainId = this.displayChainId(
           this.activeNetworkPreset(walletState),
           await this.safeGetChainId(walletState)
@@ -918,11 +959,7 @@ export class WalletController {
       }
 
       case "xian_accounts":
-        if (
-          !state ||
-          this.unlockedPrivateKey == null ||
-          !state.connectedOrigins.includes(origin)
-        ) {
+        if (!state || !(await this.restoreUnlockedSession()) || !state.connectedOrigins.includes(origin)) {
           return {
             kind: "result",
             value: []
@@ -982,7 +1019,7 @@ export class WalletController {
       case "xian_watchAsset": {
         const walletState = this.requireStoredWallet(state);
         this.requireConnectedOrigin(walletState, origin);
-        this.getUnlockedSigner();
+        await this.getUnlockedSigner();
         return {
           kind: "approval",
           account: walletState.publicKey,
@@ -996,7 +1033,7 @@ export class WalletController {
       case "xian_signMessage": {
         const walletState = this.requireStoredWallet(state);
         this.requireConnectedOrigin(walletState, origin);
-        this.getUnlockedSigner();
+        await this.getUnlockedSigner();
         return {
           kind: "approval",
           account: walletState.publicKey,
@@ -1010,7 +1047,7 @@ export class WalletController {
       case "xian_prepareTransaction": {
         const walletState = this.requireStoredWallet(state);
         this.requireConnectedOrigin(walletState, origin);
-        this.getUnlockedSigner();
+        await this.getUnlockedSigner();
         const { intent } = firstParamObject(request.params);
         return {
           kind: "result",
@@ -1026,7 +1063,7 @@ export class WalletController {
       case "xian_sendCall": {
         const walletState = this.requireStoredWallet(state);
         this.requireConnectedOrigin(walletState, origin);
-        this.getUnlockedSigner();
+        await this.getUnlockedSigner();
         return {
           kind: "approval",
           account: walletState.publicKey,
@@ -1050,9 +1087,10 @@ export class WalletController {
       .sort((left, right) => right.createdAt - left.createdAt);
     const activePreset = state ? this.activeNetworkPreset(state) : undefined;
     const resolvedChainId = await this.safeGetChainId(state);
+    const unlocked = await this.restoreUnlockedSession();
     return {
       hasWallet: state != null,
-      unlocked: this.unlockedPrivateKey != null,
+      unlocked,
       publicKey: state?.publicKey,
       rpcUrl: state?.rpcUrl ?? DEFAULT_RPC_URL,
       dashboardUrl: state?.dashboardUrl ?? DEFAULT_DASHBOARD_URL,
@@ -1092,6 +1130,7 @@ export class WalletController {
 
     this.unlockedPrivateKey = secret.privateKey;
     this.unlockedSigner = signer;
+    await this.persistUnlockedSession(secret.privateKey);
 
     const waiters = [...this.requestWaiters.values()];
     this.requestWaiters.clear();
@@ -1174,6 +1213,7 @@ export class WalletController {
 
     this.unlockedPrivateKey = privateKey;
     this.unlockedSigner = signer;
+    await this.persistUnlockedSession(privateKey);
 
     const chainId = this.displayChainId(
       this.activeNetworkPreset(state),
@@ -1198,8 +1238,7 @@ export class WalletController {
 
   async lockWallet(): Promise<PopupState> {
     const state = await this.loadWalletState();
-    this.unlockedPrivateKey = null;
-    this.unlockedSigner = null;
+    await this.clearUnlockedSession();
 
     if (state) {
       await Promise.all(

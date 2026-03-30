@@ -10,6 +10,7 @@ import {
   WalletController,
   type PersistedApproval,
   type StoredProviderRequest,
+  type StoredUnlockedSession,
   type StoredWalletState,
   type WalletControllerStore,
   type WalletNetworkClient
@@ -20,12 +21,14 @@ const ORIGIN = "https://app.example";
 
 interface MemoryStore extends WalletControllerStore {
   current(): StoredWalletState | null;
+  currentSession(): StoredUnlockedSession | null;
   currentRequests(): Record<string, StoredProviderRequest>;
   currentApprovals(): Record<string, PersistedApproval>;
 }
 
 function createStore(): MemoryStore {
   let state: StoredWalletState | null = null;
+  let unlockedSession: StoredUnlockedSession | null = null;
   const requests: Record<string, StoredProviderRequest> = {};
   const approvals: Record<string, PersistedApproval> = {};
 
@@ -35,6 +38,15 @@ function createStore(): MemoryStore {
     },
     async saveState(nextState) {
       state = nextState;
+    },
+    async loadUnlockedSession() {
+      return unlockedSession;
+    },
+    async saveUnlockedSession(nextState) {
+      unlockedSession = nextState;
+    },
+    async clearUnlockedSession() {
+      unlockedSession = null;
     },
     async loadRequestState(requestId) {
       return requests[requestId] ?? null;
@@ -62,6 +74,9 @@ function createStore(): MemoryStore {
     },
     current() {
       return state;
+    },
+    currentSession() {
+      return unlockedSession;
     },
     currentRequests() {
       return requests;
@@ -487,5 +502,287 @@ describe("@xian-tech/wallet-core controller", () => {
       ["xian-1"],
       ORIGIN
     );
+  });
+
+  it("rejects dismissed approvals after restart and preserves the rejection status", async () => {
+    const store = createStore();
+    const client = createClient();
+    const createId = vi
+      .fn()
+      .mockReturnValueOnce("approval-connect")
+      .mockReturnValueOnce("approval-sign");
+
+    const controllerA = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined),
+      createId
+    });
+
+    await controllerA.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+
+    await controllerA.startProviderRequest("request-connect", ORIGIN, {
+      method: "xian_requestAccounts"
+    });
+    await controllerA.resolveApproval("approval-connect", true);
+
+    const start = await controllerA.startProviderRequest("request-sign", ORIGIN, {
+      method: "xian_signMessage",
+      params: [{ message: "sign me" }]
+    });
+
+    expect(start).toEqual({
+      status: "pending",
+      approvalId: "approval-sign"
+    });
+
+    const controllerB = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined)
+    });
+
+    await controllerB.unlockWallet("secret");
+    await expect(controllerB.getApprovalView("approval-sign")).resolves.toMatchObject({
+      title: "Sign message"
+    });
+    await expect(controllerB.dismissApproval("approval-sign")).resolves.toBe(true);
+
+    await expect(controllerB.getProviderRequestStatus("request-sign")).resolves.toEqual({
+      status: "rejected",
+      error: expect.objectContaining({
+        code: 4100,
+        message: "approval dismissed",
+        name: "ProviderUnauthorizedError"
+      })
+    });
+    await expect(controllerB.dismissApproval("approval-sign")).resolves.toBe(false);
+  });
+
+  it("locks and unlocks the wallet while enforcing reconnect and password checks", async () => {
+    const store = createStore();
+    const client = createClient();
+    const onProviderEvent = vi.fn(async () => undefined);
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined),
+      onProviderEvent,
+      createId: vi.fn(() => "approval-connect")
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+
+    await controller.startProviderRequest("request-connect", ORIGIN, {
+      method: "xian_requestAccounts"
+    });
+    await controller.resolveApproval("approval-connect", true);
+
+    const locked = await controller.lockWallet();
+    expect(locked.unlocked).toBe(false);
+    expect(onProviderEvent).toHaveBeenNthCalledWith(
+      4,
+      "accountsChanged",
+      [[]],
+      ORIGIN
+    );
+    expect(onProviderEvent).toHaveBeenNthCalledWith(
+      5,
+      "disconnect",
+      [{ code: 4100, message: "wallet disconnected" }],
+      ORIGIN
+    );
+
+    await expect(controller.unlockWallet("wrong-secret")).rejects.toThrow(
+      "invalid password"
+    );
+
+    await expect(
+      controller.startProviderRequest("request-sign-locked", ORIGIN, {
+        method: "xian_signMessage",
+        params: [{ message: "sign me" }]
+      })
+    ).resolves.toEqual({
+      status: "rejected",
+      error: expect.objectContaining({
+        code: 4100,
+        message: "wallet is locked",
+        name: "ProviderUnauthorizedError"
+      })
+    });
+
+    const accountsWhileLocked = await controller.startProviderRequest(
+      "request-accounts-locked",
+      ORIGIN,
+      {
+        method: "xian_accounts"
+      }
+    );
+    expect(accountsWhileLocked).toEqual({
+      status: "fulfilled",
+      result: []
+    });
+
+    const unlocked = await controller.unlockWallet("secret");
+    expect(unlocked.unlocked).toBe(true);
+    expect(onProviderEvent).toHaveBeenNthCalledWith(
+      6,
+      "connect",
+      [{ chainId: "xian-local" }],
+      ORIGIN
+    );
+    expect(onProviderEvent).toHaveBeenNthCalledWith(
+      7,
+      "accountsChanged",
+      [[store.current()?.publicKey]],
+      ORIGIN
+    );
+    expect(onProviderEvent).toHaveBeenNthCalledWith(
+      8,
+      "chainChanged",
+      ["xian-local"],
+      ORIGIN
+    );
+  });
+
+  it("requires a new connect approval after a site disconnects", async () => {
+    const store = createStore();
+    const client = createClient();
+    const createId = vi
+      .fn()
+      .mockReturnValueOnce("approval-connect")
+      .mockReturnValueOnce("approval-reconnect");
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined),
+      createId
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+
+    await controller.startProviderRequest("request-connect", ORIGIN, {
+      method: "xian_requestAccounts"
+    });
+    await controller.resolveApproval("approval-connect", true);
+    await controller.disconnectOrigin(ORIGIN);
+
+    await expect(
+      controller.startProviderRequest("request-sign", ORIGIN, {
+        method: "xian_signMessage",
+        params: [{ message: "hello again" }]
+      })
+    ).resolves.toEqual({
+      status: "rejected",
+      error: expect.objectContaining({
+        code: 4100,
+        message: "site is not connected to this wallet",
+        name: "ProviderUnauthorizedError"
+      })
+    });
+
+    await expect(
+      controller.startProviderRequest("request-reconnect", ORIGIN, {
+        method: "xian_requestAccounts"
+      })
+    ).resolves.toEqual({
+      status: "pending",
+      approvalId: "approval-reconnect"
+    });
+  });
+
+  it("keeps the wallet unlocked across controller restarts for five minutes, then expires the session", async () => {
+    const store = createStore();
+    const client = createClient();
+    const baseNow = 1_000_000;
+
+    const controllerA = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined),
+      now: vi.fn(() => baseNow)
+    });
+
+    await controllerA.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+
+    expect(store.currentSession()).toMatchObject({
+      privateKey: PRIVATE_KEY,
+      expiresAt: baseNow + 5 * 60 * 1000
+    });
+
+    const controllerB = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined),
+      now: vi.fn(() => baseNow + 60_000)
+    });
+
+    const popupWhileSessionActive = await controllerB.getPopupState();
+    expect(popupWhileSessionActive.unlocked).toBe(true);
+
+    const controllerC = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined),
+      now: vi.fn(() => baseNow + 5 * 60 * 1000 + 1)
+    });
+
+    const popupAfterExpiry = await controllerC.getPopupState();
+    expect(popupAfterExpiry.unlocked).toBe(false);
+    expect(store.currentSession()).toBeNull();
   });
 });
