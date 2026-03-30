@@ -1,6 +1,6 @@
 {
   "name": "@xian-tech/wallet-core",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/xian-technology/xian-wallet-browser.git",
@@ -30,7 +30,7 @@
   },
   "dependencies": {
     "@scure/bip39": "^1.6.0",
-    "@xian-tech/client": "0.1.2",
-    "@xian-tech/provider": "0.1.2"
+    "@xian-tech/client": "0.1.3",
+    "@xian-tech/provider": "0.1.3"
   }
 }
