@@ -39,12 +39,12 @@ jobs:
       - name: Install and build xian-js
         working-directory: xian-js
         run: |
-          npm ci
+          npm install
           npm run build
 
       - name: Install xian-wallet-browser dependencies
         working-directory: xian-wallet-browser
-        run: npm ci
+        run: npm install
 
       - name: Validate xian-wallet-browser
         working-directory: xian-wallet-browser

@@ -36,13 +36,13 @@ jobs:
       - name: Install and build xian-js
         working-directory: xian-js
         run: |
-          npm ci
+          npm install
           npm run build
 
       - name: Install and validate xian-wallet-browser
         working-directory: xian-wallet-browser
         run: |
-          npm ci
+          npm install
           npm run validate
 
       - name: Install Playwright Chromium
