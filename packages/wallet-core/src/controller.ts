@@ -74,6 +74,7 @@ export interface WalletNetworkClient {
     function: string;
     kwargs: Record<string, unknown>;
   }): Promise<{ estimated: number; suggested: number }>;
+  getContractMethods(contract: string): Promise<string[]>;
   buildTx(intent: {
     sender: string;
     contract: string;
@@ -1201,48 +1202,9 @@ export class WalletController {
     return this.sendPreparedTransaction(state, tx, { mode: "commit" });
   }
 
-  async getContractMethods(
-    contract: string
-  ): Promise<string[]> {
+  async getContractMethods(contract: string): Promise<string[]> {
     const state = this.requireStoredWallet(await this.loadWalletState());
-    const url = new URL(`${state.rpcUrl}/abci_query`);
-    url.searchParams.set("path", `"/contract_methods/${contract}"`);
-
-    const response = await fetch(url.toString(), { method: "POST" });
-    if (!response.ok) {
-      throw new Error(`RPC request failed (${response.status})`);
-    }
-
-    const data = (await response.json()) as Record<string, unknown>;
-    if ("error" in data) {
-      throw new Error("contract not found or RPC error");
-    }
-
-    const result = data.result as Record<string, unknown> | undefined;
-    const abciResponse = result?.response as Record<string, unknown> | undefined;
-    const code = abciResponse?.code;
-    if (typeof code === "number" && code !== 0) {
-      throw new Error(
-        String(abciResponse?.log ?? "contract not found")
-      );
-    }
-
-    const rawValue = abciResponse?.value;
-    if (rawValue == null) {
-      return [];
-    }
-
-    const decoded = JSON.parse(atob(String(rawValue))) as
-      | { methods?: string[] }
-      | string[]
-      | null;
-    if (Array.isArray(decoded)) {
-      return decoded.filter((v): v is string => typeof v === "string");
-    }
-    if (decoded && Array.isArray(decoded.methods)) {
-      return decoded.methods.filter((v): v is string => typeof v === "string");
-    }
-    return [];
+    return this.currentClient(state).getContractMethods(contract);
   }
 
   private async fetchAssetBalances(
