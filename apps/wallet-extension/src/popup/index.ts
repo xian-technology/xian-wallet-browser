@@ -17,7 +17,7 @@ const root = appRoot;
 
 /* ── Types ─────────────────────────────────────────────────── */
 
-type PopupTab = "home" | "apps" | "security";
+type PopupTab = "home" | "send" | "apps" | "security";
 type SetupMode = "create" | "importMnemonic" | "importPrivateKey";
 type FlashTone = "info" | "success" | "danger" | "warning";
 
@@ -45,7 +45,8 @@ const ICONS = {
   globe: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10A15.3 15.3 0 0 1 12 2z"/></svg>',
   lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
   wallet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><circle cx="18" cy="16" r="1"/></svg>',
-  chevronLeft: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>'
+  chevronLeft: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>',
+  send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>'
 };
 
 /* ── State ─────────────────────────────────────────────────── */
@@ -63,6 +64,94 @@ let selectedAsset: string | null = null;
 let tokenMeta: { name: string | null; symbol: string | null; logoUrl: string | null } | null = null;
 let tokenMetaLoading = false;
 let tokenMetaGeneration = 0;
+
+/* ── Send tab state ────────────────────────────────────────── */
+
+type TxArgType = "str" | "int" | "float" | "bool";
+type SendStep = "draft" | "review" | "sending" | "result";
+
+interface TxArg {
+  id: string;
+  name: string;
+  value: string;
+  type: TxArgType;
+}
+
+let sendStep: SendStep = "draft";
+let sendContract = "";
+let sendFunction = "";
+let sendArgs: TxArg[] = [];
+let sendEstimateMode = true;
+let sendManualStamps = "";
+let sendParsedKwargs: Record<string, unknown> | null = null;
+let sendEstimate: { estimated: number; suggested: number } | null = null;
+let sendResult: {
+  submitted: boolean;
+  accepted: boolean | null;
+  finalized: boolean;
+  txHash?: string;
+  message?: unknown;
+} | null = null;
+let argIdCounter = 0;
+
+function resetSendState(): void {
+  sendStep = "draft";
+  sendContract = "";
+  sendFunction = "";
+  sendArgs = [];
+  sendEstimateMode = true;
+  sendManualStamps = "";
+  sendParsedKwargs = null;
+  sendEstimate = null;
+  sendResult = null;
+}
+
+function captureSendFormState(): void {
+  const c = root.querySelector<HTMLInputElement>("#send-contract");
+  const f = root.querySelector<HTMLInputElement>("#send-function");
+  const s = root.querySelector<HTMLInputElement>("#send-stamps");
+  if (c) sendContract = c.value.trim();
+  if (f) sendFunction = f.value.trim();
+  if (s) sendManualStamps = s.value.trim();
+  for (const arg of sendArgs) {
+    const row = root.querySelector<HTMLElement>(
+      `[data-arg-id="${arg.id}"]`
+    );
+    if (!row) continue;
+    const n = row.querySelector<HTMLInputElement>(".arg-name");
+    const v = row.querySelector<HTMLInputElement>(".arg-value");
+    const t = row.querySelector<HTMLSelectElement>(".arg-type");
+    if (n) arg.name = n.value.trim();
+    if (v) arg.value = v.value;
+    if (t) arg.type = t.value as TxArgType;
+  }
+}
+
+function parseArgValue(val: string, type: TxArgType): unknown {
+  switch (type) {
+    case "str":
+      return val;
+    case "int": {
+      const n = parseInt(val, 10);
+      return Number.isFinite(n) ? n : val;
+    }
+    case "float": {
+      const n = parseFloat(val);
+      return Number.isFinite(n) ? n : val;
+    }
+    case "bool":
+      return val.toLowerCase() === "true" || val === "1";
+  }
+}
+
+function buildSendKwargs(): Record<string, unknown> {
+  const kwargs: Record<string, unknown> = {};
+  for (const arg of sendArgs) {
+    if (!arg.name) continue;
+    kwargs[arg.name] = parseArgValue(arg.value, arg.type);
+  }
+  return kwargs;
+}
 
 /* ── Utilities ─────────────────────────────────────────────── */
 
@@ -186,6 +275,7 @@ async function refresh(nextFlash?: FlashMessage | null): Promise<void> {
   }
   if (!currentState.unlocked) {
     generatedMnemonic = null;
+    resetSendState();
   }
 
   balancesLoading =
@@ -494,6 +584,10 @@ function renderUnlocked(state: PopupRuntimeState): void {
           ${ICONS.home}
           Home
         </button>
+        <button class="nav-item ${activeTab === "send" ? "is-active" : ""}" data-tab="send">
+          ${ICONS.send}
+          Send
+        </button>
         <button class="nav-item ${activeTab === "apps" ? "is-active" : ""}" data-tab="apps">
           ${ICONS.grid}
           Apps
@@ -513,6 +607,8 @@ function renderTabPanel(state: PopupRuntimeState): string {
   switch (activeTab) {
     case "home":
       return renderHomeTab(state);
+    case "send":
+      return renderSendTab(state);
     case "apps":
       return renderAppsTab(state);
     case "security":
@@ -778,6 +874,210 @@ function renderOriginItem(origin: string): string {
         <div class="app-item-url">${escapeHtml(origin)}</div>
       </div>
       <button class="ghost-sm" data-disconnect-origin="${escapeAttribute(origin)}">Disconnect</button>
+    </div>
+  `;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SEND TAB
+   ═══════════════════════════════════════════════════════════ */
+
+function renderSendTab(_state: PopupRuntimeState): string {
+  switch (sendStep) {
+    case "draft":
+      return renderSendDraft();
+    case "review":
+      return renderSendReview();
+    case "sending":
+      return renderSendSending();
+    case "result":
+      return renderSendResult();
+  }
+}
+
+function renderArgRow(arg: TxArg): string {
+  return `
+    <div class="arg-row" data-arg-id="${escapeAttribute(arg.id)}">
+      <input class="arg-name" value="${escapeAttribute(arg.name)}" placeholder="name" />
+      <input class="arg-value" value="${escapeAttribute(arg.value)}" placeholder="value" />
+      <select class="arg-type">
+        <option value="str" ${arg.type === "str" ? "selected" : ""}>str</option>
+        <option value="int" ${arg.type === "int" ? "selected" : ""}>int</option>
+        <option value="float" ${arg.type === "float" ? "selected" : ""}>float</option>
+        <option value="bool" ${arg.type === "bool" ? "selected" : ""}>bool</option>
+      </select>
+      <button class="ghost-sm" data-remove-arg="${escapeAttribute(arg.id)}">×</button>
+    </div>
+  `;
+}
+
+function renderSendDraft(): string {
+  return `
+    <div class="settings-wrap">
+      <div class="s-card">
+        <div class="s-card-head">
+          <div>
+            <h3 class="s-card-title">Contract call</h3>
+            <p class="s-card-desc">Specify the contract and function to invoke.</p>
+          </div>
+        </div>
+        <div class="s-card-body stack">
+          <label>
+            Contract
+            <input id="send-contract" value="${escapeAttribute(sendContract)}" placeholder="e.g. currency" />
+          </label>
+          <label>
+            Function
+            <input id="send-function" value="${escapeAttribute(sendFunction)}" placeholder="e.g. transfer" />
+          </label>
+        </div>
+      </div>
+
+      <div class="s-card">
+        <div class="s-card-head">
+          <div>
+            <h3 class="s-card-title">Arguments</h3>
+            <p class="s-card-desc">Key-value pairs passed as kwargs.</p>
+          </div>
+          <button class="ghost-sm" data-add-arg>Add</button>
+        </div>
+        <div class="s-card-body">
+          ${
+            sendArgs.length === 0
+              ? `<p class="muted text-sm">No arguments added yet.</p>`
+              : sendArgs.map((a) => renderArgRow(a)).join("")
+          }
+        </div>
+      </div>
+
+      <div class="s-card">
+        <div class="s-card-head">
+          <div>
+            <h3 class="s-card-title">Stamps</h3>
+            <p class="s-card-desc">Transaction cost budget.</p>
+          </div>
+        </div>
+        <div class="s-card-body stack">
+          <label class="inline-check">
+            <input type="radio" name="stamp-mode" value="estimate" ${sendEstimateMode ? "checked" : ""} data-stamp-mode="estimate" />
+            <span>Estimate automatically (simulator)</span>
+          </label>
+          <label class="inline-check">
+            <input type="radio" name="stamp-mode" value="manual" ${!sendEstimateMode ? "checked" : ""} data-stamp-mode="manual" />
+            <span>Set manually</span>
+          </label>
+          ${
+            !sendEstimateMode
+              ? `<label>Stamp limit<input id="send-stamps" type="number" min="1" value="${escapeAttribute(sendManualStamps)}" placeholder="e.g. 50000" /></label>`
+              : ""
+          }
+        </div>
+      </div>
+
+      <button class="full-width" data-review-tx>Review Transaction</button>
+    </div>
+  `;
+}
+
+function renderSendReview(): string {
+  const entries = sendParsedKwargs ? Object.entries(sendParsedKwargs) : [];
+  const stampsLabel = sendEstimate
+    ? `${sendEstimate.suggested.toLocaleString()} (estimated ${sendEstimate.estimated.toLocaleString()} + margin)`
+    : Number(sendManualStamps).toLocaleString();
+
+  return `
+    <div class="settings-wrap">
+      <button class="detail-back" data-edit-tx>${ICONS.chevronLeft} Edit</button>
+
+      <div class="s-card">
+        <div class="s-card-head">
+          <div><h3 class="s-card-title">Transaction summary</h3></div>
+        </div>
+        <div class="s-card-body">
+          <div class="s-row">
+            <span class="s-row-key">Contract</span>
+            <span class="s-row-val mono">${escapeHtml(sendContract)}</span>
+          </div>
+          <div class="s-row">
+            <span class="s-row-key">Function</span>
+            <span class="s-row-val">${escapeHtml(sendFunction)}</span>
+          </div>
+          <div class="s-row">
+            <span class="s-row-key">Stamps</span>
+            <span class="s-row-val">${escapeHtml(stampsLabel)}</span>
+          </div>
+          ${entries
+            .map(
+              ([k, v]) => `
+                <div class="s-row">
+                  <span class="s-row-key">${escapeHtml(k)}</span>
+                  <span class="s-row-val mono">${escapeHtml(String(v))}</span>
+                </div>
+              `
+            )
+            .join("")}
+        </div>
+      </div>
+
+      <button class="full-width" data-send-tx>Send Transaction</button>
+    </div>
+  `;
+}
+
+function renderSendSending(): string {
+  return `
+    <div class="send-centered">
+      <div class="spinner"></div>
+      <p class="muted text-sm">Sending transaction...</p>
+    </div>
+  `;
+}
+
+function renderSendResult(): string {
+  if (!sendResult) {
+    return renderSendDraft();
+  }
+  const ok = sendResult.finalized || sendResult.accepted === true;
+  const tone = sendResult.finalized
+    ? "success"
+    : sendResult.accepted
+      ? "info"
+      : "danger";
+  const label = sendResult.finalized
+    ? "Transaction finalized"
+    : sendResult.accepted
+      ? "Transaction accepted"
+      : sendResult.submitted
+        ? "Transaction submitted but not accepted"
+        : "Transaction failed";
+
+  return `
+    <div class="settings-wrap">
+      <div class="banner banner-${tone}">
+        <strong>${escapeHtml(label)}</strong>
+        ${
+          sendResult.message && !ok
+            ? `<p class="text-sm" style="margin-top: 4px">${escapeHtml(String(sendResult.message))}</p>`
+            : ""
+        }
+      </div>
+
+      ${
+        sendResult.txHash
+          ? `
+              <div class="s-card">
+                <div class="s-card-body">
+                  <div class="s-row">
+                    <span class="s-row-key">TX Hash</span>
+                    <span class="s-row-val mono">${escapeHtml(sendResult.txHash)}</span>
+                  </div>
+                </div>
+              </div>
+            `
+          : ""
+      }
+
+      <button class="full-width" data-new-tx>New Transaction</button>
     </div>
   `;
 }
@@ -1251,6 +1551,139 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         setFlash(formatError(error), "danger");
         render(state);
       }
+    });
+
+  /* ── Send tab handlers ──────────────────────────────────── */
+
+  root
+    .querySelector<HTMLElement>("[data-add-arg]")
+    ?.addEventListener("click", () => {
+      captureSendFormState();
+      sendArgs.push({
+        id: String(++argIdCounter),
+        name: "",
+        value: "",
+        type: "str"
+      });
+      render(state);
+    });
+
+  for (const btn of root.querySelectorAll<HTMLButtonElement>(
+    "[data-remove-arg]"
+  )) {
+    btn.addEventListener("click", () => {
+      captureSendFormState();
+      const id = btn.dataset.removeArg;
+      sendArgs = sendArgs.filter((a) => a.id !== id);
+      render(state);
+    });
+  }
+
+  for (const radio of root.querySelectorAll<HTMLInputElement>(
+    "[data-stamp-mode]"
+  )) {
+    radio.addEventListener("change", () => {
+      captureSendFormState();
+      sendEstimateMode = radio.dataset.stampMode === "estimate";
+      render(state);
+    });
+  }
+
+  root
+    .querySelector<HTMLElement>("[data-review-tx]")
+    ?.addEventListener("click", async () => {
+      captureSendFormState();
+
+      if (!sendContract || !sendFunction) {
+        setFlash("Contract and function are required.", "warning");
+        render(state);
+        return;
+      }
+
+      sendParsedKwargs = buildSendKwargs();
+
+      if (sendEstimateMode) {
+        try {
+          sendEstimate = await sendRuntimeMessage<{
+            estimated: number;
+            suggested: number;
+          }>({
+            type: "wallet_estimate_transaction",
+            contract: sendContract,
+            function: sendFunction,
+            kwargs: sendParsedKwargs
+          });
+          sendStep = "review";
+          clearFlash();
+          render(state);
+        } catch (error) {
+          setFlash(formatError(error), "danger");
+          render(state);
+        }
+      } else {
+        if (
+          !sendManualStamps ||
+          parseInt(sendManualStamps, 10) <= 0
+        ) {
+          setFlash("Enter a valid stamp limit.", "warning");
+          render(state);
+          return;
+        }
+        sendEstimate = null;
+        sendStep = "review";
+        clearFlash();
+        render(state);
+      }
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-edit-tx]")
+    ?.addEventListener("click", () => {
+      sendStep = "draft";
+      clearFlash();
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-send-tx]")
+    ?.addEventListener("click", async () => {
+      if (!sendParsedKwargs) {
+        return;
+      }
+
+      sendStep = "sending";
+      render(state);
+
+      const stamps =
+        sendEstimateMode && sendEstimate
+          ? sendEstimate.suggested
+          : parseInt(sendManualStamps, 10) || undefined;
+
+      try {
+        sendResult = await sendRuntimeMessage<
+          typeof sendResult & Record<string, unknown>
+        >({
+          type: "wallet_send_direct_transaction",
+          contract: sendContract,
+          function: sendFunction,
+          kwargs: sendParsedKwargs,
+          stamps
+        });
+        sendStep = "result";
+        render(state);
+      } catch (error) {
+        sendStep = "review";
+        setFlash(formatError(error), "danger");
+        render(state);
+      }
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-new-tx]")
+    ?.addEventListener("click", () => {
+      resetSendState();
+      clearFlash();
+      render(state);
     });
 
   for (const button of root.querySelectorAll<HTMLButtonElement>(

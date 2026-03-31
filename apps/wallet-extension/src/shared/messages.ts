@@ -141,6 +141,21 @@ export interface WalletUpdateAssetDecimalsRuntimeMessage {
   decimals: number;
 }
 
+export interface WalletEstimateTransactionRuntimeMessage {
+  type: "wallet_estimate_transaction";
+  contract: string;
+  function: string;
+  kwargs: Record<string, unknown>;
+}
+
+export interface WalletSendDirectTransactionRuntimeMessage {
+  type: "wallet_send_direct_transaction";
+  contract: string;
+  function: string;
+  kwargs: Record<string, unknown>;
+  stamps?: number;
+}
+
 export interface WalletRevealMnemonicRuntimeMessage {
   type: "wallet_reveal_mnemonic";
   password: string;
@@ -186,6 +201,8 @@ export type RuntimeMessage =
   | WalletGetAssetBalancesRuntimeMessage
   | WalletGetTokenMetadataRuntimeMessage
   | WalletUpdateAssetDecimalsRuntimeMessage
+  | WalletEstimateTransactionRuntimeMessage
+  | WalletSendDirectTransactionRuntimeMessage
   | WalletRevealMnemonicRuntimeMessage
   | WalletSetShellModeRuntimeMessage
   | ApprovalGetRuntimeMessage

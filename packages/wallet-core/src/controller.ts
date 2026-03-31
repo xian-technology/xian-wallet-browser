@@ -68,6 +68,12 @@ export interface WalletNetworkClient {
     symbol: string | null;
     logoUrl: string | null;
   }>;
+  estimateStamps(request: {
+    sender: string;
+    contract: string;
+    function: string;
+    kwargs: Record<string, unknown>;
+  }): Promise<{ estimated: number; suggested: number }>;
   buildTx(intent: {
     sender: string;
     contract: string;
@@ -1161,6 +1167,38 @@ export class WalletController {
     state.watchedAssets[idx] = { ...existing, decimals };
     await this.store.saveState(state);
     return this.getPopupState();
+  }
+
+  async estimateTransactionStamps(request: {
+    contract: string;
+    function: string;
+    kwargs: Record<string, unknown>;
+  }): Promise<{ estimated: number; suggested: number }> {
+    const state = this.requireStoredWallet(await this.loadWalletState());
+    const client = this.currentClient(state);
+    return client.estimateStamps({
+      sender: state.publicKey,
+      contract: request.contract,
+      function: request.function,
+      kwargs: request.kwargs
+    });
+  }
+
+  async sendDirectTransaction(intent: {
+    contract: string;
+    function: string;
+    kwargs: Record<string, unknown>;
+    stamps?: number;
+  }): Promise<unknown> {
+    const state = this.requireStoredWallet(await this.loadWalletState());
+    await this.getUnlockedSigner();
+    const tx = await this.prepareTransaction(state, {
+      contract: intent.contract,
+      function: intent.function,
+      kwargs: intent.kwargs,
+      stamps: intent.stamps
+    });
+    return this.sendPreparedTransaction(state, tx, { mode: "commit" });
   }
 
   private async fetchAssetBalances(

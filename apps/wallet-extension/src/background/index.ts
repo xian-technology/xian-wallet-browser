@@ -222,6 +222,21 @@ chrome.runtime.onMessage.addListener(
           case "wallet_update_asset_decimals":
             sendResponse(ok(await controller.updateWatchedAssetDecimals(message.contract, message.decimals)));
             return;
+          case "wallet_estimate_transaction":
+            sendResponse(ok(await controller.estimateTransactionStamps({
+              contract: message.contract,
+              function: message.function,
+              kwargs: message.kwargs
+            })));
+            return;
+          case "wallet_send_direct_transaction":
+            sendResponse(ok(await controller.sendDirectTransaction({
+              contract: message.contract,
+              function: message.function,
+              kwargs: message.kwargs,
+              stamps: message.stamps
+            })));
+            return;
           case "wallet_create":
             {
               const created = await controller.createOrImportWallet(message);
