@@ -213,6 +213,9 @@ chrome.runtime.onMessage.addListener(
           case "wallet_get_popup_state":
             sendResponse(ok(await getPopupRuntimeState()));
             return;
+          case "wallet_get_asset_balances":
+            sendResponse(ok(await controller.getAssetBalances()));
+            return;
           case "wallet_create":
             {
               const created = await controller.createOrImportWallet(message);

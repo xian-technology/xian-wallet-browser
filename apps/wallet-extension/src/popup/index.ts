@@ -56,6 +56,8 @@ let activeTab: PopupTab = "home";
 let setupMode: SetupMode = "create";
 let flash: FlashMessage | null = null;
 let networkDraft: NetworkDraft | null = null;
+let balancesLoading = false;
+let balanceGeneration = 0;
 
 /* ── Utilities ─────────────────────────────────────────────── */
 
@@ -178,7 +180,37 @@ async function refresh(nextFlash?: FlashMessage | null): Promise<void> {
     generatedMnemonic = null;
   }
 
+  balancesLoading =
+    currentState.unlocked && currentState.watchedAssets.length > 0;
   render(currentState);
+  void refreshBalances();
+}
+
+async function refreshBalances(): Promise<void> {
+  if (!currentState?.unlocked || !currentState.watchedAssets.length) {
+    balancesLoading = false;
+    return;
+  }
+  const gen = ++balanceGeneration;
+  try {
+    const balances = await sendRuntimeMessage<Record<string, string | null>>({
+      type: "wallet_get_asset_balances"
+    });
+    if (gen !== balanceGeneration) {
+      return;
+    }
+    if (currentState) {
+      currentState.assetBalances = balances;
+    }
+  } catch {
+    if (gen !== balanceGeneration) {
+      return;
+    }
+  }
+  balancesLoading = false;
+  if (currentState) {
+    render(currentState);
+  }
 }
 
 /* ── Render dispatch ───────────────────────────────────────── */
@@ -202,7 +234,7 @@ function renderLoading(): void {
     <div class="lock-screen">
       <div class="lock-avatar">${ICONS.wallet}</div>
       <h1>Xian Wallet</h1>
-      <p class="muted text-sm">Loading...</p>
+      <div class="spinner" style="margin-top: 16px"></div>
     </div>
   `;
 }
@@ -536,11 +568,16 @@ function renderAssetItem(
       ? "var(--accent-dim)"
       : assetColor(asset.contract);
   const isPinned = asset.contract === "currency";
-  const balance = formatBalance(
-    state.assetBalances[asset.contract],
-    asset.decimals
-  );
+  const rawBalance = state.assetBalances[asset.contract];
   const fiat = state.assetFiatValues[asset.contract];
+  const balanceHtml = balancesLoading
+    ? `<span class="skeleton">0,000.00</span>`
+    : escapeHtml(formatBalance(rawBalance, asset.decimals));
+  const fiatHtml = balancesLoading
+    ? `<span class="skeleton">$0.00</span>`
+    : fiat
+      ? escapeHtml(fiat)
+      : "";
 
   return `
     <div class="token-item">
@@ -550,8 +587,8 @@ function renderAssetItem(
         <div class="token-sub">${escapeHtml(asset.name ?? asset.contract)}</div>
       </div>
       <div class="token-end">
-        <div class="token-balance">${escapeHtml(balance)}</div>
-        <div class="token-fiat">${fiat ? escapeHtml(fiat) : ""}</div>
+        <div class="token-balance">${balanceHtml}</div>
+        <div class="token-fiat">${fiatHtml}</div>
         ${
           !isPinned
             ? `<button class="ghost-sm" data-remove-asset="${escapeAttribute(asset.contract)}" style="margin-top: 2px">Remove</button>`
@@ -1079,11 +1116,31 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         return;
       }
 
+      button.disabled = true;
+
       try {
         currentState = await sendRuntimeMessage<PopupRuntimeState>({
           type: "wallet_set_shell_mode",
           shellMode
         });
+
+        if (
+          shellMode === "sidePanel" &&
+          chrome.sidePanel?.open
+        ) {
+          const [tab] = await chrome.tabs.query({
+            active: true,
+            currentWindow: true
+          });
+          if (tab?.windowId) {
+            await chrome.sidePanel.open({
+              windowId: tab.windowId
+            });
+            window.close();
+            return;
+          }
+        }
+
         setFlash(
           shellMode === "sidePanel"
             ? "Toolbar clicks will open the Chrome side panel."

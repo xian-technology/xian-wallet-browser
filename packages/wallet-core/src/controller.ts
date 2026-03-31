@@ -1091,7 +1091,6 @@ export class WalletController {
     const unlocked = await this.restoreUnlockedSession();
 
     const watchedAssets = state?.watchedAssets ?? [];
-    const assetBalances = await this.fetchAssetBalances(state, watchedAssets);
 
     return {
       hasWallet: state != null,
@@ -1111,7 +1110,7 @@ export class WalletController {
       activeNetworkName: activePreset?.name,
       networkPresets: state?.networkPresets ?? DEFAULT_NETWORK_PRESETS,
       watchedAssets,
-      assetBalances,
+      assetBalances: {},
       assetFiatValues: {},
       connectedOrigins: state?.connectedOrigins ?? [],
       pendingApprovalCount: pendingApprovals.length,
@@ -1121,6 +1120,14 @@ export class WalletController {
       mnemonicWordCount: state?.mnemonicWordCount,
       version: this.options.version
     };
+  }
+
+  async getAssetBalances(): Promise<Record<string, string | null>> {
+    const state = await this.loadWalletState();
+    if (!state) {
+      return {};
+    }
+    return this.fetchAssetBalances(state, state.watchedAssets);
   }
 
   private async fetchAssetBalances(

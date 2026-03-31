@@ -126,6 +126,10 @@ export interface WalletGetPopupStateRuntimeMessage {
   type: "wallet_get_popup_state";
 }
 
+export interface WalletGetAssetBalancesRuntimeMessage {
+  type: "wallet_get_asset_balances";
+}
+
 export interface WalletRevealMnemonicRuntimeMessage {
   type: "wallet_reveal_mnemonic";
   password: string;
@@ -168,6 +172,7 @@ export type RuntimeMessage =
   | WalletDisconnectAllOriginsRuntimeMessage
   | WalletRemoveAssetRuntimeMessage
   | WalletGetPopupStateRuntimeMessage
+  | WalletGetAssetBalancesRuntimeMessage
   | WalletRevealMnemonicRuntimeMessage
   | WalletSetShellModeRuntimeMessage
   | ApprovalGetRuntimeMessage
