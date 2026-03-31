@@ -69,7 +69,8 @@ main {
 .wallet-app {
   display: flex;
   flex-direction: column;
-  height: 600px;
+  height: 100vh;
+  min-height: 600px;
   overflow: hidden;
 }
 
