@@ -149,7 +149,12 @@ export async function createWalletInPopup(
   password: string,
   createButtonLabel = "Create wallet"
 ): Promise<void> {
-  await expect(popup.getByText("Set up wallet")).toBeVisible();
+  await expect(
+    popup.getByRole("heading", { name: "Xian Wallet" })
+  ).toBeVisible();
+  await expect(
+    popup.getByRole("button", { name: "Create wallet" })
+  ).toBeVisible();
   await popup.getByLabel("Password").fill(password);
   await popup.getByRole("button", { name: createButtonLabel }).click();
   await expect(popup.getByText("Recovery phrase")).toBeVisible();

@@ -46,7 +46,12 @@ test("captures popup and approval visuals for the wallet extension", async ({}, 
   try {
     const popup = await openExtensionPage(context, extensionId, "popup.html");
 
-    await expect(popup.getByText("Set up wallet")).toBeVisible();
+    await expect(
+      popup.getByRole("heading", { name: "Xian Wallet" })
+    ).toBeVisible();
+    await expect(
+      popup.getByRole("button", { name: "Create wallet" })
+    ).toBeVisible();
     await popup.screenshot({
       path: testInfo.outputPath("popup-setup.png"),
       fullPage: true
@@ -112,24 +117,22 @@ test("captures popup and approval visuals for the wallet extension", async ({}, 
     });
 
     await popup.reload();
-    await expect(popup.getByText("Pending approvals")).toBeVisible();
+    await expect(popup.getByText("Pending")).toBeVisible();
     await popup.screenshot({
       path: testInfo.outputPath("popup-overview.png"),
       fullPage: true
     });
 
     await popup.getByRole("button", { name: "Apps" }).click();
-    await expect(
-      popup.getByRole("heading", { name: "Connected apps" })
-    ).toBeVisible();
+    await expect(popup.getByText("Connected apps")).toBeVisible();
     await popup.screenshot({
       path: testInfo.outputPath("popup-apps.png"),
       fullPage: true
     });
 
-    await popup.getByRole("button", { name: "Security" }).click();
+    await popup.getByRole("button", { name: "Settings" }).click();
     await expect(
-      popup.getByRole("heading", { name: "Network presets" })
+      popup.getByRole("heading", { name: "Networks" })
     ).toBeVisible();
     await popup.screenshot({
       path: testInfo.outputPath("popup-security.png"),
