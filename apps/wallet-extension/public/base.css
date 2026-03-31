@@ -218,7 +218,7 @@ main {
 
 .balance-hero {
   text-align: center;
-  padding: 28px 16px 4px;
+  padding: 20px 16px 8px;
 }
 
 .balance-address-pill {
@@ -246,67 +246,6 @@ main {
 .balance-address-pill svg {
   width: 14px;
   height: 14px;
-  color: var(--text-secondary);
-}
-
-.balance-subtitle {
-  margin-top: 10px;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-/* ── Quick Actions ── */
-
-.quick-actions {
-  display: flex;
-  justify-content: center;
-  gap: 28px;
-  padding: 20px 16px 16px;
-}
-
-.quick-action {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  color: var(--text);
-}
-
-.quick-action:hover {
-  background: none;
-  transform: none;
-}
-
-.quick-action-circle {
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background: var(--bg-2);
-  border: 1px solid var(--line);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text);
-  transition: all 120ms;
-}
-
-.quick-action:hover .quick-action-circle {
-  background: var(--bg-3);
-  border-color: var(--line-strong);
-}
-
-.quick-action-circle svg {
-  width: 20px;
-  height: 20px;
-}
-
-.quick-action span {
-  font-size: 11px;
-  font-weight: 600;
   color: var(--text-secondary);
 }
 

@@ -443,6 +443,7 @@ function renderUnlocked(state: PopupRuntimeState): void {
             <span class="header-dot${dotClass}"></span>
             ${escapeHtml(activeNetworkLabel)}
           </span>
+          <button class="header-icon-btn" data-open-dashboard title="Open explorer">${ICONS.globe}</button>
           <button class="header-icon-btn" data-lock title="Lock wallet">${ICONS.lock}</button>
         </div>
       </header>
@@ -513,18 +514,6 @@ function renderHomeTab(state: PopupRuntimeState): string {
         ${escapeHtml(truncateAddress(state.publicKey ?? ""))}
         ${ICONS.copy}
       </div>
-      <div class="balance-subtitle">${escapeHtml(popupStateBanner(state))}</div>
-    </div>
-
-    <div class="quick-actions">
-      <button class="quick-action" data-copy-address>
-        <div class="quick-action-circle">${ICONS.copy}</div>
-        <span>Copy</span>
-      </button>
-      <button class="quick-action" data-open-dashboard>
-        <div class="quick-action-circle">${ICONS.globe}</div>
-        <span>Explorer</span>
-      </button>
     </div>
 
     ${pendingHtml}
@@ -989,7 +978,8 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       }
 
       try {
-        await chrome.tabs.create({ url: state.dashboardUrl });
+        const explorerUrl = state.dashboardUrl.replace(/\/+$/, "") + "/explorer";
+        await chrome.tabs.create({ url: explorerUrl });
       } catch (error) {
         setFlash(formatError(error), "danger");
         render(state);
