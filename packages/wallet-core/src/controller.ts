@@ -61,6 +61,7 @@ interface RequestWaiter {
 
 export interface WalletNetworkClient {
   getChainId(): Promise<string>;
+  getBalance(address: string, options?: { contract?: string }): Promise<unknown>;
   buildTx(intent: {
     sender: string;
     contract: string;
@@ -1088,6 +1089,10 @@ export class WalletController {
     const activePreset = state ? this.activeNetworkPreset(state) : undefined;
     const resolvedChainId = await this.safeGetChainId(state);
     const unlocked = await this.restoreUnlockedSession();
+
+    const watchedAssets = state?.watchedAssets ?? [];
+    const assetBalances = await this.fetchAssetBalances(state, watchedAssets);
+
     return {
       hasWallet: state != null,
       unlocked,
@@ -1105,7 +1110,9 @@ export class WalletController {
       activeNetworkId: activePreset?.id,
       activeNetworkName: activePreset?.name,
       networkPresets: state?.networkPresets ?? DEFAULT_NETWORK_PRESETS,
-      watchedAssets: state?.watchedAssets ?? [],
+      watchedAssets,
+      assetBalances,
+      assetFiatValues: {},
       connectedOrigins: state?.connectedOrigins ?? [],
       pendingApprovalCount: pendingApprovals.length,
       pendingApprovals,
@@ -1114,6 +1121,36 @@ export class WalletController {
       mnemonicWordCount: state?.mnemonicWordCount,
       version: this.options.version
     };
+  }
+
+  private async fetchAssetBalances(
+    state: StoredWalletState | null,
+    assets: { contract: string }[]
+  ): Promise<Record<string, string | null>> {
+    const balances: Record<string, string | null> = {};
+    if (!state || assets.length === 0) {
+      return balances;
+    }
+    const client = this.currentClient(state);
+    const results = await Promise.allSettled(
+      assets.map(async (asset) => {
+        const raw = await client.getBalance(state.publicKey, {
+          contract: asset.contract
+        });
+        return { contract: asset.contract, raw };
+      })
+    );
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        const { contract, raw } = result.value;
+        balances[contract] =
+          raw != null ? String(raw) : null;
+      } else {
+        // If a single balance fetch fails, mark it null rather than
+        // failing the entire popup state.
+      }
+    }
+    return balances;
   }
 
   async createOrImportWallet(input: WalletSetupInput): Promise<WalletCreateResult> {

@@ -473,7 +473,7 @@ function renderHomeTab(state: PopupRuntimeState): string {
   const assetsHtml =
     state.watchedAssets.length === 0
       ? `<div class="token-list"><div style="padding: 24px 0; text-align: center" class="muted text-sm">No assets tracked yet.</div></div>`
-      : `<div class="token-list">${state.watchedAssets.map((a) => renderAssetItem(a)).join("")}</div>`;
+      : `<div class="token-list">${state.watchedAssets.map((a) => renderAssetItem(a, state)).join("")}</div>`;
 
   return `
     <div class="balance-hero">
@@ -505,8 +505,29 @@ function renderHomeTab(state: PopupRuntimeState): string {
   `;
 }
 
+function formatBalance(
+  raw: string | null | undefined,
+  decimals: number | undefined
+): string {
+  if (raw == null || raw === "") {
+    return "—";
+  }
+  const num = Number(raw);
+  if (!Number.isFinite(num)) {
+    return raw;
+  }
+  const dp = decimals ?? 8;
+  // Avoid trailing zeros beyond meaningful precision
+  const formatted = num.toLocaleString("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: dp
+  });
+  return formatted;
+}
+
 function renderAssetItem(
-  asset: PopupState["watchedAssets"][number]
+  asset: PopupState["watchedAssets"][number],
+  state: PopupRuntimeState
 ): string {
   const symbol = asset.symbol ?? asset.contract.slice(0, 6);
   const letter = symbol.charAt(0).toUpperCase();
@@ -515,6 +536,11 @@ function renderAssetItem(
       ? "var(--accent-dim)"
       : assetColor(asset.contract);
   const isPinned = asset.contract === "currency";
+  const balance = formatBalance(
+    state.assetBalances[asset.contract],
+    asset.decimals
+  );
+  const fiat = state.assetFiatValues[asset.contract];
 
   return `
     <div class="token-item">
@@ -524,10 +550,12 @@ function renderAssetItem(
         <div class="token-sub">${escapeHtml(asset.name ?? asset.contract)}</div>
       </div>
       <div class="token-end">
+        <div class="token-balance">${escapeHtml(balance)}</div>
+        <div class="token-fiat">${fiat ? escapeHtml(fiat) : ""}</div>
         ${
-          isPinned
-            ? `<span class="pill">Native</span>`
-            : `<button class="ghost-sm" data-remove-asset="${escapeAttribute(asset.contract)}">Remove</button>`
+          !isPinned
+            ? `<button class="ghost-sm" data-remove-asset="${escapeAttribute(asset.contract)}" style="margin-top: 2px">Remove</button>`
+            : ""
         }
       </div>
     </div>

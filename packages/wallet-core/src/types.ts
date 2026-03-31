@@ -100,6 +100,10 @@ export interface PopupState {
   activeNetworkName?: string;
   networkPresets: WalletNetworkPreset[];
   watchedAssets: XianWatchedAsset[];
+  /** Maps contract address to raw balance (number as string), or null if fetch failed. */
+  assetBalances: Record<string, string | null>;
+  /** Maps contract address to fiat display string (e.g. "$12.34"), or null if unavailable. */
+  assetFiatValues: Record<string, string | null>;
   connectedOrigins: string[];
   pendingApprovalCount: number;
   pendingApprovals: ApprovalView[];

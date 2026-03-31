@@ -419,6 +419,20 @@ main {
 
 .token-end {
   flex-shrink: 0;
+  text-align: right;
+}
+
+.token-balance {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.token-fiat {
+  font-size: 11px;
+  color: var(--muted);
+  min-height: 15px;
 }
 
 /* ═══════════════════════════════════════════════════════════
