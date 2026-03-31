@@ -70,6 +70,7 @@ let tokenMeta: { name: string | null; symbol: string | null; logoUrl: string | n
 let tokenMetaLoading = false;
 let tokenMetaGeneration = 0;
 let showReceive = false;
+let activeApprovalId: string | null = null;
 
 /* ── Send tab state ────────────────────────────────────────── */
 
@@ -286,12 +287,28 @@ function flashHtml(): string {
   return `<div class="flash-toast flash-${flash.tone}">${escapeHtml(flash.message)}</div>`;
 }
 
+let flashTimer: ReturnType<typeof setTimeout> | null = null;
+
 function setFlash(message: string, tone: FlashTone = "info"): void {
   flash = { message, tone };
+  if (flashTimer) {
+    clearTimeout(flashTimer);
+  }
+  flashTimer = setTimeout(() => {
+    flash = null;
+    flashTimer = null;
+    if (currentState) {
+      render(currentState);
+    }
+  }, 3000);
 }
 
 function clearFlash(): void {
   flash = null;
+  if (flashTimer) {
+    clearTimeout(flashTimer);
+    flashTimer = null;
+  }
 }
 
 /* ── State setters ─────────────────────────────────────────── */
@@ -302,6 +319,7 @@ function setActiveTab(tab: PopupTab): void {
   tokenMeta = null;
   tokenMetaLoading = false;
   showReceive = false;
+  activeApprovalId = null;
   if (currentState) {
     render(currentState);
   }
@@ -663,10 +681,9 @@ function renderUnlocked(state: PopupRuntimeState): void {
       </header>
 
       <div class="wallet-content">
-        ${flashHtml()}
         ${renderTabPanel(state)}
       </div>
-
+      ${flashHtml()}
       <nav class="wallet-nav">
         <button class="nav-item ${activeTab === "home" ? "is-active" : ""}" data-tab="home">
           ${ICONS.home}
@@ -692,6 +709,15 @@ function renderUnlocked(state: PopupRuntimeState): void {
 }
 
 function renderTabPanel(state: PopupRuntimeState): string {
+  if (activeApprovalId) {
+    const approval = state.pendingApprovals.find(
+      (a) => a.id === activeApprovalId
+    );
+    if (approval) {
+      return renderApprovalInline(approval);
+    }
+    activeApprovalId = null;
+  }
   switch (activeTab) {
     case "home":
       return renderHomeTab(state);
@@ -999,6 +1025,110 @@ function renderOriginItem(origin: string): string {
         <div class="app-item-url">${escapeHtml(origin)}</div>
       </div>
       <button class="ghost-sm" data-disconnect-origin="${escapeAttribute(origin)}">Disconnect</button>
+    </div>
+  `;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   INLINE APPROVAL
+   ═══════════════════════════════════════════════════════════ */
+
+function approvalTone(
+  kind: ApprovalView["kind"]
+): "info" | "warning" | "danger" {
+  switch (kind) {
+    case "connect":
+      return "info";
+    case "watchAsset":
+    case "signMessage":
+      return "warning";
+    case "sendCall":
+    case "sendTransaction":
+    case "signTransaction":
+      return "danger";
+  }
+}
+
+function approvalRiskLabel(kind: ApprovalView["kind"]): string {
+  switch (kind) {
+    case "connect":
+      return "Connection";
+    case "watchAsset":
+      return "Asset";
+    case "signMessage":
+      return "Signature";
+    case "signTransaction":
+      return "Prepared signature";
+    case "sendTransaction":
+      return "Broadcast";
+    case "sendCall":
+      return "Contract call";
+  }
+}
+
+function renderApprovalInline(view: ApprovalView): string {
+  const tone = approvalTone(view.kind);
+  const warnings = view.warnings ?? [];
+  const highlights = view.highlights ?? [];
+  const details = view.details ?? [];
+
+  return `
+    <div class="settings-wrap">
+      <button class="detail-back" data-close-approval>
+        ${ICONS.chevronLeft} Back
+      </button>
+
+      <div class="s-card">
+        <div class="s-card-head">
+          <div>
+            <h3 class="s-card-title">${escapeHtml(view.title)}</h3>
+            <p class="s-card-desc">${escapeHtml(view.description)}</p>
+          </div>
+          <span class="pill pill-${tone}">${escapeHtml(approvalRiskLabel(view.kind))}</span>
+        </div>
+        <div class="s-card-body stack">
+          ${
+            warnings.length > 0
+              ? `<div class="banner banner-${tone}">${warnings.map((w) => `<div>${escapeHtml(w)}</div>`).join("")}</div>`
+              : ""
+          }
+          ${
+            highlights.length > 0
+              ? `<div style="display: flex; gap: 6px; flex-wrap: wrap">${highlights.map((h) => `<span class="pill">${escapeHtml(h)}</span>`).join("")}</div>`
+              : ""
+          }
+          ${
+            details.length > 0
+              ? details
+                  .map(
+                    (d) => `
+                      <div class="s-row">
+                        <span class="s-row-key">${escapeHtml(d.label)}</span>
+                        <span class="s-row-val ${d.monospace ? "mono" : ""}">${escapeHtml(d.value)}</span>
+                      </div>
+                    `
+                  )
+                  .join("")
+              : ""
+          }
+        </div>
+      </div>
+
+      ${
+        view.payload
+          ? `
+              <details class="disclosure">
+                <summary>${escapeHtml(view.payloadLabel ?? "Raw payload")}</summary>
+                <pre class="approval-payload">${escapeHtml(view.payload)}</pre>
+              </details>
+            `
+          : ""
+      }
+
+      <div class="action-row" style="gap: 10px">
+        <button class="full-width" data-approve-inline="${escapeAttribute(view.id)}">${escapeHtml(view.approveLabel ?? "Approve")}</button>
+        <button class="secondary full-width" data-reject-inline="${escapeAttribute(view.id)}">Reject</button>
+      </div>
     </div>
   `;
 }
@@ -1991,26 +2121,69 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
   for (const button of root.querySelectorAll<HTMLButtonElement>(
     "[data-open-approval]"
   )) {
-    button.addEventListener("click", async () => {
+    button.addEventListener("click", () => {
       const approvalId = button.dataset.openApproval;
       if (!approvalId) {
         return;
       }
+      activeApprovalId = approvalId;
+      clearFlash();
+      render(state);
+    });
+  }
+
+  root
+    .querySelector<HTMLElement>("[data-close-approval]")
+    ?.addEventListener("click", () => {
+      activeApprovalId = null;
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-approve-inline]")
+    ?.addEventListener("click", async () => {
+      const id =
+        root.querySelector<HTMLElement>("[data-approve-inline]")?.dataset
+          .approveInline;
+      if (!id) {
+        return;
+      }
       try {
-        await chrome.windows.create({
-          url: chrome.runtime.getURL(
-            `approval.html?approvalId=${approvalId}`
-          ),
-          type: "popup",
-          width: 420,
-          height: 700
+        await sendRuntimeMessage<null>({
+          type: "approval_resolve",
+          approvalId: id,
+          approved: true
         });
+        activeApprovalId = null;
+        await refresh({ tone: "success", message: "Approved." });
       } catch (error) {
         setFlash(formatError(error), "danger");
         render(state);
       }
     });
-  }
+
+  root
+    .querySelector<HTMLElement>("[data-reject-inline]")
+    ?.addEventListener("click", async () => {
+      const id =
+        root.querySelector<HTMLElement>("[data-reject-inline]")?.dataset
+          .rejectInline;
+      if (!id) {
+        return;
+      }
+      try {
+        await sendRuntimeMessage<null>({
+          type: "approval_resolve",
+          approvalId: id,
+          approved: false
+        });
+        activeApprovalId = null;
+        await refresh({ tone: "info", message: "Rejected." });
+      } catch (error) {
+        setFlash(formatError(error), "danger");
+        render(state);
+      }
+    });
 
   root
     .querySelector<HTMLButtonElement>("[data-new-network]")
