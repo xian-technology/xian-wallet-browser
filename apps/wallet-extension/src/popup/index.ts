@@ -2407,5 +2407,14 @@ function formatError(error: unknown): string {
 
 /* ── Init ──────────────────────────────────────────────────── */
 
+chrome.runtime.onMessage.addListener(
+  (message: { type?: string; approvalId?: string }) => {
+    if (message.type === "approval_notify" && message.approvalId) {
+      activeApprovalId = message.approvalId;
+      void refresh(null);
+    }
+  }
+);
+
 renderLoading();
 void refresh(null);

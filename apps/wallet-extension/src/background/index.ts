@@ -126,6 +126,19 @@ const controller = new WalletController({
     listApprovalStates
   },
   onApprovalRequested: async (approvalId) => {
+    const shellMode = await loadWalletShellMode();
+    if (shellMode === "sidePanel") {
+      // Side panel is always visible — notify it to show the approval inline
+      try {
+        await chrome.runtime.sendMessage({ type: "approval_notify", approvalId });
+      } catch {
+        // Popup/panel not open — fall back to external window
+        const windowId = await openApprovalWindow(approvalId);
+        approvalWindowIds.set(windowId, approvalId);
+        await controller.attachApprovalWindow(approvalId, windowId);
+      }
+      return;
+    }
     const windowId = await openApprovalWindow(approvalId);
     approvalWindowIds.set(windowId, approvalId);
     await controller.attachApprovalWindow(approvalId, windowId);
