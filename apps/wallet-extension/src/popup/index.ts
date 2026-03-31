@@ -1,4 +1,5 @@
 import { truncateAddress, type ApprovalView, type PopupState } from "@xian-tech/wallet-core";
+import { encode as encodeQr } from "uqr";
 
 import {
   type PopupRuntimeState,
@@ -46,7 +47,11 @@ const ICONS = {
   lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
   wallet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><circle cx="18" cy="16" r="1"/></svg>',
   chevronLeft: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>',
-  send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>'
+  send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>',
+  arrowUp: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>',
+  arrowDown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>',
+  trendingUp: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>',
+  repeat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>'
 };
 
 /* ── State ─────────────────────────────────────────────────── */
@@ -64,6 +69,7 @@ let selectedAsset: string | null = null;
 let tokenMeta: { name: string | null; symbol: string | null; logoUrl: string | null } | null = null;
 let tokenMetaLoading = false;
 let tokenMetaGeneration = 0;
+let showReceive = false;
 
 /* ── Send tab state ────────────────────────────────────────── */
 
@@ -255,6 +261,22 @@ function assetColor(key: string): string {
   return `hsl(${hue}, 45%, 35%)`;
 }
 
+function generateQrSvg(text: string): string {
+  const { data } = encodeQr(text, { ecc: "M" });
+  const count = data.length;
+  const margin = 2;
+  const total = count + margin * 2;
+  let d = "";
+  for (let y = 0; y < count; y++) {
+    for (let x = 0; x < count; x++) {
+      if (data[y]![x]) {
+        d += `M${x + margin},${y + margin}h1v1h-1z`;
+      }
+    }
+  }
+  return `<svg viewBox="0 0 ${total} ${total}" xmlns="http://www.w3.org/2000/svg"><rect width="${total}" height="${total}" fill="#fff" rx="1"/><path d="${d}" fill="#000"/></svg>`;
+}
+
 /* ── Flash ─────────────────────────────────────────────────── */
 
 function flashHtml(): string {
@@ -279,6 +301,7 @@ function setActiveTab(tab: PopupTab): void {
   selectedAsset = null;
   tokenMeta = null;
   tokenMetaLoading = false;
+  showReceive = false;
   if (currentState) {
     render(currentState);
   }
@@ -685,9 +708,27 @@ function renderTabPanel(state: PopupRuntimeState): string {
    HOME TAB
    ═══════════════════════════════════════════════════════════ */
 
+function renderReceiveView(state: PopupRuntimeState): string {
+  const address = state.publicKey ?? "";
+  return `
+    <div class="receive-view">
+      <button class="detail-back" data-close-receive style="align-self: flex-start">
+        ${ICONS.chevronLeft} Back
+      </button>
+      <div class="qr-frame">${generateQrSvg(address)}</div>
+      <p class="muted text-sm" style="margin: 0">Your Xian address</p>
+      <div class="receive-address">${escapeHtml(address)}</div>
+      <button class="secondary full-width" data-copy-address>Copy Address</button>
+    </div>
+  `;
+}
+
 function renderHomeTab(state: PopupRuntimeState): string {
   if (selectedAsset) {
     return renderTokenDetail(state);
+  }
+  if (showReceive) {
+    return renderReceiveView(state);
   }
 
   const hasPending = state.pendingApprovals.length > 0;
@@ -715,6 +756,25 @@ function renderHomeTab(state: PopupRuntimeState): string {
         ${escapeHtml(truncateAddress(state.publicKey ?? ""))}
         ${ICONS.copy}
       </div>
+    </div>
+
+    <div class="quick-actions">
+      <button class="quick-action" data-go-send>
+        <div class="quick-action-circle">${ICONS.arrowUp}</div>
+        <span>Send</span>
+      </button>
+      <button class="quick-action" data-show-receive>
+        <div class="quick-action-circle">${ICONS.arrowDown}</div>
+        <span>Receive</span>
+      </button>
+      <button class="quick-action" disabled>
+        <div class="quick-action-circle">${ICONS.trendingUp}</div>
+        <span>Trade</span>
+      </button>
+      <button class="quick-action" disabled>
+        <div class="quick-action-circle">${ICONS.repeat}</div>
+        <span>Swap</span>
+      </button>
     </div>
 
     ${pendingHtml}
@@ -1096,7 +1156,7 @@ function renderSendDraft(): string {
         <div class="s-card-body stack">
           <label class="inline-check">
             <input type="radio" name="stamp-mode" value="estimate" ${sendEstimateMode ? "checked" : ""} data-stamp-mode="estimate" />
-            <span>Estimate automatically (simulator)</span>
+            <span>Estimate automatically</span>
           </label>
           <label class="inline-check">
             <input type="radio" name="stamp-mode" value="manual" ${!sendEstimateMode ? "checked" : ""} data-stamp-mode="manual" />
@@ -1536,6 +1596,29 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       }
     });
   }
+
+  root
+    .querySelector<HTMLElement>("[data-go-send]")
+    ?.addEventListener("click", () => {
+      clearFlash();
+      setActiveTab("send");
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-show-receive]")
+    ?.addEventListener("click", () => {
+      clearFlash();
+      showReceive = true;
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-close-receive]")
+    ?.addEventListener("click", () => {
+      showReceive = false;
+      clearFlash();
+      render(state);
+    });
 
   root
     .querySelector<HTMLElement>("[data-open-dashboard]")

@@ -378,6 +378,107 @@ main {
   gap: 12px;
 }
 
+/* ── Quick Actions ── */
+
+.quick-actions {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  padding: 12px 16px 16px;
+}
+
+.quick-action {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.quick-action:hover {
+  background: none;
+  transform: none;
+}
+
+.quick-action:disabled {
+  cursor: default;
+}
+
+.quick-action:disabled .quick-action-circle,
+.quick-action:disabled span {
+  opacity: 0.3;
+}
+
+.quick-action-circle {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  transition: all 120ms;
+}
+
+.quick-action:hover:not(:disabled) .quick-action-circle {
+  background: var(--bg-3);
+  border-color: var(--line-strong);
+}
+
+.quick-action-circle svg {
+  width: 20px;
+  height: 20px;
+}
+
+.quick-action span {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* ── Receive / QR ── */
+
+.receive-view {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: center;
+}
+
+.qr-frame {
+  padding: 16px;
+  background: #fff;
+  border-radius: 16px;
+  display: inline-flex;
+}
+
+.qr-frame svg {
+  width: 200px;
+  height: 200px;
+  display: block;
+}
+
+.receive-address {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+  word-break: break-all;
+  text-align: center;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  line-height: 1.6;
+}
+
 /* ── Flash Toast ── */
 
 .flash-toast {
