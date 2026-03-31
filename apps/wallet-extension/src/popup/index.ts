@@ -262,6 +262,13 @@ function assetColor(key: string): string {
   return `hsl(${hue}, 45%, 35%)`;
 }
 
+function truncateHash(hash: string, headLen = 10, tailLen = 8): string {
+  if (hash.length <= headLen + tailLen + 3) {
+    return hash;
+  }
+  return `${hash.slice(0, headLen)}...${hash.slice(-tailLen)}`;
+}
+
 function generateQrSvg(text: string): string {
   const { data } = encodeQr(text, { ecc: "M" });
   const count = data.length;
@@ -1395,7 +1402,7 @@ function renderSendResult(): string {
                 <div class="s-card-body">
                   <div class="s-row">
                     <span class="s-row-key">TX Hash</span>
-                    <span class="s-row-val mono">${escapeHtml(sendResult.txHash)}</span>
+                    <span class="s-row-val mono" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px" title="${escapeAttribute(sendResult.txHash)}">${escapeHtml(truncateHash(sendResult.txHash))}</span>
                   </div>
                 </div>
               </div>

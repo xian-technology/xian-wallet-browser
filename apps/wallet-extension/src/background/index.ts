@@ -153,6 +153,7 @@ async function syncApprovalWindows(): Promise<void> {
   }
 
   syncApprovalsPromise = (async () => {
+    const shellMode = await loadWalletShellMode();
     const approvals = await controller.listApprovalStates();
     const windows = (await chrome.windows.getAll()) as Array<{ id?: number }>;
     const openWindowIds = new Set(
@@ -170,6 +171,11 @@ async function syncApprovalWindows(): Promise<void> {
           continue;
         }
         await controller.dismissApproval(approval.id);
+        continue;
+      }
+
+      if (shellMode === "sidePanel") {
+        // Side panel handles approvals inline — don't open a window
         continue;
       }
 
