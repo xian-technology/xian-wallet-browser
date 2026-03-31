@@ -93,6 +93,10 @@ let sendResult: {
   message?: unknown;
 } | null = null;
 let argIdCounter = 0;
+let contractMethods: string[] = [];
+let contractMethodsLoading = false;
+let contractMethodsError: string | null = null;
+let contractMethodsFor: string | null = null;
 
 function resetSendState(): void {
   sendStep = "draft";
@@ -104,14 +108,18 @@ function resetSendState(): void {
   sendParsedKwargs = null;
   sendEstimate = null;
   sendResult = null;
+  contractMethods = [];
+  contractMethodsLoading = false;
+  contractMethodsError = null;
+  contractMethodsFor = null;
 }
 
 function captureSendFormState(): void {
   const c = root.querySelector<HTMLInputElement>("#send-contract");
-  const f = root.querySelector<HTMLInputElement>("#send-function");
+  const f = root.querySelector<HTMLSelectElement>("#send-function");
   const s = root.querySelector<HTMLInputElement>("#send-stamps");
   if (c) sendContract = c.value.trim();
-  if (f) sendFunction = f.value.trim();
+  if (f) sendFunction = f.value;
   if (s) sendManualStamps = s.value.trim();
   for (const arg of sendArgs) {
     const row = root.querySelector<HTMLElement>(
@@ -911,6 +919,49 @@ function renderArgRow(arg: TxArg): string {
   `;
 }
 
+function renderFunctionSelect(): string {
+  const hasContract = sendContract.length > 0;
+  const disabled =
+    !hasContract || contractMethodsLoading ? "disabled" : "";
+  const loadingHint = contractMethodsLoading
+    ? `<p class="muted text-sm">Loading functions...</p>`
+    : contractMethodsError
+      ? `<p class="muted text-sm" style="color: var(--danger)">${escapeHtml(contractMethodsError)}</p>`
+      : !hasContract
+        ? `<p class="muted text-sm">Enter a contract name first.</p>`
+        : "";
+
+  if (contractMethods.length > 0) {
+    const options = contractMethods
+      .map(
+        (m) =>
+          `<option value="${escapeAttribute(m)}" ${m === sendFunction ? "selected" : ""}>${escapeHtml(m)}</option>`
+      )
+      .join("");
+    return `
+      <label>
+        Function
+        <select id="send-function" ${disabled}>
+          <option value="">Select a function</option>
+          ${options}
+        </select>
+      </label>
+      ${loadingHint}
+    `;
+  }
+
+  return `
+    <label>
+      Function
+      <select id="send-function" ${disabled}>
+        <option value="">${contractMethodsLoading ? "Loading..." : hasContract ? "No functions loaded" : "Enter contract first"}</option>
+        ${sendFunction ? `<option value="${escapeAttribute(sendFunction)}" selected>${escapeHtml(sendFunction)}</option>` : ""}
+      </select>
+    </label>
+    ${loadingHint}
+  `;
+}
+
 function renderSendDraft(): string {
   return `
     <div class="settings-wrap">
@@ -926,10 +977,7 @@ function renderSendDraft(): string {
             Contract
             <input id="send-contract" value="${escapeAttribute(sendContract)}" placeholder="e.g. currency" />
           </label>
-          <label>
-            Function
-            <input id="send-function" value="${escapeAttribute(sendFunction)}" placeholder="e.g. transfer" />
-          </label>
+          ${renderFunctionSelect()}
         </div>
       </div>
 
@@ -1554,6 +1602,44 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     });
 
   /* ── Send tab handlers ──────────────────────────────────── */
+
+  root
+    .querySelector<HTMLInputElement>("#send-contract")
+    ?.addEventListener("blur", async () => {
+      const contractInput = root.querySelector<HTMLInputElement>(
+        "#send-contract"
+      );
+      const contractName = contractInput?.value.trim() ?? "";
+      if (!contractName || contractName === contractMethodsFor) {
+        return;
+      }
+
+      captureSendFormState();
+      contractMethodsFor = contractName;
+      contractMethods = [];
+      contractMethodsLoading = true;
+      contractMethodsError = null;
+      sendFunction = "";
+      render(state);
+
+      try {
+        contractMethods = await sendRuntimeMessage<string[]>({
+          type: "wallet_get_contract_methods",
+          contract: contractName
+        });
+        contractMethodsLoading = false;
+        if (contractMethods.length === 0) {
+          contractMethodsError = "No functions found for this contract.";
+        }
+      } catch (error) {
+        contractMethodsLoading = false;
+        contractMethodsError = formatError(error);
+        contractMethods = [];
+      }
+      if (contractMethodsFor === contractName) {
+        render(state);
+      }
+    });
 
   root
     .querySelector<HTMLElement>("[data-add-arg]")

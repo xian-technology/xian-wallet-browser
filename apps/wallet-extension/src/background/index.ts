@@ -237,6 +237,9 @@ chrome.runtime.onMessage.addListener(
               stamps: message.stamps
             })));
             return;
+          case "wallet_get_contract_methods":
+            sendResponse(ok(await controller.getContractMethods(message.contract)));
+            return;
           case "wallet_create":
             {
               const created = await controller.createOrImportWallet(message);

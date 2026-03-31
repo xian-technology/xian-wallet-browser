@@ -156,6 +156,11 @@ export interface WalletSendDirectTransactionRuntimeMessage {
   stamps?: number;
 }
 
+export interface WalletGetContractMethodsRuntimeMessage {
+  type: "wallet_get_contract_methods";
+  contract: string;
+}
+
 export interface WalletRevealMnemonicRuntimeMessage {
   type: "wallet_reveal_mnemonic";
   password: string;
@@ -203,6 +208,7 @@ export type RuntimeMessage =
   | WalletUpdateAssetDecimalsRuntimeMessage
   | WalletEstimateTransactionRuntimeMessage
   | WalletSendDirectTransactionRuntimeMessage
+  | WalletGetContractMethodsRuntimeMessage
   | WalletRevealMnemonicRuntimeMessage
   | WalletSetShellModeRuntimeMessage
   | ApprovalGetRuntimeMessage
