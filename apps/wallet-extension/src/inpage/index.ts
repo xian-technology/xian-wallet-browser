@@ -106,7 +106,7 @@ if (!window.__xianWalletShellInjected__) {
     provider: new ExtensionInjectedProvider(),
     metadata: {
       id: "xian-wallet-shell",
-      name: "Xian Wallet Shell",
+      name: "Xian Wallet",
       rdns: "org.xian.wallet.shell"
     },
     setAsDefault: true

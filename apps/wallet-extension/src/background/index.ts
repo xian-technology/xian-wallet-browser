@@ -25,7 +25,7 @@ import {
 
 const WALLET_METADATA = {
   id: "xian-wallet-shell",
-  name: "Xian Wallet Shell",
+  name: "Xian Wallet",
   rdns: "org.xian.wallet.shell"
 };
 
@@ -215,6 +215,12 @@ chrome.runtime.onMessage.addListener(
             return;
           case "wallet_get_asset_balances":
             sendResponse(ok(await controller.getAssetBalances()));
+            return;
+          case "wallet_get_token_metadata":
+            sendResponse(ok(await controller.getTokenMetadata(message.contract)));
+            return;
+          case "wallet_update_asset_decimals":
+            sendResponse(ok(await controller.updateWatchedAssetDecimals(message.contract, message.decimals)));
             return;
           case "wallet_create":
             {

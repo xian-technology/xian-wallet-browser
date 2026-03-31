@@ -44,7 +44,8 @@ const ICONS = {
   copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
   globe: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10A15.3 15.3 0 0 1 12 2z"/></svg>',
   lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
-  wallet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><circle cx="18" cy="16" r="1"/></svg>'
+  wallet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><circle cx="18" cy="16" r="1"/></svg>',
+  chevronLeft: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>'
 };
 
 /* ── State ─────────────────────────────────────────────────── */
@@ -58,6 +59,10 @@ let flash: FlashMessage | null = null;
 let networkDraft: NetworkDraft | null = null;
 let balancesLoading = false;
 let balanceGeneration = 0;
+let selectedAsset: string | null = null;
+let tokenMeta: { name: string | null; symbol: string | null; logoUrl: string | null } | null = null;
+let tokenMetaLoading = false;
+let tokenMetaGeneration = 0;
 
 /* ── Utilities ─────────────────────────────────────────────── */
 
@@ -117,6 +122,9 @@ function clearFlash(): void {
 
 function setActiveTab(tab: PopupTab): void {
   activeTab = tab;
+  selectedAsset = null;
+  tokenMeta = null;
+  tokenMetaLoading = false;
   if (currentState) {
     render(currentState);
   }
@@ -213,6 +221,34 @@ async function refreshBalances(): Promise<void> {
   }
 }
 
+async function fetchTokenMeta(contract: string): Promise<void> {
+  const gen = ++tokenMetaGeneration;
+  try {
+    const meta = await sendRuntimeMessage<{
+      contract: string;
+      name: string | null;
+      symbol: string | null;
+      logoUrl: string | null;
+    }>({
+      type: "wallet_get_token_metadata",
+      contract
+    });
+    if (gen !== tokenMetaGeneration) {
+      return;
+    }
+    tokenMeta = meta;
+  } catch {
+    if (gen !== tokenMetaGeneration) {
+      return;
+    }
+    tokenMeta = null;
+  }
+  tokenMetaLoading = false;
+  if (currentState) {
+    render(currentState);
+  }
+}
+
 /* ── Render dispatch ───────────────────────────────────────── */
 
 function render(state: PopupRuntimeState | null): void {
@@ -232,7 +268,7 @@ function render(state: PopupRuntimeState | null): void {
 function renderLoading(): void {
   root.innerHTML = `
     <div class="lock-screen">
-      <div class="lock-avatar">${ICONS.wallet}</div>
+      <div class="lock-avatar"><img src="icon.png" alt="" style="width: 32px; height: 32px; object-fit: contain" /></div>
       <h1>Xian Wallet</h1>
       <div class="spinner" style="margin-top: 16px"></div>
     </div>
@@ -253,7 +289,7 @@ function renderSetup(state: PopupRuntimeState | null): void {
   root.innerHTML = `
     <div class="setup-screen">
       <div class="setup-top">
-        <div class="setup-logo">${ICONS.wallet}</div>
+        <div class="setup-logo"><img src="icon.png" alt="" style="width: 32px; height: 32px; object-fit: contain" /></div>
         <h1>Xian Wallet</h1>
         <p class="muted text-sm">Self-custody for Xian. Keys encrypted locally.</p>
       </div>
@@ -363,9 +399,9 @@ function renderSetup(state: PopupRuntimeState | null): void {
 function renderLocked(state: PopupRuntimeState): void {
   root.innerHTML = `
     <div class="lock-screen">
-      <div class="lock-avatar">${ICONS.lock}</div>
+      <div class="lock-avatar"><img src="icon.png" alt="" style="width: 32px; height: 32px; object-fit: contain" /></div>
       <h1>Xian Wallet</h1>
-      <div class="balance-address-pill" data-copy-address>
+      <div class="balance-address-pill" data-copy-address style="margin-top: 8px">
         ${escapeHtml(truncateAddress(state.publicKey ?? ""))}
         ${ICONS.copy}
       </div>
@@ -436,7 +472,7 @@ function renderUnlocked(state: PopupRuntimeState): void {
     <div class="wallet-app">
       <header class="wallet-header">
         <div class="header-left">
-          <span class="header-brand">Xian</span>
+          <img src="icon.png" alt="Xian" class="header-logo" />
         </div>
         <div class="header-right">
           <span class="header-network">
@@ -489,6 +525,10 @@ function renderTabPanel(state: PopupRuntimeState): string {
    ═══════════════════════════════════════════════════════════ */
 
 function renderHomeTab(state: PopupRuntimeState): string {
+  if (selectedAsset) {
+    return renderTokenDetail(state);
+  }
+
   const hasPending = state.pendingApprovals.length > 0;
 
   const pendingHtml = hasPending
@@ -569,7 +609,7 @@ function renderAssetItem(
       : "";
 
   return `
-    <div class="token-item">
+    <div class="token-item" data-select-token="${escapeAttribute(asset.contract)}">
       <div class="token-icon" style="background: ${color}">${escapeHtml(letter)}</div>
       <div class="token-body">
         <div class="token-name">${escapeHtml(symbol)}</div>
@@ -578,12 +618,105 @@ function renderAssetItem(
       <div class="token-end">
         <div class="token-balance">${balanceHtml}</div>
         <div class="token-fiat">${fiatHtml}</div>
-        ${
-          !isPinned
-            ? `<button class="ghost-sm" data-remove-asset="${escapeAttribute(asset.contract)}" style="margin-top: 2px">Remove</button>`
-            : ""
-        }
       </div>
+    </div>
+  `;
+}
+
+function renderTokenDetail(state: PopupRuntimeState): string {
+  const asset = state.watchedAssets.find(
+    (a) => a.contract === selectedAsset
+  );
+  if (!asset) {
+    selectedAsset = null;
+    return renderHomeTab(state);
+  }
+
+  const symbol = asset.symbol ?? asset.contract.slice(0, 6);
+  const letter = symbol.charAt(0).toUpperCase();
+  const color =
+    asset.contract === "currency"
+      ? "var(--accent-dim)"
+      : assetColor(asset.contract);
+  const isPinned = asset.contract === "currency";
+  const rawBalance = state.assetBalances[asset.contract];
+  const fiat = state.assetFiatValues[asset.contract];
+  const balanceHtml = balancesLoading
+    ? `<span class="skeleton">0,000.00</span>`
+    : escapeHtml(formatBalance(rawBalance, asset.decimals));
+  const fiatHtml = balancesLoading
+    ? `<span class="skeleton">$0.00</span>`
+    : fiat
+      ? escapeHtml(fiat)
+      : "";
+
+  const metaRows = tokenMetaLoading
+    ? `
+        <div class="s-row"><span class="s-row-key">Token name</span><span class="s-row-val"><span class="skeleton">Loading</span></span></div>
+        <div class="s-row"><span class="s-row-key">Symbol</span><span class="s-row-val"><span class="skeleton">Loading</span></span></div>
+        <div class="s-row"><span class="s-row-key">Logo</span><span class="s-row-val"><span class="skeleton">Loading</span></span></div>
+      `
+    : tokenMeta
+      ? `
+          <div class="s-row"><span class="s-row-key">Token name</span><span class="s-row-val">${escapeHtml(tokenMeta.name ?? "—")}</span></div>
+          <div class="s-row"><span class="s-row-key">Symbol</span><span class="s-row-val">${escapeHtml(tokenMeta.symbol ?? "—")}</span></div>
+          <div class="s-row"><span class="s-row-key">Logo</span><span class="s-row-val mono">${escapeHtml(tokenMeta.logoUrl ?? "—")}</span></div>
+        `
+      : `
+          <div class="s-row"><span class="s-row-key">Token name</span><span class="s-row-val muted">Unavailable</span></div>
+          <div class="s-row"><span class="s-row-key">Symbol</span><span class="s-row-val muted">Unavailable</span></div>
+          <div class="s-row"><span class="s-row-key">Logo</span><span class="s-row-val muted">Unavailable</span></div>
+        `;
+
+  return `
+    <div class="token-detail">
+      <button class="detail-back" data-back-to-list>
+        ${ICONS.chevronLeft} Back
+      </button>
+
+      <div class="token-detail-hero">
+        <div class="token-icon" style="width: 48px; height: 48px; font-size: 20px; background: ${color}; margin: 0 auto">
+          ${escapeHtml(letter)}
+        </div>
+        <div class="token-detail-symbol">${escapeHtml(symbol)}</div>
+        <div class="token-detail-name">${escapeHtml(asset.name ?? asset.contract)}</div>
+        <div class="token-detail-balance">${balanceHtml}</div>
+        <div class="token-detail-fiat">${fiatHtml}</div>
+      </div>
+
+      <div class="s-card">
+        <div class="s-card-head">
+          <div><h3 class="s-card-title">Details</h3></div>
+        </div>
+        <div class="s-card-body">
+          <div class="s-row">
+            <span class="s-row-key">Contract</span>
+            <span class="s-row-val mono">${escapeHtml(asset.contract)}</span>
+          </div>
+          ${metaRows}
+        </div>
+      </div>
+
+      <div class="s-card">
+        <div class="s-card-head">
+          <div><h3 class="s-card-title">Display</h3></div>
+        </div>
+        <div class="s-card-body">
+          <form id="decimals-form" class="stack">
+            <label>
+              Decimal places shown in token list
+              <input id="decimals-input" type="number" min="0" max="18" value="${asset.decimals ?? 8}" />
+            </label>
+            <button type="submit" class="secondary">Save</button>
+          </form>
+        </div>
+      </div>
+
+      ${
+        !isPinned
+          ? `<button class="secondary full-width" data-remove-selected-asset>Remove from wallet</button>`
+          : ""
+      }
     </div>
   `;
 }
@@ -1043,26 +1176,82 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     });
   }
 
-  for (const button of root.querySelectorAll<HTMLButtonElement>(
-    "[data-remove-asset]"
+  for (const el of root.querySelectorAll<HTMLElement>(
+    "[data-select-token]"
   )) {
-    button.addEventListener("click", async () => {
-      const contract = button.dataset.removeAsset ?? "";
+    el.addEventListener("click", () => {
+      const contract = el.dataset.selectToken;
+      if (!contract) {
+        return;
+      }
+      selectedAsset = contract;
+      tokenMeta = null;
+      tokenMetaLoading = true;
+      clearFlash();
+      render(state);
+      void fetchTokenMeta(contract);
+    });
+  }
+
+  root
+    .querySelector<HTMLElement>("[data-back-to-list]")
+    ?.addEventListener("click", () => {
+      selectedAsset = null;
+      tokenMeta = null;
+      tokenMetaLoading = false;
+      clearFlash();
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLFormElement>("#decimals-form")
+    ?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const decimals = parseInt(value("#decimals-input"), 10);
+      if (!Number.isFinite(decimals) || decimals < 0 || decimals > 18) {
+        setFlash("Decimals must be between 0 and 18.", "warning");
+        render(state);
+        return;
+      }
       try {
         await sendRuntimeMessage<PopupState>({
-          type: "wallet_remove_asset",
-          contract
+          type: "wallet_update_asset_decimals",
+          contract: selectedAsset!,
+          decimals
         });
         await refresh({
           tone: "success",
-          message: "Asset removed from wallet list."
+          message: "Decimal places updated."
         });
       } catch (error) {
         setFlash(formatError(error), "danger");
         render(state);
       }
     });
-  }
+
+  root
+    .querySelector<HTMLElement>("[data-remove-selected-asset]")
+    ?.addEventListener("click", async () => {
+      const contract = selectedAsset;
+      if (!contract) {
+        return;
+      }
+      try {
+        selectedAsset = null;
+        tokenMeta = null;
+        await sendRuntimeMessage<PopupState>({
+          type: "wallet_remove_asset",
+          contract
+        });
+        await refresh({
+          tone: "success",
+          message: "Asset removed."
+        });
+      } catch (error) {
+        setFlash(formatError(error), "danger");
+        render(state);
+      }
+    });
 
   for (const button of root.querySelectorAll<HTMLButtonElement>(
     "[data-open-approval]"

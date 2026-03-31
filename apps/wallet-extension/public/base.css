@@ -99,6 +99,12 @@ main {
   gap: 6px;
 }
 
+.header-logo {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
 .header-brand {
   font-family: var(--font-display);
   font-weight: 800;
@@ -247,6 +253,82 @@ main {
   width: 14px;
   height: 14px;
   color: var(--text-secondary);
+}
+
+/* ── Token Detail ── */
+
+.token-detail {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.detail-back {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+}
+
+.detail-back:hover {
+  color: var(--text);
+  background: none;
+  transform: none;
+}
+
+.detail-back svg {
+  width: 16px;
+  height: 16px;
+}
+
+.token-detail-hero {
+  text-align: center;
+  padding: 4px 0 8px;
+}
+
+.token-detail-symbol {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  margin-top: 12px;
+}
+
+.token-detail-name {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.token-detail-balance {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text);
+  margin-top: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.token-detail-fiat {
+  font-size: 14px;
+  color: var(--muted);
+  margin-top: 4px;
+  min-height: 20px;
+}
+
+.token-item[data-select-token] {
+  cursor: pointer;
+  transition: background 120ms;
+}
+
+.token-item[data-select-token]:hover {
+  background: rgba(255, 255, 255, 0.03);
 }
 
 /* ── Flash Toast ── */

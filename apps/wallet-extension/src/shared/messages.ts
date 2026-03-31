@@ -130,6 +130,17 @@ export interface WalletGetAssetBalancesRuntimeMessage {
   type: "wallet_get_asset_balances";
 }
 
+export interface WalletGetTokenMetadataRuntimeMessage {
+  type: "wallet_get_token_metadata";
+  contract: string;
+}
+
+export interface WalletUpdateAssetDecimalsRuntimeMessage {
+  type: "wallet_update_asset_decimals";
+  contract: string;
+  decimals: number;
+}
+
 export interface WalletRevealMnemonicRuntimeMessage {
   type: "wallet_reveal_mnemonic";
   password: string;
@@ -173,6 +184,8 @@ export type RuntimeMessage =
   | WalletRemoveAssetRuntimeMessage
   | WalletGetPopupStateRuntimeMessage
   | WalletGetAssetBalancesRuntimeMessage
+  | WalletGetTokenMetadataRuntimeMessage
+  | WalletUpdateAssetDecimalsRuntimeMessage
   | WalletRevealMnemonicRuntimeMessage
   | WalletSetShellModeRuntimeMessage
   | ApprovalGetRuntimeMessage

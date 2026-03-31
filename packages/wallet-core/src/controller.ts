@@ -62,6 +62,12 @@ interface RequestWaiter {
 export interface WalletNetworkClient {
   getChainId(): Promise<string>;
   getBalance(address: string, options?: { contract?: string }): Promise<unknown>;
+  getTokenMetadata(contract: string): Promise<{
+    contract: string;
+    name: string | null;
+    symbol: string | null;
+    logoUrl: string | null;
+  }>;
   buildTx(intent: {
     sender: string;
     contract: string;
@@ -1128,6 +1134,33 @@ export class WalletController {
       return {};
     }
     return this.fetchAssetBalances(state, state.watchedAssets);
+  }
+
+  async getTokenMetadata(contract: string): Promise<{
+    contract: string;
+    name: string | null;
+    symbol: string | null;
+    logoUrl: string | null;
+  }> {
+    const state = this.requireStoredWallet(await this.loadWalletState());
+    return this.currentClient(state).getTokenMetadata(contract);
+  }
+
+  async updateWatchedAssetDecimals(
+    contract: string,
+    decimals: number
+  ): Promise<PopupState> {
+    const state = this.requireStoredWallet(await this.loadWalletState());
+    const idx = state.watchedAssets.findIndex(
+      (asset) => asset.contract === contract
+    );
+    if (idx === -1) {
+      throw new Error(`asset ${contract} is not watched`);
+    }
+    const existing = state.watchedAssets[idx]!;
+    state.watchedAssets[idx] = { ...existing, decimals };
+    await this.store.saveState(state);
+    return this.getPopupState();
   }
 
   private async fetchAssetBalances(
