@@ -1577,7 +1577,10 @@ function bindSetupEvents(): void {
             : `Wallet imported from ${result.importedSeedSource === "mnemonic" ? "recovery phrase" : "private key"}.`,
           "success"
         );
+        balancesLoading =
+          currentState.unlocked && currentState.watchedAssets.length > 0;
         render(currentState);
+        void refreshBalances();
       } catch (error) {
         setFlash(formatError(error), "danger");
         render(currentState);
