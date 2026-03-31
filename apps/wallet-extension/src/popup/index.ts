@@ -653,10 +653,10 @@ function renderUnlocked(state: PopupRuntimeState): void {
           <img src="icon.png" alt="Xian" class="header-logo" />
         </div>
         <div class="header-right">
-          <span class="header-network">
+          <button class="header-network" data-refresh title="Refresh wallet data">
             <span class="header-dot${dotClass}"></span>
             ${escapeHtml(activeNetworkLabel)}
-          </span>
+          </button>
           <button class="header-icon-btn" data-open-dashboard title="Open explorer">${ICONS.globe}</button>
           <button class="header-icon-btn" data-lock title="Lock wallet">${ICONS.lock}</button>
         </div>
@@ -1364,6 +1364,19 @@ function renderSecurityTab(state: PopupRuntimeState): string {
           <p class="muted text-sm" style="margin-top: 8px">Approval requests always open in a dedicated window.</p>
         </div>
       </div>
+
+      <div class="s-card">
+        <div class="s-card-head">
+          <div>
+            <h3 class="s-card-title">Danger zone</h3>
+            <p class="s-card-desc">Destructive actions that cannot be undone.</p>
+          </div>
+        </div>
+        <div class="s-card-body">
+          <p class="muted text-sm">This permanently removes the wallet from the extension. Make sure you have backed up your recovery phrase before proceeding.</p>
+          <button class="ghost full-width" data-remove-wallet style="margin-top: 8px; color: var(--danger); border-color: rgba(255,77,79,0.2)">Remove wallet</button>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -1596,6 +1609,12 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       }
     });
   }
+
+  root
+    .querySelector<HTMLElement>("[data-refresh]")
+    ?.addEventListener("click", async () => {
+      await refresh({ tone: "success", message: "Data refreshed." });
+    });
 
   root
     .querySelector<HTMLElement>("[data-go-send]")
@@ -2046,6 +2065,30 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       }
     });
   }
+
+  root
+    .querySelector<HTMLElement>("[data-remove-wallet]")
+    ?.addEventListener("click", async () => {
+      const confirmed = confirm(
+        "Are you sure you want to remove this wallet? This cannot be undone. Make sure you have your recovery phrase backed up."
+      );
+      if (!confirmed) {
+        return;
+      }
+      try {
+        await sendRuntimeMessage<PopupState>({
+          type: "wallet_remove"
+        });
+        resetSendState();
+        await refresh({
+          tone: "info",
+          message: "Wallet removed."
+        });
+      } catch (error) {
+        setFlash(formatError(error), "danger");
+        render(state);
+      }
+    });
 
   for (const button of root.querySelectorAll<HTMLButtonElement>(
     "[data-switch-network]"

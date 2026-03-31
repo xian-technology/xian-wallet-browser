@@ -1372,6 +1372,34 @@ export class WalletController {
     return this.getPopupState();
   }
 
+  async removeWallet(): Promise<PopupState> {
+    const state = await this.loadWalletState();
+    await this.clearUnlockedSession();
+
+    if (state) {
+      await Promise.all(
+        state.connectedOrigins.map((origin) =>
+          this.emitDisconnectLifecycle(origin)
+        )
+      );
+    }
+
+    const waiters = [...this.requestWaiters.values()];
+    this.requestWaiters.clear();
+    for (const waiter of waiters) {
+      waiter.reject(new ProviderUnauthorizedError("wallet was removed"));
+    }
+    for (const requestState of await this.store.listRequestStates()) {
+      await this.store.deleteRequestState(requestState.requestId);
+    }
+    for (const approval of await this.store.listApprovalStates()) {
+      await this.store.deleteApprovalState(approval.id);
+    }
+
+    await this.store.clearState();
+    return this.getPopupState();
+  }
+
   async updateSettings(input: WalletSettingsInput): Promise<PopupState> {
     const state = this.requireStoredWallet(await this.loadWalletState());
     const activePreset = this.activeNetworkPreset(state);

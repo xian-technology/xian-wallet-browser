@@ -33,6 +33,7 @@ export interface StoredWalletState {
 export interface WalletStateStore {
   loadState(): Promise<StoredWalletState | null>;
   saveState(state: StoredWalletState): Promise<void>;
+  clearState(): Promise<void>;
 }
 
 export interface WalletSerializedError {

@@ -355,6 +355,10 @@ export async function saveWalletState(state: StoredWalletState): Promise<void> {
   }));
 }
 
+export async function clearWalletState(): Promise<void> {
+  await chrome.storage.local.remove(STORAGE_KEY);
+}
+
 export async function loadUnlockedSession(): Promise<StoredUnlockedSession | null> {
   return normalizeUnlockedSession(await sessionStorageGet<unknown>(SESSION_STORAGE_KEY));
 }

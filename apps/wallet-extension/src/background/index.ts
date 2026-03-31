@@ -20,7 +20,8 @@ import {
   saveWalletState,
   saveWalletShellMode,
   deleteRequestState,
-  clearUnlockedSession
+  clearUnlockedSession,
+  clearWalletState
 } from "../shared/storage";
 
 const WALLET_METADATA = {
@@ -111,6 +112,7 @@ const controller = new WalletController({
   store: {
     loadState: loadWalletState,
     saveState: saveWalletState,
+    clearState: clearWalletState,
     loadUnlockedSession,
     saveUnlockedSession,
     clearUnlockedSession,
@@ -256,6 +258,9 @@ chrome.runtime.onMessage.addListener(
             return;
           case "wallet_lock":
             sendResponse(ok(await controller.lockWallet()));
+            return;
+          case "wallet_remove":
+            sendResponse(ok(await controller.removeWallet()));
             return;
           case "wallet_update_settings":
             sendResponse(ok(await controller.updateSettings(message)));

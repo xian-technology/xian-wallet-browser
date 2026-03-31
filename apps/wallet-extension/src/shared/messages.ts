@@ -80,6 +80,10 @@ export interface WalletLockRuntimeMessage {
   type: "wallet_lock";
 }
 
+export interface WalletRemoveRuntimeMessage {
+  type: "wallet_remove";
+}
+
 export interface WalletUpdateSettingsRuntimeMessage {
   type: "wallet_update_settings";
   networkName?: string;
@@ -195,6 +199,7 @@ export type RuntimeMessage =
   | WalletCreateRuntimeMessage
   | WalletUnlockRuntimeMessage
   | WalletLockRuntimeMessage
+  | WalletRemoveRuntimeMessage
   | WalletUpdateSettingsRuntimeMessage
   | WalletSaveNetworkPresetRuntimeMessage
   | WalletSwitchNetworkRuntimeMessage
