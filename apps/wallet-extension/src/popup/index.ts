@@ -67,7 +67,7 @@ let tokenMetaGeneration = 0;
 
 /* ── Send tab state ────────────────────────────────────────── */
 
-type TxArgType = "str" | "int" | "float" | "bool";
+type TxArgType = "str" | "int" | "float" | "bool" | "dict" | "list" | "datetime" | "timedelta" | "Any";
 type SendStep = "draft" | "review" | "sending" | "result";
 
 interface TxArg {
@@ -75,6 +75,7 @@ interface TxArg {
   name: string;
   value: string;
   type: TxArgType;
+  fixed?: boolean;
 }
 
 let sendStep: SendStep = "draft";
@@ -93,7 +94,7 @@ let sendResult: {
   message?: unknown;
 } | null = null;
 let argIdCounter = 0;
-let contractMethods: string[] = [];
+let contractMethods: { name: string; arguments: { name: string; type: string }[] }[] = [];
 let contractMethodsLoading = false;
 let contractMethodsError: string | null = null;
 let contractMethodsFor: string | null = null;
@@ -135,9 +136,35 @@ function captureSendFormState(): void {
   }
 }
 
+function mapContractType(annotation: string): TxArgType {
+  switch (annotation) {
+    case "str":
+      return "str";
+    case "int":
+      return "int";
+    case "float":
+      return "float";
+    case "bool":
+      return "bool";
+    case "dict":
+      return "dict";
+    case "list":
+      return "list";
+    case "datetime.datetime":
+      return "datetime";
+    case "datetime.timedelta":
+      return "timedelta";
+    case "Any":
+      return "Any";
+    default:
+      return "str";
+  }
+}
+
 function parseArgValue(val: string, type: TxArgType): unknown {
   switch (type) {
     case "str":
+    case "Any":
       return val;
     case "int": {
       const n = parseInt(val, 10);
@@ -149,6 +176,36 @@ function parseArgValue(val: string, type: TxArgType): unknown {
     }
     case "bool":
       return val.toLowerCase() === "true" || val === "1";
+    case "dict":
+    case "list":
+      try {
+        return JSON.parse(val);
+      } catch {
+        return val;
+      }
+    case "datetime": {
+      const d = new Date(val);
+      if (Number.isNaN(d.getTime())) {
+        return val;
+      }
+      return {
+        __time__: [
+          d.getFullYear(),
+          d.getMonth() + 1,
+          d.getDate(),
+          d.getHours(),
+          d.getMinutes(),
+          d.getSeconds()
+        ]
+      };
+    }
+    case "timedelta": {
+      const secs = parseInt(val, 10);
+      if (!Number.isFinite(secs)) {
+        return val;
+      }
+      return { __delta__: [Math.floor(secs / 86400), secs % 86400] };
+    }
   }
 }
 
@@ -903,18 +960,49 @@ function renderSendTab(_state: PopupRuntimeState): string {
   }
 }
 
+function renderArgValueInput(arg: TxArg): string {
+  switch (arg.type) {
+    case "bool":
+      return `<select class="arg-value"><option value="true" ${arg.value === "true" ? "selected" : ""}>true</option><option value="false" ${arg.value !== "true" ? "selected" : ""}>false</option></select>`;
+    case "datetime":
+      return `<input type="datetime-local" class="arg-value" value="${escapeAttribute(arg.value)}" />`;
+    case "timedelta":
+      return `<input type="number" class="arg-value" value="${escapeAttribute(arg.value)}" placeholder="seconds" />`;
+    case "dict":
+      return `<input class="arg-value" value="${escapeAttribute(arg.value)}" placeholder='{"key": "value"}' />`;
+    case "list":
+      return `<input class="arg-value" value="${escapeAttribute(arg.value)}" placeholder='[1, 2, 3]' />`;
+    default:
+      return `<input class="arg-value" value="${escapeAttribute(arg.value)}" placeholder="value" />`;
+  }
+}
+
+const ARG_TYPE_OPTIONS: TxArgType[] = [
+  "str",
+  "int",
+  "float",
+  "bool",
+  "dict",
+  "list",
+  "datetime",
+  "timedelta",
+  "Any"
+];
+
 function renderArgRow(arg: TxArg): string {
+  const nameAttrs = arg.fixed ? "readonly" : "";
+  const typeAttrs = arg.fixed ? "disabled" : "";
+  const typeOptions = ARG_TYPE_OPTIONS.map(
+    (t) =>
+      `<option value="${t}" ${arg.type === t ? "selected" : ""}>${t}</option>`
+  ).join("");
+
   return `
     <div class="arg-row" data-arg-id="${escapeAttribute(arg.id)}">
-      <input class="arg-name" value="${escapeAttribute(arg.name)}" placeholder="name" />
-      <input class="arg-value" value="${escapeAttribute(arg.value)}" placeholder="value" />
-      <select class="arg-type">
-        <option value="str" ${arg.type === "str" ? "selected" : ""}>str</option>
-        <option value="int" ${arg.type === "int" ? "selected" : ""}>int</option>
-        <option value="float" ${arg.type === "float" ? "selected" : ""}>float</option>
-        <option value="bool" ${arg.type === "bool" ? "selected" : ""}>bool</option>
-      </select>
-      <button class="ghost-sm" data-remove-arg="${escapeAttribute(arg.id)}">×</button>
+      <input class="arg-name" value="${escapeAttribute(arg.name)}" placeholder="name" ${nameAttrs} />
+      ${renderArgValueInput(arg)}
+      <select class="arg-type" ${typeAttrs}>${typeOptions}</select>
+      ${arg.fixed ? "" : `<button class="ghost-sm" data-remove-arg="${escapeAttribute(arg.id)}">×</button>`}
     </div>
   `;
 }
@@ -935,7 +1023,7 @@ function renderFunctionSelect(): string {
     const options = contractMethods
       .map(
         (m) =>
-          `<option value="${escapeAttribute(m)}" ${m === sendFunction ? "selected" : ""}>${escapeHtml(m)}</option>`
+          `<option value="${escapeAttribute(m.name)}" ${m.name === sendFunction ? "selected" : ""}>${escapeHtml(m.name)}</option>`
       )
       .join("");
     return `
@@ -1623,7 +1711,9 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       render(state);
 
       try {
-        contractMethods = await sendRuntimeMessage<string[]>({
+        contractMethods = await sendRuntimeMessage<
+          typeof contractMethods
+        >({
           type: "wallet_get_contract_methods",
           contract: contractName
         });
@@ -1639,6 +1729,27 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       if (contractMethodsFor === contractName) {
         render(state);
       }
+    });
+
+  root
+    .querySelector<HTMLSelectElement>("#send-function")
+    ?.addEventListener("change", () => {
+      captureSendFormState();
+      const method = contractMethods.find(
+        (m) => m.name === sendFunction
+      );
+      if (method) {
+        sendArgs = method.arguments.map((a) => ({
+          id: String(++argIdCounter),
+          name: a.name,
+          value: "",
+          type: mapContractType(a.type),
+          fixed: true
+        }));
+      } else {
+        sendArgs = [];
+      }
+      render(state);
     });
 
   root

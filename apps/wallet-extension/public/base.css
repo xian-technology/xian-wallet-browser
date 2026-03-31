@@ -360,6 +360,16 @@ main {
   flex-shrink: 0;
 }
 
+.arg-row input[readonly] {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.arg-row select:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .send-centered {
   display: flex;
   flex-direction: column;

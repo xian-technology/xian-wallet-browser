@@ -74,7 +74,7 @@ export interface WalletNetworkClient {
     function: string;
     kwargs: Record<string, unknown>;
   }): Promise<{ estimated: number; suggested: number }>;
-  getContractMethods(contract: string): Promise<string[]>;
+  getContractMethods(contract: string): Promise<{ name: string; arguments: { name: string; type: string }[] }[]>;
   buildTx(intent: {
     sender: string;
     contract: string;
@@ -1202,7 +1202,9 @@ export class WalletController {
     return this.sendPreparedTransaction(state, tx, { mode: "commit" });
   }
 
-  async getContractMethods(contract: string): Promise<string[]> {
+  async getContractMethods(
+    contract: string
+  ): Promise<{ name: string; arguments: { name: string; type: string }[] }[]> {
     const state = this.requireStoredWallet(await this.loadWalletState());
     return this.currentClient(state).getContractMethods(contract);
   }
