@@ -16,6 +16,10 @@ if (!appRoot) {
 
 const root = appRoot;
 
+const toastRoot = document.createElement("div");
+toastRoot.id = "toast-root";
+document.body.appendChild(toastRoot);
+
 /* ── Types ─────────────────────────────────────────────────── */
 
 type PopupTab = "home" | "send" | "apps" | "security";
@@ -287,11 +291,15 @@ function generateQrSvg(text: string): string {
 
 /* ── Flash ─────────────────────────────────────────────────── */
 
-function flashHtml(): string {
+function renderToast(): void {
   if (!flash) {
-    return "";
+    toastRoot.innerHTML = "";
+    return;
   }
-  return `<div class="flash-toast flash-${flash.tone}">${escapeHtml(flash.message)}</div>`;
+  const html = `<div class="flash-toast flash-${flash.tone}">${escapeHtml(flash.message)}</div>`;
+  if (toastRoot.innerHTML !== html) {
+    toastRoot.innerHTML = html;
+  }
 }
 
 let flashTimer: ReturnType<typeof setTimeout> | null = null;
@@ -457,15 +465,12 @@ async function fetchTokenMeta(contract: string): Promise<void> {
 function render(state: PopupRuntimeState | null): void {
   if (!state || !state.hasWallet) {
     renderSetup(state);
-    return;
-  }
-
-  if (!state.unlocked) {
+  } else if (!state.unlocked) {
     renderLocked(state);
-    return;
+  } else {
+    renderUnlocked(state);
   }
-
-  renderUnlocked(state);
+  renderToast();
 }
 
 function renderLoading(): void {
@@ -496,8 +501,6 @@ function renderSetup(state: PopupRuntimeState | null): void {
         <h1>Xian Wallet</h1>
         <p class="muted text-sm">Self-custody for Xian. Keys encrypted locally.</p>
       </div>
-
-      ${flashHtml()}
 
       <div class="setup-form">
         <div class="segmented tab-bar" role="tablist" aria-label="Wallet setup mode">
@@ -609,7 +612,6 @@ function renderLocked(state: PopupRuntimeState): void {
         ${ICONS.copy}
       </div>
       <p class="muted text-sm" style="margin-top: 8px">${escapeHtml(popupStateBanner(state))}</p>
-      ${flash ? `<div class="flash-toast flash-${flash.tone}" style="margin-top: 12px; width: 100%; max-width: 300px">${escapeHtml(flash.message)}</div>` : ""}
       <form id="unlock-form" class="lock-body">
         <label>
           Password
@@ -646,8 +648,8 @@ function renderLocked(state: PopupRuntimeState): void {
           tone: "success",
           message: "Wallet unlocked."
         });
-      } catch (error) {
-        setFlash(formatError(error), "danger");
+      } catch {
+        setFlash("Invalid password.", "danger");
         renderLocked(state);
       }
     });
@@ -690,7 +692,6 @@ function renderUnlocked(state: PopupRuntimeState): void {
       <div class="wallet-content">
         ${renderTabPanel(state)}
       </div>
-      ${flashHtml()}
       <nav class="wallet-nav">
         <button class="nav-item ${activeTab === "home" ? "is-active" : ""}" data-tab="home">
           ${ICONS.home}
