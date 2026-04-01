@@ -1144,7 +1144,7 @@ function renderApprovalInline(view: ApprovalView): string {
    SEND TAB
    ═══════════════════════════════════════════════════════════ */
 
-function renderSendTab(_state: PopupRuntimeState): string {
+function renderSendTab(state: PopupRuntimeState): string {
   switch (sendStep) {
     case "draft":
       return renderSendDraft();
@@ -1153,7 +1153,7 @@ function renderSendTab(_state: PopupRuntimeState): string {
     case "sending":
       return renderSendSending();
     case "result":
-      return renderSendResult();
+      return renderSendResult(state);
   }
 }
 
@@ -1366,43 +1366,37 @@ function renderSendSending(): string {
   `;
 }
 
-function renderSendResult(): string {
+function renderSendResult(state: PopupRuntimeState): string {
   if (!sendResult) {
     return renderSendDraft();
   }
   const ok = sendResult.finalized || sendResult.accepted === true;
-  const tone = sendResult.finalized
-    ? "success"
-    : sendResult.accepted
-      ? "info"
-      : "danger";
-  const label = sendResult.finalized
-    ? "Transaction finalized"
-    : sendResult.accepted
-      ? "Transaction accepted"
-      : sendResult.submitted
-        ? "Transaction submitted but not accepted"
-        : "Transaction failed";
+  const explorerBase = state.dashboardUrl
+    ? state.dashboardUrl.replace(/\/+$/, "") + "/explorer/tx/"
+    : null;
+  const hashLink =
+    sendResult.txHash && explorerBase
+      ? `<a href="${escapeAttribute(explorerBase + sendResult.txHash)}" target="_blank" rel="noopener" style="color: var(--accent); text-decoration: none" title="${escapeAttribute(sendResult.txHash)}">${escapeHtml(truncateHash(sendResult.txHash))}</a>`
+      : sendResult.txHash
+        ? `<span title="${escapeAttribute(sendResult.txHash)}">${escapeHtml(truncateHash(sendResult.txHash))}</span>`
+        : null;
 
   return `
     <div class="settings-wrap">
-      <div class="banner banner-${tone}">
-        <strong>${escapeHtml(label)}</strong>
-        ${
-          sendResult.message && !ok
-            ? `<p class="text-sm" style="margin-top: 4px">${escapeHtml(String(sendResult.message))}</p>`
-            : ""
-        }
-      </div>
+      ${
+        !ok && sendResult.message
+          ? `<div class="banner banner-danger"><strong>Transaction failed</strong><p class="text-sm" style="margin-top: 4px">${escapeHtml(String(sendResult.message))}</p></div>`
+          : ""
+      }
 
       ${
-        sendResult.txHash
+        hashLink
           ? `
               <div class="s-card">
                 <div class="s-card-body">
                   <div class="s-row">
                     <span class="s-row-key">TX Hash</span>
-                    <span class="s-row-val mono" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px" title="${escapeAttribute(sendResult.txHash)}">${escapeHtml(truncateHash(sendResult.txHash))}</span>
+                    <span class="s-row-val mono" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px">${hashLink}</span>
                   </div>
                 </div>
               </div>
@@ -2109,6 +2103,18 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           stamps
         });
         sendStep = "result";
+        const ok =
+          sendResult?.finalized || sendResult?.accepted === true;
+        setFlash(
+          ok
+            ? sendResult?.finalized
+              ? "Transaction finalized."
+              : "Transaction accepted."
+            : sendResult?.submitted
+              ? "Transaction submitted but not accepted."
+              : "Transaction failed.",
+          ok ? "success" : "danger"
+        );
         render(state);
       } catch (error) {
         sendStep = "review";
