@@ -1456,19 +1456,6 @@ function renderSecurityTab(state: PopupRuntimeState): string {
         </div>
       </div>
 
-      <!-- Security -->
-      <div class="s-card">
-        <div class="s-card-head">
-          <div>
-            <h3 class="s-card-title">Security</h3>
-            <p class="s-card-desc">${escapeHtml(state.seedSource === "mnemonic" ? "Phrase-backed wallet" : "Private key wallet")}.</p>
-          </div>
-        </div>
-        <div class="s-card-body stack">
-          ${renderExportSection(state)}
-        </div>
-      </div>
-
       <!-- Networks -->
       <div class="s-card">
         <div class="s-card-head">
@@ -1481,6 +1468,19 @@ function renderSecurityTab(state: PopupRuntimeState): string {
         <div class="s-card-body">
           ${state.networkPresets.map((p) => renderPresetItem(state, p)).join("")}
           ${renderNetworkEditor(state)}
+        </div>
+      </div>
+
+      <!-- Security -->
+      <div class="s-card">
+        <div class="s-card-head">
+          <div>
+            <h3 class="s-card-title">Security</h3>
+            <p class="s-card-desc">${escapeHtml(state.seedSource === "mnemonic" ? "Phrase-backed wallet" : "Private key wallet")}.</p>
+          </div>
+        </div>
+        <div class="s-card-body stack">
+          ${renderExportSection(state)}
         </div>
       </div>
 
@@ -1524,6 +1524,7 @@ function renderSecurityTab(state: PopupRuntimeState): string {
 
 function renderExportSection(state: PopupRuntimeState): string {
   const hasMnemonic = state.hasRecoveryPhrase;
+  const anyRevealed = !!generatedMnemonic || !!revealedMnemonic || !!revealedPrivateKey;
 
   // Revealed secrets
   const secrets: string[] = [];
@@ -1537,8 +1538,14 @@ function renderExportSection(state: PopupRuntimeState): string {
     secrets.push(renderSecretCard("Private key", revealedPrivateKey));
   }
 
+  if (anyRevealed) {
+    return `
+      ${secrets.join("")}
+      <button class="secondary full-width" data-hide-secrets>Hide</button>
+    `;
+  }
+
   return `
-    ${secrets.join("")}
     <form id="export-form" class="stack">
       <label>
         Password
@@ -1657,7 +1664,7 @@ function toneForNetworkStatus(
 function networkStatusLabel(state: PopupRuntimeState): string {
   switch (state.networkStatus) {
     case "ready":
-      return `Ready on ${state.chainId ?? "current chain"}`;
+      return "Ready";
     case "unreachable":
       return "RPC unreachable";
     case "mismatch":
@@ -2411,6 +2418,15 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         setFlash(formatError(error), "danger");
         render(state);
       }
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-hide-secrets]")
+    ?.addEventListener("click", () => {
+      revealedMnemonic = null;
+      revealedPrivateKey = null;
+      generatedMnemonic = null;
+      render(state);
     });
 }
 
