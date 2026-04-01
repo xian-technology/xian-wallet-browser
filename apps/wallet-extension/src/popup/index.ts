@@ -306,20 +306,20 @@ let flashTimer: ReturnType<typeof setTimeout> | null = null;
 
 function setFlash(message: string, tone: FlashTone = "info"): void {
   flash = { message, tone };
+  renderToast();
   if (flashTimer) {
     clearTimeout(flashTimer);
   }
   flashTimer = setTimeout(() => {
     flash = null;
     flashTimer = null;
-    if (currentState) {
-      render(currentState);
-    }
+    renderToast();
   }, 3000);
 }
 
 function clearFlash(): void {
   flash = null;
+  renderToast();
   if (flashTimer) {
     clearTimeout(flashTimer);
     flashTimer = null;
@@ -1316,7 +1316,7 @@ function renderSendDraft(): string {
 function renderSendReview(): string {
   const entries = sendParsedKwargs ? Object.entries(sendParsedKwargs) : [];
   const stampsLabel = sendEstimate
-    ? `${sendEstimate.suggested.toLocaleString()} (estimated ${sendEstimate.estimated.toLocaleString()} + margin)`
+    ? sendEstimate.estimated.toLocaleString()
     : Number(sendManualStamps).toLocaleString();
 
   return `
@@ -2090,7 +2090,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
 
       const stamps =
         sendEstimateMode && sendEstimate
-          ? sendEstimate.suggested
+          ? sendEstimate.estimated
           : parseInt(sendManualStamps, 10) || undefined;
 
       try {

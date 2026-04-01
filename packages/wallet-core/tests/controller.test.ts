@@ -669,6 +669,106 @@ describe("@xian-tech/wallet-core controller", () => {
     );
   });
 
+  it("unlocks without waiting for reconnect lifecycle broadcasts", async () => {
+    const store = createStore();
+    const client = createClient();
+    const controllerA = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined)
+    });
+
+    await controllerA.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+    await store.saveState({
+      ...(store.current() as StoredWalletState),
+      connectedOrigins: [ORIGIN]
+    });
+    await store.clearUnlockedSession();
+
+    const controllerB = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined),
+      onProviderEvent: vi.fn(() => new Promise<void>(() => undefined))
+    });
+
+    const unlocked = await Promise.race([
+      controllerB.unlockWallet("secret"),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error("unlock timed out"));
+        }, 50);
+      })
+    ]);
+
+    expect(unlocked.unlocked).toBe(true);
+  });
+
+  it("treats stalled chain id lookups as unreachable in popup state", async () => {
+    const store = createStore();
+    const setupController = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => createClient(),
+      onApprovalRequested: vi.fn(async () => undefined)
+    });
+
+    await setupController.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+
+    vi.useFakeTimers();
+    try {
+      const controller = new WalletController({
+        wallet: {
+          id: "xian-wallet",
+          name: "Xian Wallet",
+          rdns: "org.xian.wallet"
+        },
+        version: "0.1.0-test",
+        store,
+        createClient: () => ({
+          ...createClient(),
+          getChainId: vi.fn(() => new Promise<string>(() => undefined))
+        }),
+        onApprovalRequested: vi.fn(async () => undefined)
+      });
+
+      const popupPromise = controller.getPopupState();
+      await vi.runOnlyPendingTimersAsync();
+
+      await expect(popupPromise).resolves.toMatchObject({
+        hasWallet: true,
+        unlocked: true,
+        resolvedChainId: undefined,
+        networkStatus: "unreachable"
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("requires a new connect approval after a site disconnects", async () => {
     const store = createStore();
     const client = createClient();

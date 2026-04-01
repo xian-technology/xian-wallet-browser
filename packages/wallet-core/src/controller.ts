@@ -59,6 +59,8 @@ interface RequestWaiter {
   reject(error: unknown): void;
 }
 
+const SAFE_CHAIN_ID_LOOKUP_TIMEOUT_MS = 2_000;
+
 export interface WalletNetworkClient {
   getChainId(): Promise<string>;
   getBalance(address: string, options?: { contract?: string }): Promise<unknown>;
@@ -501,9 +503,33 @@ export class WalletController {
       return undefined;
     }
     try {
-      return await this.currentClient(state).getChainId();
+      return await this.withTimeout(
+        this.currentClient(state).getChainId(),
+        SAFE_CHAIN_ID_LOOKUP_TIMEOUT_MS
+      );
     } catch {
       return undefined;
+    }
+  }
+
+  private async withTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number
+  ): Promise<T> {
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<never>((_, reject) => {
+          timeoutId = globalThis.setTimeout(() => {
+            reject(new Error("operation timed out"));
+          }, timeoutMs);
+        })
+      ]);
+    } finally {
+      if (timeoutId !== undefined) {
+        globalThis.clearTimeout(timeoutId);
+      }
     }
   }
 
@@ -670,6 +696,24 @@ export class WalletController {
       "disconnect",
       [{ code: 4100, message: "wallet disconnected" }],
       origin
+    );
+  }
+
+  private async notifyUnlockedOrigins(state: StoredWalletState): Promise<void> {
+    if (state.connectedOrigins.length === 0) {
+      return;
+    }
+
+    const chainId =
+      this.displayChainId(
+        this.activeNetworkPreset(state),
+        await this.safeGetChainId(state)
+      ) ?? "unknown";
+
+    await Promise.allSettled(
+      state.connectedOrigins.map((origin) =>
+        this.emitConnectionLifecycle(origin, chainId, state.publicKey)
+      )
     );
   }
 
@@ -1337,16 +1381,7 @@ export class WalletController {
     this.unlockedPrivateKey = privateKey;
     this.unlockedSigner = signer;
     await this.persistUnlockedSession(privateKey);
-
-    const chainId = this.displayChainId(
-      this.activeNetworkPreset(state),
-      await this.safeGetChainId(state)
-    );
-    await Promise.all(
-      state.connectedOrigins.map((origin) =>
-        this.emitConnectionLifecycle(origin, chainId ?? "unknown", state.publicKey)
-      )
-    );
+    void this.notifyUnlockedOrigins(state);
 
     return this.getPopupState();
   }
