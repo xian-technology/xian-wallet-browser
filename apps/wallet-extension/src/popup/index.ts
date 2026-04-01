@@ -650,7 +650,7 @@ function renderLocked(state: PopupRuntimeState): void {
         });
       } catch {
         setFlash("Invalid password.", "danger");
-        renderLocked(state);
+        render(currentState);
       }
     });
 }
