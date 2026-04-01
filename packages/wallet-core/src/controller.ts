@@ -1394,6 +1394,11 @@ export class WalletController {
     return decryptMnemonic(state.encryptedMnemonic, password);
   }
 
+  async revealPrivateKey(password: string): Promise<string> {
+    const state = this.requireStoredWallet(await this.loadWalletState());
+    return decryptPrivateKey(state.encryptedPrivateKey, password);
+  }
+
   async lockWallet(): Promise<PopupState> {
     const state = await this.loadWalletState();
     await this.clearUnlockedSession();

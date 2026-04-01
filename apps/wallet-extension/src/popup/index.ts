@@ -63,6 +63,7 @@ const ICONS = {
 let currentState: PopupRuntimeState | null = null;
 let generatedMnemonic: string | null = null;
 let revealedMnemonic: string | null = null;
+let revealedPrivateKey: string | null = null;
 let activeTab: PopupTab = "home";
 let setupMode: SetupMode = "create";
 let flash: FlashMessage | null = null;
@@ -335,6 +336,7 @@ function setActiveTab(tab: PopupTab): void {
   tokenMetaLoading = false;
   showReceive = false;
   activeApprovalId = null;
+  revealedPrivateKey = null;
   if (currentState) {
     render(currentState);
   }
@@ -1430,37 +1432,44 @@ function renderSecurityTab(state: PopupRuntimeState): string {
     <div class="settings-wrap">
       ${networkWarnings.join("")}
 
+      <!-- Status -->
       <div class="s-card">
         <div class="s-card-head">
           <div>
-            <h3 class="s-card-title">Security</h3>
-            <p class="s-card-desc">Wallet and network status.</p>
+            <h3 class="s-card-title">Status</h3>
+            <p class="s-card-desc">Wallet and network overview.</p>
           </div>
         </div>
         <div class="s-card-body">
           <div class="s-row">
-            <span class="s-row-key">Type</span>
-            <span class="s-row-val">${escapeHtml(state.seedSource === "mnemonic" ? "Phrase-backed" : "Private key")}</span>
-          </div>
-          <div class="s-row">
-            <span class="s-row-key">Backup</span>
-            <span class="s-row-val">${escapeHtml(state.hasRecoveryPhrase ? "Phrase stored" : "No phrase")}</span>
+            <span class="s-row-key">Preset</span>
+            <span class="s-row-val">${escapeHtml(state.activeNetworkName ?? "Unknown")}</span>
           </div>
           <div class="s-row">
             <span class="s-row-key">Chain</span>
             <span class="s-row-val">${escapeHtml(state.chainId ?? "Unreachable")}</span>
           </div>
           <div class="s-row">
-            <span class="s-row-key">Preset</span>
-            <span class="s-row-val">${escapeHtml(state.activeNetworkName ?? "Unknown")}</span>
-          </div>
-          <div class="s-row">
-            <span class="s-row-key">Status</span>
+            <span class="s-row-key">Network</span>
             <span class="s-row-val">${escapeHtml(networkStatusLabel(state))}</span>
           </div>
         </div>
       </div>
 
+      <!-- Security -->
+      <div class="s-card">
+        <div class="s-card-head">
+          <div>
+            <h3 class="s-card-title">Security</h3>
+            <p class="s-card-desc">${escapeHtml(state.seedSource === "mnemonic" ? "Phrase-backed wallet" : "Private key wallet")}.</p>
+          </div>
+        </div>
+        <div class="s-card-body stack">
+          ${renderExportSection(state)}
+        </div>
+      </div>
+
+      <!-- Networks -->
       <div class="s-card">
         <div class="s-card-head">
           <div>
@@ -1475,8 +1484,7 @@ function renderSecurityTab(state: PopupRuntimeState): string {
         </div>
       </div>
 
-      ${renderRecoveryCard(state)}
-
+      <!-- Open behavior -->
       <div class="s-card">
         <div class="s-card-head">
           <div>
@@ -1497,6 +1505,7 @@ function renderSecurityTab(state: PopupRuntimeState): string {
         </div>
       </div>
 
+      <!-- Danger zone -->
       <div class="s-card">
         <div class="s-card-head">
           <div>
@@ -1510,6 +1519,36 @@ function renderSecurityTab(state: PopupRuntimeState): string {
         </div>
       </div>
     </div>
+  `;
+}
+
+function renderExportSection(state: PopupRuntimeState): string {
+  const hasMnemonic = state.hasRecoveryPhrase;
+
+  // Revealed secrets
+  const secrets: string[] = [];
+  if (generatedMnemonic) {
+    secrets.push(renderPhraseCard("Write this down now", generatedMnemonic, "warning"));
+  }
+  if (revealedMnemonic && revealedMnemonic !== generatedMnemonic) {
+    secrets.push(renderPhraseCard("Recovery phrase", revealedMnemonic, "info"));
+  }
+  if (revealedPrivateKey) {
+    secrets.push(renderSecretCard("Private key", revealedPrivateKey));
+  }
+
+  return `
+    ${secrets.join("")}
+    <form id="export-form" class="stack">
+      <label>
+        Password
+        <input id="export-password" type="password" required autocomplete="current-password" />
+      </label>
+      <div style="display: flex; gap: 8px">
+        ${hasMnemonic ? `<button type="submit" class="secondary full-width" data-export-mnemonic>Show phrase</button>` : ""}
+        <button type="submit" class="secondary full-width" data-export-private-key>Show private key</button>
+      </div>
+    </form>
   `;
 }
 
@@ -1578,46 +1617,11 @@ function renderNetworkEditor(state: PopupRuntimeState): string {
   `;
 }
 
-function renderRecoveryCard(state: PopupRuntimeState): string {
-  if (!state.hasRecoveryPhrase) {
-    return `
-      <div class="s-card">
-        <div class="s-card-head">
-          <div>
-            <h3 class="s-card-title">Recovery phrase</h3>
-            <p class="s-card-desc">Imported from private key. No phrase stored.</p>
-          </div>
-        </div>
-        <div class="s-card-body">
-          <p class="muted text-sm">Consider migrating to a phrase-backed wallet for better recovery options.</p>
-        </div>
-      </div>
-    `;
-  }
-
+function renderSecretCard(title: string, secret: string): string {
   return `
-    <div class="s-card">
-      <div class="s-card-head">
-        <div>
-          <h3 class="s-card-title">Recovery phrase</h3>
-          <p class="s-card-desc">${state.mnemonicWordCount ?? 12}-word phrase. Reveal on a trusted device only.</p>
-        </div>
-      </div>
-      <div class="s-card-body stack">
-        ${generatedMnemonic ? renderPhraseCard("Write this down now", generatedMnemonic, "warning") : ""}
-        ${
-          revealedMnemonic && revealedMnemonic !== generatedMnemonic
-            ? renderPhraseCard("Recovered phrase", revealedMnemonic, "info")
-            : ""
-        }
-        <form id="recovery-form" class="stack">
-          <label>
-            Password
-            <input id="recovery-password" type="password" required autocomplete="current-password" />
-          </label>
-          <button type="submit" class="secondary">Reveal recovery phrase</button>
-        </form>
-      </div>
+    <div class="banner banner-info">
+      <strong>${escapeHtml(title)}</strong>
+      <div class="recovery-phrase">${escapeHtml(secret)}</div>
     </div>
   `;
 }
@@ -2376,18 +2380,32 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     });
 
   root
-    .querySelector<HTMLFormElement>("#recovery-form")
-    ?.addEventListener("submit", async (event) => {
+    .querySelector<HTMLElement>("[data-export-mnemonic]")
+    ?.addEventListener("click", async (event) => {
       event.preventDefault();
       try {
         revealedMnemonic = await sendRuntimeMessage<string>({
           type: "wallet_reveal_mnemonic",
-          password: value("#recovery-password")
+          password: value("#export-password")
         });
-        setFlash(
-          "Recovery phrase revealed. Store it offline.",
-          "warning"
-        );
+        setFlash("Recovery phrase revealed. Store it offline.", "warning");
+        render(state);
+      } catch (error) {
+        setFlash(formatError(error), "danger");
+        render(state);
+      }
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-export-private-key]")
+    ?.addEventListener("click", async (event) => {
+      event.preventDefault();
+      try {
+        revealedPrivateKey = await sendRuntimeMessage<string>({
+          type: "wallet_reveal_private_key",
+          password: value("#export-password")
+        });
+        setFlash("Private key revealed. Store it offline.", "warning");
         render(state);
       } catch (error) {
         setFlash(formatError(error), "danger");

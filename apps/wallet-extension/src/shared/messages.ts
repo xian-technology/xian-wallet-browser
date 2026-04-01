@@ -170,6 +170,11 @@ export interface WalletRevealMnemonicRuntimeMessage {
   password: string;
 }
 
+export interface WalletRevealPrivateKeyRuntimeMessage {
+  type: "wallet_reveal_private_key";
+  password: string;
+}
+
 export interface WalletSetShellModeRuntimeMessage {
   type: "wallet_set_shell_mode";
   shellMode: WalletShellMode;
@@ -215,6 +220,7 @@ export type RuntimeMessage =
   | WalletSendDirectTransactionRuntimeMessage
   | WalletGetContractMethodsRuntimeMessage
   | WalletRevealMnemonicRuntimeMessage
+  | WalletRevealPrivateKeyRuntimeMessage
   | WalletSetShellModeRuntimeMessage
   | ApprovalGetRuntimeMessage
   | ApprovalResolveRuntimeMessage

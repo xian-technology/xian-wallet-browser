@@ -305,6 +305,9 @@ chrome.runtime.onMessage.addListener(
           case "wallet_reveal_mnemonic":
             sendResponse(ok(await controller.revealMnemonic(message.password)));
             return;
+          case "wallet_reveal_private_key":
+            sendResponse(ok(await controller.revealPrivateKey(message.password)));
+            return;
           case "wallet_set_shell_mode":
             sendResponse(ok(await setShellMode(message.shellMode)));
             return;
