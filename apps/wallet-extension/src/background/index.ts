@@ -322,6 +322,12 @@ chrome.runtime.onMessage.addListener(
           case "wallet_remove_account":
             sendResponse(ok(await controller.removeAccount(message.index)));
             return;
+          case "wallet_export":
+            sendResponse(ok(await controller.exportWallet(message.password)));
+            return;
+          case "wallet_import_backup":
+            sendResponse(ok(await controller.importWalletBackup(message.backup, message.password)));
+            return;
           case "wallet_reveal_mnemonic":
             sendResponse(ok(await controller.revealMnemonic(message.password)));
             return;

@@ -201,6 +201,25 @@ export interface WalletRemoveAccountRuntimeMessage {
   index: number;
 }
 
+export interface WalletExportRuntimeMessage {
+  type: "wallet_export";
+  password: string;
+}
+
+export interface WalletImportBackupRuntimeMessage {
+  type: "wallet_import_backup";
+  backup: {
+    version: 1;
+    type: "privateKey" | "mnemonic";
+    mnemonic?: string;
+    privateKey?: string;
+    accounts?: Array<{ index: number; name: string }>;
+    networkPresets?: Array<{ id: string; name: string; chainId?: string; rpcUrl: string; dashboardUrl?: string }>;
+    watchedAssets?: Array<{ contract: string; name?: string; symbol?: string; icon?: string; decimals?: number }>;
+  };
+  password: string;
+}
+
 export interface WalletRevealMnemonicRuntimeMessage {
   type: "wallet_reveal_mnemonic";
   password: string;
@@ -270,6 +289,8 @@ export type RuntimeMessage =
   | WalletSwitchAccountRuntimeMessage
   | WalletRenameAccountRuntimeMessage
   | WalletRemoveAccountRuntimeMessage
+  | WalletExportRuntimeMessage
+  | WalletImportBackupRuntimeMessage
   | WalletRevealMnemonicRuntimeMessage
   | WalletRevealPrivateKeyRuntimeMessage
   | WalletSetShellModeRuntimeMessage

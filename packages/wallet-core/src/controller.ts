@@ -45,6 +45,7 @@ import type {
   StoredUnlockedSession,
   StoredWalletState,
   WalletAccount,
+  WalletBackup,
   WalletControllerStore,
   WalletCreateResult,
   WalletDetectedAsset,
@@ -1550,6 +1551,116 @@ export class WalletController {
   async revealPrivateKey(password: string): Promise<string> {
     const state = this.requireStoredWallet(await this.loadWalletState());
     return decryptPrivateKey(state.encryptedPrivateKey, password);
+  }
+
+  async exportWallet(password: string): Promise<WalletBackup> {
+    const state = this.requireStoredWallet(await this.loadWalletState());
+    const accounts = state.accounts ?? [
+      { index: 0, publicKey: state.publicKey, encryptedPrivateKey: state.encryptedPrivateKey, name: "Account 1" }
+    ];
+
+    const backup: WalletBackup = {
+      version: 1,
+      type: state.seedSource,
+      accounts: accounts.map((a) => ({ index: a.index, name: a.name })),
+      networkPresets: state.networkPresets.filter((p) => !p.builtin),
+      watchedAssets: state.watchedAssets
+    };
+
+    if (state.encryptedMnemonic) {
+      backup.mnemonic = await decryptMnemonic(state.encryptedMnemonic, password);
+    } else {
+      backup.privateKey = await decryptPrivateKey(state.encryptedPrivateKey, password);
+    }
+
+    return backup;
+  }
+
+  async importWalletBackup(backup: WalletBackup, password: string): Promise<PopupState> {
+    // Derive or use the provided private key
+    let primaryKey: string;
+    let mnemonic: string | undefined;
+
+    if (backup.type === "mnemonic" && backup.mnemonic) {
+      mnemonic = backup.mnemonic;
+      primaryKey = await derivePrivateKeyFromMnemonic(mnemonic, 0);
+    } else if (backup.privateKey) {
+      primaryKey = backup.privateKey;
+    } else {
+      throw new Error("backup must contain a mnemonic or private key");
+    }
+
+    const signer = new Ed25519Signer(primaryKey);
+    const encryptedPrivateKey = await encryptPrivateKey(primaryKey, password);
+    const encryptedMnemonic = mnemonic
+      ? await encryptMnemonic(mnemonic, password)
+      : undefined;
+
+    // Build accounts list
+    const accountEntries = backup.accounts ?? [{ index: 0, name: "Account 1" }];
+    const accounts: WalletAccount[] = [];
+    for (const entry of accountEntries) {
+      const key = mnemonic
+        ? await derivePrivateKeyFromMnemonic(mnemonic, entry.index)
+        : primaryKey;
+      const acctSigner = new Ed25519Signer(key);
+      accounts.push({
+        index: entry.index,
+        publicKey: acctSigner.address,
+        encryptedPrivateKey: await encryptPrivateKey(key, password),
+        name: entry.name
+      });
+    }
+
+    this.unlockedPrivateKey = primaryKey;
+    this.unlockedSigner = signer;
+    this.unlockedMnemonic = mnemonic ?? null;
+    await this.persistUnlockedSession(primaryKey);
+
+    // Clear pending state
+    const waiters = [...this.requestWaiters.values()];
+    this.requestWaiters.clear();
+    for (const waiter of waiters) {
+      waiter.reject(new ProviderUnauthorizedError("wallet was replaced"));
+    }
+    for (const requestState of await this.store.listRequestStates()) {
+      await this.store.deleteRequestState(requestState.requestId);
+    }
+    for (const approval of await this.store.listApprovalStates()) {
+      await this.store.deleteApprovalState(approval.id);
+    }
+
+    // Merge network presets
+    const presets = [...DEFAULT_NETWORK_PRESETS];
+    for (const p of backup.networkPresets ?? []) {
+      if (!presets.some((existing) => existing.id === p.id)) {
+        presets.push(p);
+      }
+    }
+
+    const activePreset = presets[0]!;
+    const watchedAssets = backup.watchedAssets?.length
+      ? backup.watchedAssets
+      : [{ contract: "currency", name: "Xian", symbol: "XIAN" }];
+
+    await this.persistWalletState({
+      publicKey: signer.address,
+      encryptedPrivateKey,
+      encryptedMnemonic,
+      seedSource: backup.type,
+      mnemonicWordCount: mnemonic ? mnemonic.split(" ").length : undefined,
+      accounts,
+      activeAccountIndex: 0,
+      rpcUrl: activePreset.rpcUrl,
+      dashboardUrl: activePreset.dashboardUrl,
+      activeNetworkId: activePreset.id,
+      networkPresets: presets,
+      watchedAssets,
+      connectedOrigins: [],
+      createdAt: new Date().toISOString()
+    });
+
+    return this.getPopupState();
   }
 
   async addAccount(password: string): Promise<PopupState> {

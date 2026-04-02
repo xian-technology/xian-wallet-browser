@@ -189,6 +189,16 @@ export interface WalletCreateResult {
   importedSeedSource: WalletSeedSource;
 }
 
+export interface WalletBackup {
+  version: 1;
+  type: WalletSeedSource;
+  mnemonic?: string;
+  privateKey?: string;
+  accounts?: Array<{ index: number; name: string }>;
+  networkPresets?: WalletNetworkPreset[];
+  watchedAssets?: Array<{ contract: string; name?: string; symbol?: string; icon?: string; decimals?: number }>;
+}
+
 export interface WalletSettingsInput {
   networkName?: string;
   expectedChainId?: string;

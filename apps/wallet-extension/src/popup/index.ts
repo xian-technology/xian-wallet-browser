@@ -1980,6 +1980,32 @@ function renderSecurityTab(state: PopupRuntimeState): string {
         </div>
       </div>
 
+      <!-- Backup -->
+      <div class="s-card">
+        <div class="s-card-head">
+          <div>
+            <h3 class="s-card-title">Backup</h3>
+            <p class="s-card-desc">Export or import wallet data.</p>
+          </div>
+        </div>
+        <div class="s-card-body stack">
+          <form id="export-wallet-form" class="stack">
+            <label>
+              Password
+              <input id="backup-password" type="password" required autocomplete="current-password" />
+            </label>
+            <div style="display: flex; gap: 8px">
+              <button type="submit" class="secondary full-width">Export</button>
+              <label class="secondary full-width" style="text-align: center; cursor: pointer; display: flex; align-items: center; justify-content: center">
+                Import
+                <input type="file" accept=".json" id="import-wallet-file" style="display: none" />
+              </label>
+            </div>
+          </form>
+          <p class="muted text-sm">Export saves your ${escapeHtml(state.seedSource === "mnemonic" ? "seed and all accounts" : "private key")} to an encrypted file. Import restores from a previously exported file.</p>
+        </div>
+      </div>
+
       <!-- Danger zone -->
       <div class="s-card">
         <div class="s-card-head">
@@ -3371,6 +3397,74 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       }
     });
   }
+
+  /* ── Export / Import ──────────────────────────────────────── */
+
+  root
+    .querySelector<HTMLFormElement>("#export-wallet-form")
+    ?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const password = value("#backup-password");
+      if (!password) return;
+      try {
+        const backup = await sendRuntimeMessage<Record<string, unknown>>({
+          type: "wallet_export",
+          password
+        });
+        const blob = new Blob([JSON.stringify(backup, null, 2)], {
+          type: "application/json"
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `xian-wallet-backup-${new Date().toISOString().slice(0, 10)}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        setFlash("Wallet exported.", "success");
+        render(state);
+      } catch (error) {
+        setFlash(formatError(error), "danger");
+        render(state);
+      }
+    });
+
+  root
+    .querySelector<HTMLInputElement>("#import-wallet-file")
+    ?.addEventListener("change", async (event) => {
+      const input = event.target as HTMLInputElement;
+      const file = input.files?.[0];
+      if (!file) return;
+
+      const password = value("#backup-password");
+      if (!password) {
+        setFlash("Enter a password first. It will encrypt the imported wallet.", "warning");
+        render(state);
+        return;
+      }
+
+      try {
+        const text = await file.text();
+        const backup = JSON.parse(text);
+        if (!backup || backup.version !== 1 || !backup.type) {
+          setFlash("Invalid backup file.", "danger");
+          render(state);
+          return;
+        }
+        await sendRuntimeMessage<PopupState>({
+          type: "wallet_import_backup",
+          backup,
+          password
+        });
+        resetSendState();
+        await refresh({
+          tone: "success",
+          message: "Wallet imported."
+        });
+      } catch (error) {
+        setFlash(formatError(error), "danger");
+        render(state);
+      }
+    });
 }
 
 /* ── DOM helpers ───────────────────────────────────────────── */
