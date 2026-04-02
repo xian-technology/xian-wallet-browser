@@ -248,6 +248,9 @@ function normalizeWalletState(value: unknown): StoredWalletState | null {
     seedSource: value.seedSource === "mnemonic" ? "mnemonic" : "privateKey",
     mnemonicWordCount:
       typeof value.mnemonicWordCount === "number" ? value.mnemonicWordCount : undefined,
+    accounts: Array.isArray(value.accounts) ? value.accounts : undefined,
+    activeAccountIndex:
+      typeof value.activeAccountIndex === "number" ? value.activeAccountIndex : undefined,
     rpcUrl: activePreset.rpcUrl,
     dashboardUrl: activePreset.dashboardUrl,
     activeNetworkId,
