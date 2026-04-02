@@ -2413,6 +2413,11 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     btn.addEventListener("click", () => {
       renamingAccountIndex = Number(btn.dataset.startRename);
       render(state);
+      const input = root.querySelector<HTMLInputElement>(`[data-rename-input="${renamingAccountIndex}"]`);
+      if (input) {
+        input.focus();
+        input.select();
+      }
     });
   }
 
@@ -2423,24 +2428,36 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       render(state);
     });
 
+  async function saveRename(index: number): Promise<void> {
+    const input = root.querySelector<HTMLInputElement>(`[data-rename-input="${index}"]`);
+    const name = input?.value.trim();
+    if (!name) return;
+    try {
+      await sendRuntimeMessage<PopupState>({
+        type: "wallet_rename_account",
+        index,
+        name
+      });
+      renamingAccountIndex = null;
+      showAccountMenu = false;
+      await refresh(null);
+    } catch (error) {
+      setFlash(formatError(error), "danger");
+      render(state);
+    }
+  }
+
   for (const btn of root.querySelectorAll<HTMLElement>("[data-save-rename]")) {
-    btn.addEventListener("click", async () => {
-      const index = Number(btn.dataset.saveRename);
-      const input = root.querySelector<HTMLInputElement>(`[data-rename-input="${index}"]`);
-      const name = input?.value.trim();
-      if (!name) return;
-      try {
-        await sendRuntimeMessage<PopupState>({
-          type: "wallet_rename_account",
-          index,
-          name
-        });
-        renamingAccountIndex = null;
-        showAccountMenu = false;
-        await refresh(null);
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
+    btn.addEventListener("click", () => {
+      void saveRename(Number(btn.dataset.saveRename));
+    });
+  }
+
+  for (const input of root.querySelectorAll<HTMLInputElement>("[data-rename-input]")) {
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        void saveRename(Number(input.dataset.renameInput));
       }
     });
   }
@@ -3352,6 +3369,11 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     btn.addEventListener("click", () => {
       renamingAccountIndex = Number(btn.dataset.renameAccount);
       render(state);
+      const input = root.querySelector<HTMLInputElement>(`[data-rename-input="${renamingAccountIndex}"]`);
+      if (input) {
+        input.focus();
+        input.select();
+      }
     });
   }
 
