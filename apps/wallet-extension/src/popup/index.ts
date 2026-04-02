@@ -88,6 +88,7 @@ let tokenMetaGeneration = 0;
 let showReceive = false;
 let activeApprovalId: string | null = null;
 let showAccountMenu = false;
+let confirmWalletRemoval = false;
 let balanceWatchClient: XianClient | null = null;
 let balanceWatchClientKey: string | null = null;
 const balanceSubscriptions = new Map<string, WatchSubscription>();
@@ -1979,9 +1980,21 @@ function renderSecurityTab(state: PopupRuntimeState): string {
             <p class="s-card-desc">Destructive actions that cannot be undone.</p>
           </div>
         </div>
-        <div class="s-card-body">
-          <p class="muted text-sm">This permanently removes the wallet from the extension. Make sure you have backed up your recovery phrase before proceeding.</p>
-          <button class="ghost full-width" data-remove-wallet style="margin-top: 8px; color: var(--danger); border-color: rgba(255,77,79,0.2)">Remove wallet</button>
+        <div class="s-card-body stack">
+          ${
+            confirmWalletRemoval
+              ? `
+                <div class="banner banner-danger">Are you sure? This permanently removes the wallet and all accounts. Make sure you have your recovery phrase backed up.</div>
+                <div style="display: flex; gap: 8px">
+                  <button class="ghost full-width" data-confirm-remove style="color: var(--danger); border-color: rgba(255,77,79,0.2)">Yes, remove wallet</button>
+                  <button class="ghost full-width" data-cancel-remove>Cancel</button>
+                </div>
+              `
+              : `
+                <p class="muted text-sm">This permanently removes the wallet from the extension. Make sure you have backed up your recovery phrase before proceeding.</p>
+                <button class="ghost full-width" data-remove-wallet style="margin-top: 8px; color: var(--danger); border-color: rgba(255,77,79,0.2)">Remove wallet</button>
+              `
+          }
         </div>
       </div>
     </div>
@@ -3072,17 +3085,26 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
 
   root
     .querySelector<HTMLElement>("[data-remove-wallet]")
+    ?.addEventListener("click", () => {
+      confirmWalletRemoval = true;
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-cancel-remove]")
+    ?.addEventListener("click", () => {
+      confirmWalletRemoval = false;
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-confirm-remove]")
     ?.addEventListener("click", async () => {
-      const confirmed = confirm(
-        "Are you sure you want to remove this wallet? This cannot be undone. Make sure you have your recovery phrase backed up."
-      );
-      if (!confirmed) {
-        return;
-      }
       try {
         await sendRuntimeMessage<PopupState>({
           type: "wallet_remove"
         });
+        confirmWalletRemoval = false;
         resetSendState();
         await refresh({
           tone: "info",
