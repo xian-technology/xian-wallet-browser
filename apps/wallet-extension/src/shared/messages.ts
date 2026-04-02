@@ -180,6 +180,15 @@ export interface WalletSetShellModeRuntimeMessage {
   shellMode: WalletShellMode;
 }
 
+export interface ContactsGetRuntimeMessage {
+  type: "contacts_get";
+}
+
+export interface ContactsSaveRuntimeMessage {
+  type: "contacts_save";
+  contacts: Array<{ id: string; name: string; address: string }>;
+}
+
 export interface ApprovalGetRuntimeMessage {
   type: "approval_get";
   approvalId: string;
@@ -222,6 +231,8 @@ export type RuntimeMessage =
   | WalletRevealMnemonicRuntimeMessage
   | WalletRevealPrivateKeyRuntimeMessage
   | WalletSetShellModeRuntimeMessage
+  | ContactsGetRuntimeMessage
+  | ContactsSaveRuntimeMessage
   | ApprovalGetRuntimeMessage
   | ApprovalResolveRuntimeMessage
   | ProviderEventRuntimeMessage;

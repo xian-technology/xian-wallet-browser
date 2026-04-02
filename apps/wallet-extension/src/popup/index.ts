@@ -55,7 +55,8 @@ const ICONS = {
   arrowUp: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>',
   arrowDown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>',
   trendingUp: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>',
-  repeat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>'
+  repeat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>',
+  contacts: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>'
 };
 
 /* ── State ─────────────────────────────────────────────────── */
@@ -80,6 +81,7 @@ let activeApprovalId: string | null = null;
 /* ── Send tab state ────────────────────────────────────────── */
 
 type TxArgType = "str" | "int" | "float" | "bool" | "dict" | "list" | "datetime" | "timedelta" | "Any";
+type SendMode = "simple" | "advanced";
 type SendStep = "draft" | "review" | "sending" | "result";
 
 interface TxArg {
@@ -90,7 +92,23 @@ interface TxArg {
   fixed?: boolean;
 }
 
+let sendMode: SendMode = "simple";
 let sendStep: SendStep = "draft";
+
+// Simple send
+let simpleTo = "";
+let simpleAmount = "";
+
+// Contacts
+interface Contact {
+  id: string;
+  name: string;
+  address: string;
+}
+let contacts: Contact[] = [];
+let contactsLoaded = false;
+let showContactPicker = false;
+let editingContacts = false;
 let sendContract = "";
 let sendFunction = "";
 let sendArgs: TxArg[] = [];
@@ -112,7 +130,12 @@ let contractMethodsError: string | null = null;
 let contractMethodsFor: string | null = null;
 
 function resetSendState(): void {
+  sendMode = "simple";
   sendStep = "draft";
+  simpleTo = "";
+  simpleAmount = "";
+  showContactPicker = false;
+  editingContacts = false;
   sendContract = "";
   sendFunction = "";
   sendArgs = [];
@@ -391,6 +414,11 @@ async function refresh(nextFlash?: FlashMessage | null): Promise<void> {
   currentState = await sendRuntimeMessage<PopupRuntimeState>({
     type: "wallet_get_popup_state"
   });
+
+  if (currentState.unlocked && !contactsLoaded) {
+    contacts = await sendRuntimeMessage<Contact[]>({ type: "contacts_get" });
+    contactsLoaded = true;
+  }
 
   if (!currentState.hasWallet || !currentState.unlocked) {
     revealedMnemonic = null;
@@ -1150,7 +1178,9 @@ function renderApprovalInline(view: ApprovalView): string {
 function renderSendTab(state: PopupRuntimeState): string {
   switch (sendStep) {
     case "draft":
-      return renderSendDraft();
+      return sendMode === "simple"
+        ? renderSimpleSend(state)
+        : renderSendDraft();
     case "review":
       return renderSendReview();
     case "sending":
@@ -1158,6 +1188,129 @@ function renderSendTab(state: PopupRuntimeState): string {
     case "result":
       return renderSendResult(state);
   }
+}
+
+function renderSimpleSend(state: PopupRuntimeState): string {
+  if (editingContacts) {
+    return renderContactsEditor();
+  }
+
+  const xianBalance = state.assetBalances["currency"] ?? "0";
+  const displayBalance = formatSimpleBalance(xianBalance);
+
+  return `
+    <div class="settings-wrap">
+      <div class="s-card">
+        <div class="s-card-head">
+          <div>
+            <h3 class="s-card-title">Send</h3>
+            <p class="s-card-desc">Transfer tokens to another address.</p>
+          </div>
+        </div>
+        <div class="s-card-body stack">
+          <label>
+            Recipient
+            <div style="display: flex; gap: 6px">
+              <input id="simple-to" value="${escapeAttribute(simpleTo)}" placeholder="Wallet address" style="flex: 1" />
+              ${contacts.length > 0 ? `<button type="button" class="ghost-sm" data-toggle-contacts style="white-space: nowrap">${ICONS.contacts}</button>` : ""}
+            </div>
+          </label>
+          ${showContactPicker ? renderContactList() : ""}
+          <label>
+            Amount
+            <div style="display: flex; gap: 6px; align-items: center">
+              <input id="simple-amount" type="number" min="0" step="any" value="${escapeAttribute(simpleAmount)}" placeholder="0.00" style="flex: 1" />
+              <button type="button" class="ghost-sm" data-max-amount>Max</button>
+            </div>
+            <span class="muted text-sm">Available: ${escapeHtml(displayBalance)} XIAN</span>
+          </label>
+        </div>
+      </div>
+
+      <button class="full-width" data-review-simple>Review</button>
+      <div style="display: flex; justify-content: center; gap: 16px; margin-top: 4px">
+        <button class="link-btn" data-switch-advanced>Advanced transaction</button>
+        <button class="link-btn" data-edit-contacts>${contacts.length > 0 ? "Manage contacts" : "Add contacts"}</button>
+      </div>
+    </div>
+  `;
+}
+
+function formatSimpleBalance(raw: string): string {
+  const n = Number(raw);
+  if (Number.isNaN(n)) return "0";
+  if (n === Math.floor(n)) return n.toLocaleString();
+  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 8 });
+}
+
+function renderContactList(): string {
+  if (contacts.length === 0) {
+    return `<p class="muted text-sm">No contacts saved yet.</p>`;
+  }
+  return `
+    <div class="contact-list">
+      ${contacts
+        .map(
+          (c) => `
+            <button type="button" class="contact-item" data-pick-contact="${escapeAttribute(c.address)}">
+              <span class="contact-name">${escapeHtml(c.name)}</span>
+              <span class="contact-addr mono">${escapeHtml(truncateHash(c.address, 8, 6))}</span>
+            </button>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderContactsEditor(): string {
+  return `
+    <div class="settings-wrap">
+      <button class="detail-back" data-close-contacts-editor>${ICONS.chevronLeft} Back</button>
+
+      <div class="s-card">
+        <div class="s-card-head">
+          <div>
+            <h3 class="s-card-title">Contacts</h3>
+            <p class="s-card-desc">Saved recipient addresses.</p>
+          </div>
+          <button class="ghost-sm" data-add-contact>Add</button>
+        </div>
+        <div class="s-card-body stack">
+          ${
+            contacts.length === 0
+              ? `<p class="muted text-sm">No contacts yet.</p>`
+              : contacts
+                  .map(
+                    (c) => `
+                      <div class="contact-edit-row">
+                        <div style="flex: 1; min-width: 0">
+                          <div class="text-sm">${escapeHtml(c.name)}</div>
+                          <div class="muted text-sm mono" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">${escapeHtml(c.address)}</div>
+                        </div>
+                        <button class="ghost-sm" data-delete-contact="${escapeAttribute(c.id)}">×</button>
+                      </div>
+                    `
+                  )
+                  .join("")
+          }
+        </div>
+      </div>
+
+      <form id="add-contact-form" class="s-card">
+        <div class="s-card-head">
+          <div>
+            <h3 class="s-card-title">New contact</h3>
+          </div>
+        </div>
+        <div class="s-card-body stack">
+          <label>Name <input id="contact-name" required placeholder="e.g. Alice" /></label>
+          <label>Address <input id="contact-address" required placeholder="Wallet address" /></label>
+          <button type="submit" class="secondary full-width">Save contact</button>
+        </div>
+      </form>
+    </div>
+  `;
 }
 
 function renderArgValueInput(arg: TxArg): string {
@@ -1404,6 +1557,15 @@ function renderSendResult(state: PopupRuntimeState): string {
                 </div>
               </div>
             `
+          : ""
+      }
+
+      ${
+        sendMode === "simple" &&
+        ok &&
+        simpleTo &&
+        !contacts.some((c) => c.address === simpleTo)
+          ? `<button class="secondary full-width" data-save-recipient>Save recipient as contact</button>`
           : ""
       }
 
@@ -2142,6 +2304,129 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       clearFlash();
       render(state);
     });
+
+  root
+    .querySelector<HTMLElement>("[data-save-recipient]")
+    ?.addEventListener("click", async () => {
+      if (!simpleTo) return;
+      const name = prompt("Contact name:");
+      if (!name) return;
+      contacts.push({ id: crypto.randomUUID(), name, address: simpleTo });
+      await sendRuntimeMessage<null>({ type: "contacts_save", contacts });
+      setFlash("Contact saved.", "success");
+      render(state);
+    });
+
+  /* ── Simple send handlers ─────────────────────────────────── */
+
+  root
+    .querySelector<HTMLElement>("[data-switch-advanced]")
+    ?.addEventListener("click", () => {
+      sendMode = "advanced";
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-toggle-contacts]")
+    ?.addEventListener("click", () => {
+      const toInput = root.querySelector<HTMLInputElement>("#simple-to");
+      if (toInput) simpleTo = toInput.value.trim();
+      const amtInput = root.querySelector<HTMLInputElement>("#simple-amount");
+      if (amtInput) simpleAmount = amtInput.value.trim();
+      showContactPicker = !showContactPicker;
+      render(state);
+    });
+
+  for (const btn of root.querySelectorAll<HTMLElement>("[data-pick-contact]")) {
+    btn.addEventListener("click", () => {
+      simpleTo = btn.dataset.pickContact ?? "";
+      showContactPicker = false;
+      render(state);
+    });
+  }
+
+  root
+    .querySelector<HTMLElement>("[data-max-amount]")
+    ?.addEventListener("click", () => {
+      const raw = state.assetBalances["currency"] ?? "0";
+      const n = Number(raw);
+      simpleAmount = Number.isNaN(n) ? "0" : String(n);
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-review-simple]")
+    ?.addEventListener("click", () => {
+      const toInput = root.querySelector<HTMLInputElement>("#simple-to");
+      const amtInput = root.querySelector<HTMLInputElement>("#simple-amount");
+      if (toInput) simpleTo = toInput.value.trim();
+      if (amtInput) simpleAmount = amtInput.value.trim();
+
+      if (!simpleTo) {
+        setFlash("Recipient address is required.", "warning");
+        render(state);
+        return;
+      }
+      const amount = Number(simpleAmount);
+      if (!simpleAmount || Number.isNaN(amount) || amount <= 0) {
+        setFlash("Enter a valid amount.", "warning");
+        render(state);
+        return;
+      }
+
+      // Set up as a currency.transfer call
+      sendContract = "currency";
+      sendFunction = "transfer";
+      sendParsedKwargs = { to: simpleTo, amount };
+      sendEstimateMode = true;
+      sendStep = "review";
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-edit-contacts]")
+    ?.addEventListener("click", () => {
+      const toInput = root.querySelector<HTMLInputElement>("#simple-to");
+      const amtInput = root.querySelector<HTMLInputElement>("#simple-amount");
+      if (toInput) simpleTo = toInput.value.trim();
+      if (amtInput) simpleAmount = amtInput.value.trim();
+      editingContacts = true;
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-close-contacts-editor]")
+    ?.addEventListener("click", () => {
+      editingContacts = false;
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLFormElement>("#add-contact-form")
+    ?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const name = value("#contact-name");
+      const address = value("#contact-address");
+      if (!name || !address) {
+        setFlash("Name and address are required.", "warning");
+        render(state);
+        return;
+      }
+      contacts.push({ id: crypto.randomUUID(), name, address });
+      await sendRuntimeMessage<null>({ type: "contacts_save", contacts });
+      setFlash("Contact saved.", "success");
+      render(state);
+    });
+
+  for (const btn of root.querySelectorAll<HTMLElement>("[data-delete-contact]")) {
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.deleteContact;
+      contacts = contacts.filter((c) => c.id !== id);
+      await sendRuntimeMessage<null>({ type: "contacts_save", contacts });
+      setFlash("Contact removed.", "info");
+      render(state);
+    });
+  }
 
   for (const button of root.querySelectorAll<HTMLButtonElement>(
     "[data-open-approval]"

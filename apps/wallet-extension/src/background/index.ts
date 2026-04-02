@@ -21,7 +21,9 @@ import {
   saveWalletShellMode,
   deleteRequestState,
   clearUnlockedSession,
-  clearWalletState
+  clearWalletState,
+  loadContacts,
+  saveContacts
 } from "../shared/storage";
 
 const WALLET_METADATA = {
@@ -310,6 +312,13 @@ chrome.runtime.onMessage.addListener(
             return;
           case "wallet_set_shell_mode":
             sendResponse(ok(await setShellMode(message.shellMode)));
+            return;
+          case "contacts_get":
+            sendResponse(ok(await loadContacts()));
+            return;
+          case "contacts_save":
+            await saveContacts(message.contacts);
+            sendResponse(ok(null));
             return;
           case "approval_get":
             sendResponse(ok(await controller.getApprovalView(message.approvalId)));

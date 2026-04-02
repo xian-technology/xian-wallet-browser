@@ -447,3 +447,23 @@ export async function deleteApprovalState(approvalId: string): Promise<void> {
 export async function listApprovalStates(): Promise<PersistedApproval[]> {
   return Object.values((await loadEnvelope()).approvals);
 }
+
+/* ── Contacts ─────────────────────────────────────────────── */
+
+const CONTACTS_STORAGE_KEY = "xianWalletContacts";
+
+export interface StoredContact {
+  id: string;
+  name: string;
+  address: string;
+}
+
+export async function loadContacts(): Promise<StoredContact[]> {
+  const result = await chrome.storage.local.get(CONTACTS_STORAGE_KEY);
+  const raw = result[CONTACTS_STORAGE_KEY];
+  return Array.isArray(raw) ? raw : [];
+}
+
+export async function saveContacts(contacts: StoredContact[]): Promise<void> {
+  await chrome.storage.local.set({ [CONTACTS_STORAGE_KEY]: contacts });
+}
