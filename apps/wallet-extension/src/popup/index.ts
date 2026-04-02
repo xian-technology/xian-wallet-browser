@@ -2423,25 +2423,30 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       render(state);
     });
 
-  for (const form of root.querySelectorAll<HTMLFormElement>("[data-rename-form]")) {
-    form.addEventListener("submit", async (event) => {
+  async function submitRename(formEl: HTMLElement): Promise<void> {
+    const index = Number(formEl.dataset.renameForm);
+    const input = formEl.querySelector<HTMLInputElement>("#rename-input");
+    const name = input?.value.trim();
+    if (!name) return;
+    try {
+      await sendRuntimeMessage<PopupState>({
+        type: "wallet_rename_account",
+        index,
+        name
+      });
+      renamingAccountIndex = null;
+      showAccountMenu = false;
+      await refresh(null);
+    } catch (error) {
+      setFlash(formatError(error), "danger");
+      render(state);
+    }
+  }
+
+  for (const form of root.querySelectorAll<HTMLElement>("[data-rename-form]")) {
+    form.addEventListener("submit", (event) => {
       event.preventDefault();
-      const index = Number(form.dataset.renameForm);
-      const input = form.querySelector<HTMLInputElement>("#rename-input");
-      const name = input?.value.trim();
-      if (!name) return;
-      try {
-        await sendRuntimeMessage<PopupState>({
-          type: "wallet_rename_account",
-          index,
-          name
-        });
-        renamingAccountIndex = null;
-        await refresh(null);
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      void submitRename(form);
     });
   }
 
@@ -3358,10 +3363,10 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     });
   }
 
-  for (const form of root.querySelectorAll<HTMLFormElement>("[data-settings-rename-form]")) {
+  for (const form of root.querySelectorAll<HTMLElement>("[data-settings-rename-form]")) {
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const index = Number(form.dataset.settingsRenameForm);
+      const index = Number((form as HTMLElement).dataset.settingsRenameForm);
       const input = form.querySelector<HTMLInputElement>("#settings-rename-input");
       const name = input?.value.trim();
       if (!name) return;
