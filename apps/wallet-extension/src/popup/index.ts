@@ -761,11 +761,11 @@ function renderAccountMenu(state: PopupRuntimeState): string {
         .map((a) => {
           if (renamingAccountIndex === a.index) {
             return `
-              <form class="account-menu-rename" data-rename-form="${a.index}">
-                <input class="account-rename-input" id="rename-input" value="${escapeAttribute(a.name)}" autofocus />
-                <button type="submit" class="ghost-sm">Save</button>
-                <button type="button" class="ghost-sm" data-cancel-rename>Cancel</button>
-              </form>
+              <div class="account-menu-rename">
+                <input class="account-rename-input" data-rename-input="${a.index}" value="${escapeAttribute(a.name)}" />
+                <button class="ghost-sm" data-save-rename="${a.index}">Save</button>
+                <button class="ghost-sm" data-cancel-rename>Cancel</button>
+              </div>
             `;
           }
           return `
@@ -2050,11 +2050,11 @@ function renderAccountsCard(state: PopupRuntimeState): string {
           .map((a) => {
             if (renamingAccountIndex === a.index) {
               return `
-                <form class="account-menu-rename" data-settings-rename-form="${a.index}">
-                  <input class="account-rename-input" id="settings-rename-input" value="${escapeAttribute(a.name)}" autofocus />
-                  <button type="submit" class="ghost-sm">Save</button>
-                  <button type="button" class="ghost-sm" data-cancel-rename>Cancel</button>
-                </form>
+                <div class="account-menu-rename">
+                  <input class="account-rename-input" data-rename-input="${a.index}" value="${escapeAttribute(a.name)}" />
+                  <button class="ghost-sm" data-save-rename="${a.index}">Save</button>
+                  <button class="ghost-sm" data-cancel-rename>Cancel</button>
+                </div>
               `;
             }
             return `
@@ -2423,30 +2423,25 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       render(state);
     });
 
-  async function submitRename(formEl: HTMLElement): Promise<void> {
-    const index = Number(formEl.dataset.renameForm);
-    const input = formEl.querySelector<HTMLInputElement>("#rename-input");
-    const name = input?.value.trim();
-    if (!name) return;
-    try {
-      await sendRuntimeMessage<PopupState>({
-        type: "wallet_rename_account",
-        index,
-        name
-      });
-      renamingAccountIndex = null;
-      showAccountMenu = false;
-      await refresh(null);
-    } catch (error) {
-      setFlash(formatError(error), "danger");
-      render(state);
-    }
-  }
-
-  for (const form of root.querySelectorAll<HTMLElement>("[data-rename-form]")) {
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      void submitRename(form);
+  for (const btn of root.querySelectorAll<HTMLElement>("[data-save-rename]")) {
+    btn.addEventListener("click", async () => {
+      const index = Number(btn.dataset.saveRename);
+      const input = root.querySelector<HTMLInputElement>(`[data-rename-input="${index}"]`);
+      const name = input?.value.trim();
+      if (!name) return;
+      try {
+        await sendRuntimeMessage<PopupState>({
+          type: "wallet_rename_account",
+          index,
+          name
+        });
+        renamingAccountIndex = null;
+        showAccountMenu = false;
+        await refresh(null);
+      } catch (error) {
+        setFlash(formatError(error), "danger");
+        render(state);
+      }
     });
   }
 
@@ -3363,27 +3358,6 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     });
   }
 
-  for (const form of root.querySelectorAll<HTMLElement>("[data-settings-rename-form]")) {
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const index = Number((form as HTMLElement).dataset.settingsRenameForm);
-      const input = form.querySelector<HTMLInputElement>("#settings-rename-input");
-      const name = input?.value.trim();
-      if (!name) return;
-      try {
-        await sendRuntimeMessage<PopupState>({
-          type: "wallet_rename_account",
-          index,
-          name
-        });
-        renamingAccountIndex = null;
-        await refresh(null);
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
-    });
-  }
 
   for (const btn of root.querySelectorAll<HTMLElement>("[data-delete-account]")) {
     btn.addEventListener("click", async () => {
