@@ -2450,12 +2450,9 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     ?.addEventListener("click", async () => {
       showAccountMenu = false;
       renamingAccountIndex = null;
-      const password = prompt("Enter wallet password to derive a new account:");
-      if (!password) return;
       try {
         await sendRuntimeMessage<PopupState>({
-          type: "wallet_add_account",
-          password
+          type: "wallet_add_account"
         });
         setFlash("Account added.", "success");
         await refresh(null);

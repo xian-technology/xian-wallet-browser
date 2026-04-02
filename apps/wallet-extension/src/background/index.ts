@@ -311,7 +311,7 @@ chrome.runtime.onMessage.addListener(
             sendResponse(ok(await controller.removeWatchedAsset(message.contract)));
             return;
           case "wallet_add_account":
-            sendResponse(ok(await controller.addAccount(message.password)));
+            sendResponse(ok(await controller.addAccount()));
             return;
           case "wallet_switch_account":
             sendResponse(ok(await controller.switchAccount(message.index)));

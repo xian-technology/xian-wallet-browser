@@ -182,7 +182,6 @@ export interface WalletGetContractMethodsRuntimeMessage {
 
 export interface WalletAddAccountRuntimeMessage {
   type: "wallet_add_account";
-  password: string;
 }
 
 export interface WalletSwitchAccountRuntimeMessage {

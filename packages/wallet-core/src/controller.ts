@@ -387,10 +387,14 @@ export class WalletController {
     if (session.mnemonic) {
       this.unlockedMnemonic = session.mnemonic;
     }
+    if (session.password) {
+      this.unlockedPassword = session.password;
+    }
     return true;
   }
 
   private unlockedMnemonic: string | null = null;
+  private unlockedPassword: string | null = null;
 
   private async persistUnlockedSession(
     privateKey: string,
@@ -399,6 +403,7 @@ export class WalletController {
     const session: StoredUnlockedSession = {
       privateKey,
       mnemonic: this.unlockedMnemonic ?? undefined,
+      password: this.unlockedPassword ?? undefined,
       expiresAt
     };
     await this.store.saveUnlockedSession(session);
@@ -408,6 +413,7 @@ export class WalletController {
     this.unlockedPrivateKey = null;
     this.unlockedSigner = null;
     this.unlockedMnemonic = null;
+    this.unlockedPassword = null;
     await this.store.clearUnlockedSession();
   }
 
@@ -1432,6 +1438,7 @@ export class WalletController {
     this.unlockedPrivateKey = secret.privateKey;
     this.unlockedSigner = signer;
     this.unlockedMnemonic = secret.mnemonic ?? null;
+    this.unlockedPassword = input.password;
     await this.persistUnlockedSession(secret.privateKey);
 
     const waiters = [...this.requestWaiters.values()];
@@ -1524,6 +1531,7 @@ export class WalletController {
 
     this.unlockedPrivateKey = privateKey;
     this.unlockedSigner = signer;
+    this.unlockedPassword = password;
 
     // Decrypt mnemonic into session for account switching
     if (state.encryptedMnemonic) {
@@ -1663,19 +1671,19 @@ export class WalletController {
     return this.getPopupState();
   }
 
-  async addAccount(password: string): Promise<PopupState> {
-    const state = this.requireStoredWallet(await this.loadWalletState());
-    if (!state.encryptedMnemonic) {
-      throw new Error("multi-account requires a mnemonic-backed wallet");
+  async addAccount(): Promise<PopupState> {
+    await this.restoreUnlockedSession();
+    if (!this.unlockedMnemonic || !this.unlockedPassword) {
+      throw new Error("wallet must be unlocked to add an account");
     }
-    const mnemonic = await decryptMnemonic(state.encryptedMnemonic, password);
+    const state = this.requireStoredWallet(await this.loadWalletState());
     const accounts = state.accounts ?? [
       { index: 0, publicKey: state.publicKey, encryptedPrivateKey: state.encryptedPrivateKey, name: "Account 1" }
     ];
     const nextIndex = Math.max(...accounts.map((a) => a.index)) + 1;
-    const privateKey = await derivePrivateKeyFromMnemonic(mnemonic, nextIndex);
+    const privateKey = await derivePrivateKeyFromMnemonic(this.unlockedMnemonic, nextIndex);
     const signer = new Ed25519Signer(privateKey);
-    const encrypted = await encryptPrivateKey(privateKey, password);
+    const encrypted = await encryptPrivateKey(privateKey, this.unlockedPassword);
 
     accounts.push({
       index: nextIndex,

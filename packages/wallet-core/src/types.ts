@@ -55,6 +55,7 @@ export interface WalletSerializedError {
 export interface StoredUnlockedSession {
   privateKey: string;
   mnemonic?: string;
+  password?: string;
   expiresAt: number;
 }
 
