@@ -1695,7 +1695,6 @@ function renderSendDraft(): string {
             <h3 class="s-card-title">Arguments</h3>
             <p class="s-card-desc">Key-value pairs passed as kwargs.</p>
           </div>
-          <button class="ghost-sm" data-add-arg>Add</button>
         </div>
         <div class="s-card-body">
           ${
