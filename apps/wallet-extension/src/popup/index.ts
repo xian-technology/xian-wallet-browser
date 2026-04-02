@@ -1,4 +1,10 @@
-import { truncateAddress, type ApprovalView, type PopupState } from "@xian-tech/wallet-core";
+import { XianClient, type WatchSubscription } from "@xian-tech/client";
+import {
+  truncateAddress,
+  type ApprovalView,
+  type PopupState,
+  type WalletDetectedAsset
+} from "@xian-tech/wallet-core";
 import { encode as encodeQr } from "uqr";
 
 import {
@@ -40,6 +46,8 @@ interface FlashMessage {
   tone: FlashTone;
 }
 
+type DisplayedAsset = PopupState["watchedAssets"][number] | WalletDetectedAsset;
+
 /* ── Icons (Feather-style SVGs) ────────────────────────────── */
 
 const ICONS = {
@@ -77,6 +85,9 @@ let tokenMetaLoading = false;
 let tokenMetaGeneration = 0;
 let showReceive = false;
 let activeApprovalId: string | null = null;
+let balanceWatchClient: XianClient | null = null;
+let balanceWatchClientKey: string | null = null;
+const balanceSubscriptions = new Map<string, WatchSubscription>();
 
 /* ── Send tab state ────────────────────────────────────────── */
 
@@ -109,6 +120,7 @@ let contacts: Contact[] = [];
 let contactsLoaded = false;
 let showContactPicker = false;
 let editingContacts = false;
+let pendingContact: { name: string; address: string } | null = null;
 let sendContract = "";
 let sendFunction = "";
 let sendArgs: TxArg[] = [];
@@ -136,6 +148,7 @@ function resetSendState(): void {
   simpleAmount = "";
   showContactPicker = false;
   editingContacts = false;
+  pendingContact = null;
   sendContract = "";
   sendFunction = "";
   sendArgs = [];
@@ -317,6 +330,182 @@ function generateQrSvg(text: string): string {
   return `<svg viewBox="0 0 ${total} ${total}" xmlns="http://www.w3.org/2000/svg"><rect width="${total}" height="${total}" fill="#fff" rx="1"/><path d="${d}" fill="#000"/></svg>`;
 }
 
+function isDetectedAsset(asset: DisplayedAsset): asset is WalletDetectedAsset {
+  return "tracked" in asset;
+}
+
+function visibleDetectedAssets(state: PopupRuntimeState): WalletDetectedAsset[] {
+  return state.detectedAssets.filter((asset) => !asset.tracked);
+}
+
+function findDisplayedAsset(
+  state: PopupRuntimeState,
+  contract: string
+): DisplayedAsset | null {
+  return (
+    state.watchedAssets.find((asset) => asset.contract === contract) ??
+    state.detectedAssets.find((asset) => asset.contract === contract) ??
+    null
+  );
+}
+
+function selectedAssetIsTracked(state: PopupRuntimeState): boolean {
+  if (!selectedAsset) {
+    return false;
+  }
+  return state.watchedAssets.some((asset) => asset.contract === selectedAsset);
+}
+
+function assetRawBalance(
+  asset: DisplayedAsset,
+  state: PopupRuntimeState
+): string | null {
+  const trackedBalance = state.assetBalances[asset.contract];
+  if (trackedBalance != null) {
+    return trackedBalance;
+  }
+  return isDetectedAsset(asset) ? asset.balance : null;
+}
+
+function visibleAssetContracts(state: PopupRuntimeState): string[] {
+  const contracts = new Set(state.watchedAssets.map((asset) => asset.contract));
+  for (const asset of visibleDetectedAssets(state)) {
+    contracts.add(asset.contract);
+  }
+  return [...contracts];
+}
+
+function balanceStateKey(contract: string, address: string): string {
+  return `${contract}.balances:${address}`;
+}
+
+function normalizeLiveBalance(value: unknown): string | null {
+  if (value == null) {
+    return null;
+  }
+  if (typeof value === "string" || typeof value === "number" || typeof value === "bigint") {
+    return String(value);
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function ensureBalanceWatchClient(state: PopupRuntimeState): XianClient | null {
+  if (!state.dashboardUrl) {
+    balanceWatchClient = null;
+    balanceWatchClientKey = null;
+    return null;
+  }
+  const nextKey = `${state.rpcUrl}|${state.dashboardUrl}`;
+  if (!balanceWatchClient || balanceWatchClientKey !== nextKey) {
+    balanceWatchClient = new XianClient({
+      rpcUrl: state.rpcUrl,
+      dashboardUrl: state.dashboardUrl
+    });
+    balanceWatchClientKey = nextKey;
+  }
+  return balanceWatchClient;
+}
+
+async function clearBalanceSubscriptions(): Promise<void> {
+  const subscriptions = [...balanceSubscriptions.values()];
+  balanceSubscriptions.clear();
+  await Promise.all(
+    subscriptions.map((subscription) =>
+      subscription.unsubscribe().catch(() => undefined)
+    )
+  );
+}
+
+function applyVisibleBalanceUpdate(contract: string, value: unknown): void {
+  if (!currentState) {
+    return;
+  }
+  const normalized = normalizeLiveBalance(value);
+  currentState.assetBalances[contract] = normalized;
+  currentState.detectedAssets = currentState.detectedAssets.map((asset) =>
+    asset.contract === contract ? { ...asset, balance: normalized } : asset
+  );
+  render(currentState);
+}
+
+async function syncBalanceSubscriptions(): Promise<void> {
+  const state = currentState;
+  if (!state?.unlocked || !state.publicKey || !state.dashboardUrl) {
+    await clearBalanceSubscriptions();
+    return;
+  }
+
+  const client = ensureBalanceWatchClient(state);
+  if (!client) {
+    await clearBalanceSubscriptions();
+    return;
+  }
+
+  const desired = new Map<string, string>();
+  for (const contract of visibleAssetContracts(state)) {
+    desired.set(balanceStateKey(contract, state.publicKey), contract);
+  }
+
+  for (const [key, subscription] of [...balanceSubscriptions.entries()]) {
+    if (desired.has(key)) {
+      continue;
+    }
+    balanceSubscriptions.delete(key);
+    void subscription.unsubscribe();
+  }
+
+  for (const [key, contract] of desired.entries()) {
+    if (balanceSubscriptions.has(key)) {
+      continue;
+    }
+    try {
+      const subscription = client.watch.state(key, (message) => {
+        if (message.key === key) {
+          applyVisibleBalanceUpdate(contract, message.value);
+        }
+      });
+      balanceSubscriptions.set(key, subscription);
+    } catch {
+      return;
+    }
+  }
+}
+
+function applyReceiptStateWrites(execution: unknown): void {
+  if (
+    !currentState ||
+    execution == null ||
+    typeof execution !== "object" ||
+    !Array.isArray((execution as { state?: unknown[] }).state)
+  ) {
+    return;
+  }
+
+  const writes = (execution as { state: Array<{ key?: unknown; value?: unknown }> }).state;
+  const address = currentState.publicKey;
+  if (!address) {
+    return;
+  }
+
+  for (const write of writes) {
+    if (typeof write?.key !== "string") {
+      continue;
+    }
+    const suffix = `.balances:${address}`;
+    if (!write.key.endsWith(suffix)) {
+      continue;
+    }
+    const contract = write.key.slice(0, write.key.length - suffix.length);
+    if (contract) {
+      applyVisibleBalanceUpdate(contract, write.value);
+    }
+  }
+}
+
 /* ── Flash ─────────────────────────────────────────────────── */
 
 function renderToast(): void {
@@ -434,13 +623,56 @@ async function refresh(nextFlash?: FlashMessage | null): Promise<void> {
   }
 
   balancesLoading =
-    currentState.unlocked && currentState.watchedAssets.length > 0;
+    currentState.unlocked &&
+    (currentState.watchedAssets.length > 0 ||
+      visibleDetectedAssets(currentState).length > 0);
   render(currentState);
+  void syncBalanceSubscriptions();
+  void refreshDetectedAssets();
   void refreshBalances();
 }
 
+async function refreshDetectedAssets(): Promise<void> {
+  if (!currentState?.unlocked) {
+    if (currentState) {
+      currentState.detectedAssets = [];
+    }
+    await clearBalanceSubscriptions();
+    return;
+  }
+
+  try {
+    const detectedAssets = await sendRuntimeMessage<WalletDetectedAsset[]>({
+      type: "wallet_get_detected_assets"
+    });
+    if (!currentState) {
+      return;
+    }
+    currentState.detectedAssets = detectedAssets;
+    for (const asset of detectedAssets) {
+      if (
+        asset.balance != null &&
+        currentState.assetBalances[asset.contract] == null
+      ) {
+        currentState.assetBalances[asset.contract] = asset.balance;
+      }
+    }
+    render(currentState);
+    void syncBalanceSubscriptions();
+  } catch {
+    if (currentState) {
+      currentState.detectedAssets = [];
+      render(currentState);
+    }
+  }
+}
+
 async function refreshBalances(): Promise<void> {
-  if (!currentState?.unlocked || !currentState.watchedAssets.length) {
+  if (
+    !currentState?.unlocked ||
+    (currentState.watchedAssets.length === 0 &&
+      visibleDetectedAssets(currentState).length === 0)
+  ) {
     balancesLoading = false;
     return;
   }
@@ -809,10 +1041,21 @@ function renderHomeTab(state: PopupRuntimeState): string {
       `
     : "";
 
-  const assetsHtml =
+  const trackedAssetsHtml =
     state.watchedAssets.length === 0
       ? `<div class="token-list"><div style="padding: 24px 0; text-align: center" class="muted text-sm">No assets tracked yet.</div></div>`
       : `<div class="token-list">${state.watchedAssets.map((a) => renderAssetItem(a, state)).join("")}</div>`;
+  const detectedAssets = visibleDetectedAssets(state);
+  const detectedAssetsHtml =
+    detectedAssets.length === 0
+      ? ""
+      : `
+          <div class="section-hd">
+            <span class="section-hd-label">Detected</span>
+            <span class="section-hd-badge">${detectedAssets.length}</span>
+          </div>
+          <div class="token-list">${detectedAssets.map((asset) => renderAssetItem(asset, state)).join("")}</div>
+        `;
 
   return `
     <div class="balance-hero">
@@ -847,7 +1090,8 @@ function renderHomeTab(state: PopupRuntimeState): string {
       <span class="section-hd-label">Assets</span>
       <span class="section-hd-badge">${state.watchedAssets.length}</span>
     </div>
-    ${assetsHtml}
+    ${trackedAssetsHtml}
+    ${detectedAssetsHtml}
   `;
 }
 
@@ -871,18 +1115,14 @@ function formatBalance(
   return formatted;
 }
 
-function renderAssetItem(
-  asset: PopupState["watchedAssets"][number],
-  state: PopupRuntimeState
-): string {
+function renderAssetItem(asset: DisplayedAsset, state: PopupRuntimeState): string {
   const symbol = asset.symbol ?? asset.contract.slice(0, 6);
   const letter = symbol.charAt(0).toUpperCase();
   const color =
     asset.contract === "currency"
       ? "var(--accent-dim)"
       : assetColor(asset.contract);
-  const isPinned = asset.contract === "currency";
-  const rawBalance = state.assetBalances[asset.contract];
+  const rawBalance = assetRawBalance(asset, state);
   const fiat = state.assetFiatValues[asset.contract];
   const balanceHtml = balancesLoading
     ? `<span class="skeleton">0,000.00</span>`
@@ -902,16 +1142,18 @@ function renderAssetItem(
       </div>
       <div class="token-end">
         <div class="token-balance">${balanceHtml}</div>
-        <div class="token-fiat">${fiatHtml}</div>
+        <div class="token-fiat">${
+          isDetectedAsset(asset) && !asset.tracked
+            ? `<button class="ghost-sm" data-track-asset="${escapeAttribute(asset.contract)}">Track</button>`
+            : fiatHtml
+        }</div>
       </div>
     </div>
   `;
 }
 
 function renderTokenDetail(state: PopupRuntimeState): string {
-  const asset = state.watchedAssets.find(
-    (a) => a.contract === selectedAsset
-  );
+  const asset = selectedAsset ? findDisplayedAsset(state, selectedAsset) : null;
   if (!asset) {
     selectedAsset = null;
     return renderHomeTab(state);
@@ -924,7 +1166,8 @@ function renderTokenDetail(state: PopupRuntimeState): string {
       ? "var(--accent-dim)"
       : assetColor(asset.contract);
   const isPinned = asset.contract === "currency";
-  const rawBalance = state.assetBalances[asset.contract];
+  const tracked = selectedAssetIsTracked(state);
+  const rawBalance = assetRawBalance(asset, state);
   const fiat = state.assetFiatValues[asset.contract];
   const balanceHtml = balancesLoading
     ? `<span class="skeleton">0,000.00</span>`
@@ -982,23 +1225,31 @@ function renderTokenDetail(state: PopupRuntimeState): string {
         </div>
       </div>
 
-      <div class="s-card">
-        <div class="s-card-head">
-          <div><h3 class="s-card-title">Display</h3></div>
-        </div>
-        <div class="s-card-body">
-          <form id="decimals-form" class="stack">
-            <label>
-              Decimal places shown in token list
-              <input id="decimals-input" type="number" min="0" max="18" value="${asset.decimals ?? 8}" />
-            </label>
-            <button type="submit" class="secondary">Save</button>
-          </form>
-        </div>
-      </div>
+      ${
+        tracked
+          ? `
+              <div class="s-card">
+                <div class="s-card-head">
+                  <div><h3 class="s-card-title">Display</h3></div>
+                </div>
+                <div class="s-card-body">
+                  <form id="decimals-form" class="stack">
+                    <label>
+                      Decimal places shown in token list
+                      <input id="decimals-input" type="number" min="0" max="18" value="${asset.decimals ?? 8}" />
+                    </label>
+                    <button type="submit" class="secondary">Save</button>
+                  </form>
+                </div>
+              </div>
+            `
+          : `
+              <button class="secondary full-width" data-track-selected-asset>Add To Wallet</button>
+            `
+      }
 
       ${
-        !isPinned
+        tracked && !isPinned
           ? `<button class="secondary full-width" data-remove-selected-asset>Remove from wallet</button>`
           : ""
       }
@@ -1296,18 +1547,34 @@ function renderContactsEditor(): string {
         </div>
       </div>
 
-      <form id="add-contact-form" class="s-card">
-        <div class="s-card-head">
-          <div>
-            <h3 class="s-card-title">New contact</h3>
-          </div>
-        </div>
-        <div class="s-card-body stack">
-          <label>Name <input id="contact-name" required placeholder="e.g. Alice" /></label>
-          <label>Address <input id="contact-address" required placeholder="Wallet address" /></label>
-          <button type="submit" class="secondary full-width">Save contact</button>
-        </div>
-      </form>
+      ${
+        pendingContact
+          ? `
+            <div class="s-card">
+              <div class="s-card-body stack">
+                <div class="banner banner-warning">This doesn't look like a valid Xian address (expected 64-character hex). Save anyway?</div>
+                <div style="display: flex; gap: 8px">
+                  <button class="secondary full-width" data-confirm-contact>Save anyway</button>
+                  <button class="ghost full-width" data-cancel-contact>Cancel</button>
+                </div>
+              </div>
+            </div>
+          `
+          : `
+            <form id="add-contact-form" class="s-card">
+              <div class="s-card-head">
+                <div>
+                  <h3 class="s-card-title">New contact</h3>
+                </div>
+              </div>
+              <div class="s-card-body stack">
+                <label>Name <input id="contact-name" required placeholder="e.g. Alice" /></label>
+                <label>Address <input id="contact-address" required placeholder="Wallet address" /></label>
+                <button type="submit" class="secondary full-width">Save contact</button>
+              </div>
+            </form>
+          `
+      }
     </div>
   `;
 }
@@ -1883,8 +2150,12 @@ function bindSetupEvents(): void {
           "success"
         );
         balancesLoading =
-          currentState.unlocked && currentState.watchedAssets.length > 0;
+          currentState.unlocked &&
+          (currentState.watchedAssets.length > 0 ||
+            visibleDetectedAssets(currentState).length > 0);
         render(currentState);
+        void syncBalanceSubscriptions();
+        void refreshDetectedAssets();
         void refreshBalances();
       } catch (error) {
         setFlash(formatError(error), "danger");
@@ -2099,6 +2370,68 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       }
     });
 
+  for (const button of root.querySelectorAll<HTMLElement>("[data-track-asset]")) {
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      const contract = button.dataset.trackAsset ?? "";
+      const asset =
+        currentState && contract ? findDisplayedAsset(currentState, contract) : null;
+      if (!asset) {
+        return;
+      }
+      try {
+        await sendRuntimeMessage<PopupState>({
+          type: "wallet_track_asset",
+          asset: {
+            contract: asset.contract,
+            name: asset.name ?? undefined,
+            symbol: asset.symbol ?? undefined,
+            icon: asset.icon ?? undefined,
+            decimals: asset.decimals
+          }
+        });
+        await refresh({
+          tone: "success",
+          message: `${asset.symbol ?? asset.contract} added to wallet.`
+        });
+      } catch (error) {
+        setFlash(formatError(error), "danger");
+        render(state);
+      }
+    });
+  }
+
+  root
+    .querySelector<HTMLElement>("[data-track-selected-asset]")
+    ?.addEventListener("click", async () => {
+      if (!currentState || !selectedAsset) {
+        return;
+      }
+      const asset = findDisplayedAsset(currentState, selectedAsset);
+      if (!asset) {
+        return;
+      }
+      try {
+        await sendRuntimeMessage<PopupState>({
+          type: "wallet_track_asset",
+          asset: {
+            contract: asset.contract,
+            name: asset.name ?? undefined,
+            symbol: asset.symbol ?? undefined,
+            icon: asset.icon ?? undefined,
+            decimals: asset.decimals
+          }
+        });
+        await refresh({
+          tone: "success",
+          message: `${asset.symbol ?? asset.contract} added to wallet.`
+        });
+      } catch (error) {
+        setFlash(formatError(error), "danger");
+        render(state);
+      }
+    });
+
   /* ── Send tab handlers ──────────────────────────────────── */
 
   root
@@ -2289,6 +2622,16 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
               : "Transaction failed.",
           ok ? "success" : "danger"
         );
+        const receipt =
+          sendResult && typeof sendResult === "object"
+            ? (sendResult as Record<string, unknown>).receipt
+            : null;
+        const execution =
+          receipt && typeof receipt === "object"
+            ? (receipt as Record<string, unknown>).execution
+            : null;
+        applyReceiptStateWrites(execution);
+        void refresh(ok ? null : undefined);
         render(state);
       } catch (error) {
         sendStep = "review";
@@ -2361,9 +2704,9 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       render(state);
     });
 
-  root
-    .querySelector<HTMLElement>("[data-review-simple]")
-    ?.addEventListener("click", async () => {
+  {
+    const reviewBtn = root.querySelector<HTMLButtonElement>("[data-review-simple]");
+    reviewBtn?.addEventListener("click", async () => {
       const toInput = root.querySelector<HTMLInputElement>("#simple-to");
       const amtInput = root.querySelector<HTMLInputElement>("#simple-amount");
       if (toInput) simpleTo = toInput.value.trim();
@@ -2387,6 +2730,19 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       sendParsedKwargs = { to: simpleTo, amount };
       sendEstimateMode = true;
 
+      // Show loading state on button
+      const originalText = reviewBtn.textContent ?? "Review";
+      reviewBtn.disabled = true;
+      reviewBtn.innerHTML = `<span class="btn-spinner"></span> Estimating...`;
+
+      // Timeout: restore button after 15s
+      const timeout = setTimeout(() => {
+        reviewBtn.disabled = false;
+        reviewBtn.textContent = originalText;
+        setFlash("Estimation timed out. Try again.", "warning");
+        renderToast();
+      }, 15000);
+
       try {
         sendEstimate = await sendRuntimeMessage<{ estimated: number; suggested: number }>({
           type: "wallet_estimate_transaction",
@@ -2394,13 +2750,18 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           function: sendFunction,
           kwargs: sendParsedKwargs
         });
+        clearTimeout(timeout);
         sendStep = "review";
         render(state);
       } catch (error) {
+        clearTimeout(timeout);
+        reviewBtn.disabled = false;
+        reviewBtn.textContent = originalText;
         setFlash(formatError(error), "danger");
-        render(state);
+        renderToast();
       }
     });
+  }
 
   root
     .querySelector<HTMLElement>("[data-edit-contacts]")
@@ -2432,14 +2793,31 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         return;
       }
       if (!isValidXianAddress(address)) {
-        const proceed = confirm(
-          "This doesn't look like a valid Xian address (expected 64-character hex string). Save anyway?"
-        );
-        if (!proceed) return;
+        pendingContact = { name, address };
+        render(state);
+        return;
       }
       contacts.push({ id: crypto.randomUUID(), name, address });
       await sendRuntimeMessage<null>({ type: "contacts_save", contacts });
       setFlash("Contact saved.", "success");
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-confirm-contact]")
+    ?.addEventListener("click", async () => {
+      if (!pendingContact) return;
+      contacts.push({ id: crypto.randomUUID(), ...pendingContact });
+      pendingContact = null;
+      await sendRuntimeMessage<null>({ type: "contacts_save", contacts });
+      setFlash("Contact saved.", "success");
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-cancel-contact]")
+    ?.addEventListener("click", () => {
+      pendingContact = null;
       render(state);
     });
 
@@ -2758,9 +3136,19 @@ function checked(selector: string): boolean {
 
 function formatError(error: unknown): string {
   if (error instanceof Error) {
-    return error.message;
+    const msg = error.message;
+    const data = (error as Error & { data?: unknown }).data;
+    if (data && typeof data === "object") {
+      const obj = data as Record<string, unknown>;
+      const dataStr =
+        "error" in obj && typeof obj.error === "string"
+          ? obj.error
+          : JSON.stringify(data);
+      return msg ? `${msg}: ${dataStr}` : dataStr;
+    }
+    return msg || "Unknown error";
   }
-  return String(error);
+  return String(error) || "Unknown error";
 }
 
 /* ── Init ──────────────────────────────────────────────────── */
@@ -2773,6 +3161,10 @@ chrome.runtime.onMessage.addListener(
     }
   }
 );
+
+window.addEventListener("beforeunload", () => {
+  void clearBalanceSubscriptions();
+});
 
 renderLoading();
 void refresh(null);

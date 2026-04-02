@@ -1557,14 +1557,16 @@ textarea {
   border: none;
   color: var(--muted);
   cursor: pointer;
-  padding: 4px;
+  padding: 4px 6px;
+  border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: color 0.15s;
+  transition: color 0.15s, background 0.15s;
 }
 .input-icon-btn:hover {
-  color: var(--accent);
+  color: var(--fg);
+  background: var(--bg-2);
 }
 .input-icon-btn svg {
   width: 16px;
@@ -1580,6 +1582,7 @@ textarea {
 .max-badge:hover {
   opacity: 1;
   color: var(--accent);
+  background: var(--bg-2);
 }
 
 /* ── Send footer links ────────────────────────────────────── */
@@ -1602,6 +1605,22 @@ textarea {
 .send-footer-link:hover {
   color: var(--fg);
   background: var(--bg-2);
+}
+
+/* ── Button spinner ───────────────────────────────────────── */
+.btn-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: btn-spin 0.6s linear infinite;
+  vertical-align: middle;
+  margin-right: 4px;
+}
+@keyframes btn-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* ── Contact picker / editor ──────────────────────────────── */
