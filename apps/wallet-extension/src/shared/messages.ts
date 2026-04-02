@@ -180,6 +180,27 @@ export interface WalletGetContractMethodsRuntimeMessage {
   contract: string;
 }
 
+export interface WalletAddAccountRuntimeMessage {
+  type: "wallet_add_account";
+  password: string;
+}
+
+export interface WalletSwitchAccountRuntimeMessage {
+  type: "wallet_switch_account";
+  index: number;
+}
+
+export interface WalletRenameAccountRuntimeMessage {
+  type: "wallet_rename_account";
+  index: number;
+  name: string;
+}
+
+export interface WalletRemoveAccountRuntimeMessage {
+  type: "wallet_remove_account";
+  index: number;
+}
+
 export interface WalletRevealMnemonicRuntimeMessage {
   type: "wallet_reveal_mnemonic";
   password: string;
@@ -245,6 +266,10 @@ export type RuntimeMessage =
   | WalletEstimateTransactionRuntimeMessage
   | WalletSendDirectTransactionRuntimeMessage
   | WalletGetContractMethodsRuntimeMessage
+  | WalletAddAccountRuntimeMessage
+  | WalletSwitchAccountRuntimeMessage
+  | WalletRenameAccountRuntimeMessage
+  | WalletRemoveAccountRuntimeMessage
   | WalletRevealMnemonicRuntimeMessage
   | WalletRevealPrivateKeyRuntimeMessage
   | WalletSetShellModeRuntimeMessage

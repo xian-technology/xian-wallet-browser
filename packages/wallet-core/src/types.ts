@@ -15,12 +15,21 @@ export interface WalletNetworkPreset {
   builtin?: boolean;
 }
 
+export interface WalletAccount {
+  index: number;
+  publicKey: string;
+  encryptedPrivateKey: string;
+  name: string;
+}
+
 export interface StoredWalletState {
   publicKey: string;
   encryptedPrivateKey: string;
   encryptedMnemonic?: string;
   seedSource: WalletSeedSource;
   mnemonicWordCount?: number;
+  accounts?: WalletAccount[];
+  activeAccountIndex?: number;
   rpcUrl: string;
   dashboardUrl?: string;
   activeNetworkId: string;
@@ -45,6 +54,7 @@ export interface WalletSerializedError {
 
 export interface StoredUnlockedSession {
   privateKey: string;
+  mnemonic?: string;
   expiresAt: number;
 }
 
@@ -112,6 +122,8 @@ export interface PopupState {
   hasRecoveryPhrase: boolean;
   seedSource?: WalletSeedSource;
   mnemonicWordCount?: number;
+  accounts: Array<{ index: number; publicKey: string; name: string }>;
+  activeAccountIndex: number;
   version: string;
 }
 

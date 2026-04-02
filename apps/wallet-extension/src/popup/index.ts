@@ -64,7 +64,9 @@ const ICONS = {
   arrowDown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>',
   trendingUp: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>',
   repeat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>',
-  contacts: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>'
+  contacts: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+  chevronDown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'
 };
 
 /* ── State ─────────────────────────────────────────────────── */
@@ -85,6 +87,7 @@ let tokenMetaLoading = false;
 let tokenMetaGeneration = 0;
 let showReceive = false;
 let activeApprovalId: string | null = null;
+let showAccountMenu = false;
 let balanceWatchClient: XianClient | null = null;
 let balanceWatchClientKey: string | null = null;
 const balanceSubscriptions = new Map<string, WatchSubscription>();
@@ -749,6 +752,26 @@ function renderLoading(): void {
   `;
 }
 
+function renderAccountMenu(state: PopupRuntimeState): string {
+  return `
+    <div class="account-menu">
+      ${state.accounts
+        .map(
+          (a) => `
+            <button class="account-menu-item ${a.index === state.activeAccountIndex ? "is-active" : ""}" data-switch-account="${a.index}">
+              <span class="account-menu-name">${escapeHtml(a.name)}</span>
+              <span class="account-menu-addr mono">${escapeHtml(truncateHash(a.publicKey, 6, 4))}</span>
+            </button>
+          `
+        )
+        .join("")}
+      <button class="account-menu-item account-menu-add" data-add-account-prompt>
+        <span class="account-menu-name">${ICONS.plus} Add account</span>
+      </button>
+    </div>
+  `;
+}
+
 /* ═══════════════════════════════════════════════════════════
    SETUP SCREEN
    ═══════════════════════════════════════════════════════════ */
@@ -939,11 +962,21 @@ function renderUnlocked(state: PopupRuntimeState): void {
         : " header-dot-danger";
   const activeNetworkLabel = state.activeNetworkName ?? "Network";
 
+  const activeAccount = state.accounts.find((a) => a.index === state.activeAccountIndex) ?? state.accounts[0];
+  const accountLabel = activeAccount?.name ?? "Account";
+  const hasMultipleAccounts = state.accounts.length > 1;
+  const isMnemonic = state.seedSource === "mnemonic";
+
   root.innerHTML = `
     <div class="wallet-app">
       <header class="wallet-header">
         <div class="header-left">
           <img src="icon.png" alt="Xian" class="header-logo" />
+          ${
+            isMnemonic
+              ? `<button class="header-account" data-toggle-account-menu title="Switch account">${escapeHtml(accountLabel)} ${ICONS.chevronDown}</button>`
+              : `<span class="header-account-label">${escapeHtml(accountLabel)}</span>`
+          }
         </div>
         <div class="header-right">
           <button class="header-network" data-refresh title="Refresh wallet data">
@@ -954,6 +987,7 @@ function renderUnlocked(state: PopupRuntimeState): void {
           <button class="header-icon-btn" data-lock title="Lock wallet">${ICONS.lock}</button>
         </div>
       </header>
+      ${showAccountMenu ? renderAccountMenu(state) : ""}
 
       <div class="wallet-content">
         ${renderTabPanel(state)}
@@ -1886,6 +1920,8 @@ function renderSecurityTab(state: PopupRuntimeState): string {
         </div>
       </div>
 
+      ${state.seedSource === "mnemonic" ? renderAccountsCard(state) : ""}
+
       <!-- Networks -->
       <div class="s-card">
         <div class="s-card-head">
@@ -1947,6 +1983,38 @@ function renderSecurityTab(state: PopupRuntimeState): string {
           <p class="muted text-sm">This permanently removes the wallet from the extension. Make sure you have backed up your recovery phrase before proceeding.</p>
           <button class="ghost full-width" data-remove-wallet style="margin-top: 8px; color: var(--danger); border-color: rgba(255,77,79,0.2)">Remove wallet</button>
         </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderAccountsCard(state: PopupRuntimeState): string {
+  return `
+    <!-- Accounts -->
+    <div class="s-card">
+      <div class="s-card-head">
+        <div>
+          <h3 class="s-card-title">Accounts</h3>
+          <p class="s-card-desc">${state.accounts.length} derived from recovery phrase.</p>
+        </div>
+      </div>
+      <div class="s-card-body stack">
+        ${state.accounts
+          .map(
+            (a) => `
+              <div class="contact-edit-row">
+                <div style="flex: 1; min-width: 0">
+                  <div class="text-sm">${escapeHtml(a.name)} ${a.index === state.activeAccountIndex ? `<span class="pill pill-strong">Active</span>` : ""}</div>
+                  <div class="muted text-sm mono" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">${escapeHtml(a.publicKey)}</div>
+                </div>
+                <div class="inline-actions">
+                  <button class="ghost-sm" data-rename-account="${a.index}" title="Rename">Rename</button>
+                  ${a.index !== 0 ? `<button class="ghost-sm" data-delete-account="${a.index}" title="Remove">×</button>` : ""}
+                </div>
+              </div>
+            `
+          )
+          .join("")}
       </div>
     </div>
   `;
@@ -2250,6 +2318,52 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           tone: "info",
           message: "Wallet locked."
         });
+      } catch (error) {
+        setFlash(formatError(error), "danger");
+        render(state);
+      }
+    });
+
+  /* ── Account switching ──────────────────────────────────── */
+
+  root
+    .querySelector<HTMLElement>("[data-toggle-account-menu]")
+    ?.addEventListener("click", () => {
+      showAccountMenu = !showAccountMenu;
+      render(state);
+    });
+
+  for (const btn of root.querySelectorAll<HTMLElement>("[data-switch-account]")) {
+    btn.addEventListener("click", async () => {
+      const index = Number(btn.dataset.switchAccount);
+      showAccountMenu = false;
+      try {
+        await sendRuntimeMessage<PopupState>({
+          type: "wallet_switch_account",
+          index
+        });
+        resetSendState();
+        await refresh(null);
+      } catch (error) {
+        setFlash(formatError(error), "danger");
+        render(state);
+      }
+    });
+  }
+
+  root
+    .querySelector<HTMLElement>("[data-add-account-prompt]")
+    ?.addEventListener("click", async () => {
+      showAccountMenu = false;
+      const password = prompt("Enter wallet password to derive a new account:");
+      if (!password) return;
+      try {
+        await sendRuntimeMessage<PopupState>({
+          type: "wallet_add_account",
+          password
+        });
+        setFlash("Account added.", "success");
+        await refresh(null);
       } catch (error) {
         setFlash(formatError(error), "danger");
         render(state);
@@ -3117,6 +3231,44 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       generatedMnemonic = null;
       render(state);
     });
+
+  for (const btn of root.querySelectorAll<HTMLElement>("[data-rename-account]")) {
+    btn.addEventListener("click", async () => {
+      const index = Number(btn.dataset.renameAccount);
+      const acct = state.accounts.find((a) => a.index === index);
+      const name = prompt("Rename account:", acct?.name ?? "");
+      if (!name) return;
+      try {
+        await sendRuntimeMessage<PopupState>({
+          type: "wallet_rename_account",
+          index,
+          name
+        });
+        await refresh(null);
+      } catch (error) {
+        setFlash(formatError(error), "danger");
+        render(state);
+      }
+    });
+  }
+
+  for (const btn of root.querySelectorAll<HTMLElement>("[data-delete-account]")) {
+    btn.addEventListener("click", async () => {
+      const index = Number(btn.dataset.deleteAccount);
+      if (!confirm("Remove this account? You can re-derive it later from the recovery phrase.")) return;
+      try {
+        await sendRuntimeMessage<PopupState>({
+          type: "wallet_remove_account",
+          index
+        });
+        setFlash("Account removed.", "info");
+        await refresh(null);
+      } catch (error) {
+        setFlash(formatError(error), "danger");
+        render(state);
+      }
+    });
+  }
 }
 
 /* ── DOM helpers ───────────────────────────────────────────── */

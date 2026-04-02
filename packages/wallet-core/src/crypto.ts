@@ -154,7 +154,8 @@ export function generateMnemonicPhrase(wordCount: number = 12): string {
 }
 
 export async function derivePrivateKeyFromMnemonic(
-  mnemonic: string
+  mnemonic: string,
+  accountIndex: number = 0
 ): Promise<string> {
   const normalized = normalizeMnemonicInput(mnemonic);
   if (!normalized) {
@@ -162,9 +163,24 @@ export async function derivePrivateKeyFromMnemonic(
   }
   const seed = await mnemonicToSeed(normalized);
   const context = ENCODER.encode("xian-wallet-seed-v1");
-  const buffer = new Uint8Array(seed.length + context.length);
+  if (accountIndex === 0) {
+    // Index 0: original derivation for backward compatibility
+    const buffer = new Uint8Array(seed.length + context.length);
+    buffer.set(seed, 0);
+    buffer.set(context, seed.length);
+    const digest = await getWebCrypto().subtle.digest(
+      "SHA-256",
+      toArrayBuffer(buffer)
+    );
+    return bytesToHex(new Uint8Array(digest));
+  }
+  // Index > 0: append big-endian uint32 index
+  const indexBytes = new Uint8Array(4);
+  new DataView(indexBytes.buffer).setUint32(0, accountIndex, false);
+  const buffer = new Uint8Array(seed.length + context.length + 4);
   buffer.set(seed, 0);
   buffer.set(context, seed.length);
+  buffer.set(indexBytes, seed.length + context.length);
   const digest = await getWebCrypto().subtle.digest(
     "SHA-256",
     toArrayBuffer(buffer)

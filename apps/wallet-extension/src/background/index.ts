@@ -310,6 +310,18 @@ chrome.runtime.onMessage.addListener(
           case "wallet_remove_asset":
             sendResponse(ok(await controller.removeWatchedAsset(message.contract)));
             return;
+          case "wallet_add_account":
+            sendResponse(ok(await controller.addAccount(message.password)));
+            return;
+          case "wallet_switch_account":
+            sendResponse(ok(await controller.switchAccount(message.index)));
+            return;
+          case "wallet_rename_account":
+            sendResponse(ok(await controller.renameAccount(message.index, message.name)));
+            return;
+          case "wallet_remove_account":
+            sendResponse(ok(await controller.removeAccount(message.index)));
+            return;
           case "wallet_reveal_mnemonic":
             sendResponse(ok(await controller.revealMnemonic(message.password)));
             return;

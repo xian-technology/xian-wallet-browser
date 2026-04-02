@@ -105,6 +105,84 @@ main {
   object-fit: contain;
 }
 
+.header-account {
+  all: unset;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  transition: background 0.15s;
+}
+.header-account:hover {
+  background: var(--bg-2);
+}
+.header-account svg {
+  width: 14px;
+  height: 14px;
+  opacity: 0.5;
+}
+.header-account-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.account-menu {
+  position: absolute;
+  top: 48px;
+  left: 12px;
+  right: 12px;
+  z-index: 60;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.account-menu-item {
+  all: unset;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 14px;
+  cursor: pointer;
+  color: var(--fg);
+  transition: background 0.15s;
+  box-sizing: border-box;
+}
+.account-menu-item:hover {
+  background: var(--bg-2);
+}
+.account-menu-item.is-active {
+  background: var(--accent-soft);
+}
+.account-menu-name {
+  font-size: 13px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.account-menu-name svg {
+  width: 14px;
+  height: 14px;
+}
+.account-menu-addr {
+  font-size: 11px;
+  color: var(--muted);
+}
+.account-menu-add {
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+}
+
 .header-brand {
   font-family: var(--font-display);
   font-weight: 800;

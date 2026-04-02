@@ -145,6 +145,7 @@ function normalizeUnlockedSession(value: unknown): StoredUnlockedSession | null 
 
   return {
     privateKey: value.privateKey,
+    mnemonic: typeof value.mnemonic === "string" ? value.mnemonic : undefined,
     expiresAt: value.expiresAt
   };
 }

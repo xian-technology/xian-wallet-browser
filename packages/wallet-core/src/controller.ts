@@ -29,6 +29,7 @@ import {
   createWalletSecret,
   decryptMnemonic,
   decryptPrivateKey,
+  derivePrivateKeyFromMnemonic,
   encryptMnemonic,
   encryptPrivateKey,
   isUnsafeMessageToSign
@@ -43,6 +44,7 @@ import type {
   StoredProviderRequest,
   StoredUnlockedSession,
   StoredWalletState,
+  WalletAccount,
   WalletControllerStore,
   WalletCreateResult,
   WalletDetectedAsset,
@@ -381,8 +383,13 @@ export class WalletController {
 
     this.unlockedPrivateKey = session.privateKey;
     this.unlockedSigner = new Ed25519Signer(session.privateKey);
+    if (session.mnemonic) {
+      this.unlockedMnemonic = session.mnemonic;
+    }
     return true;
   }
+
+  private unlockedMnemonic: string | null = null;
 
   private async persistUnlockedSession(
     privateKey: string,
@@ -390,6 +397,7 @@ export class WalletController {
   ): Promise<void> {
     const session: StoredUnlockedSession = {
       privateKey,
+      mnemonic: this.unlockedMnemonic ?? undefined,
       expiresAt
     };
     await this.store.saveUnlockedSession(session);
@@ -398,6 +406,7 @@ export class WalletController {
   private async clearUnlockedSession(): Promise<void> {
     this.unlockedPrivateKey = null;
     this.unlockedSigner = null;
+    this.unlockedMnemonic = null;
     await this.store.clearUnlockedSession();
   }
 
@@ -1221,6 +1230,14 @@ export class WalletController {
     }
   }
 
+  private getAccountsList(state: StoredWalletState): Array<{ index: number; publicKey: string; name: string }> {
+    if (state.accounts && state.accounts.length > 0) {
+      return state.accounts.map((a) => ({ index: a.index, publicKey: a.publicKey, name: a.name }));
+    }
+    // Backward compat: create virtual account from legacy fields
+    return [{ index: 0, publicKey: state.publicKey, name: "Account 1" }];
+  }
+
   async getPopupState(): Promise<PopupState> {
     const state = await this.loadWalletState();
     const approvals = await this.store.listApprovalStates();
@@ -1260,6 +1277,8 @@ export class WalletController {
       hasRecoveryPhrase: Boolean(state?.encryptedMnemonic),
       seedSource: state?.seedSource,
       mnemonicWordCount: state?.mnemonicWordCount,
+      accounts: state ? this.getAccountsList(state) : [],
+      activeAccountIndex: state?.activeAccountIndex ?? 0,
       version: this.options.version
     };
   }
@@ -1411,6 +1430,7 @@ export class WalletController {
 
     this.unlockedPrivateKey = secret.privateKey;
     this.unlockedSigner = signer;
+    this.unlockedMnemonic = secret.mnemonic ?? null;
     await this.persistUnlockedSession(secret.privateKey);
 
     const waiters = [...this.requestWaiters.values()];
@@ -1456,12 +1476,21 @@ export class WalletController {
       ? [localPreset]
       : [localPreset, activePreset];
 
+    const initialAccount: WalletAccount = {
+      index: 0,
+      publicKey: signer.address,
+      encryptedPrivateKey,
+      name: "Account 1"
+    };
+
     const popupState = await this.persistWalletState({
       publicKey: signer.address,
       encryptedPrivateKey,
       encryptedMnemonic,
       seedSource: secret.seedSource,
       mnemonicWordCount: secret.mnemonicWordCount,
+      accounts: [initialAccount],
+      activeAccountIndex: 0,
       rpcUrl: activePreset.rpcUrl,
       dashboardUrl: activePreset.dashboardUrl,
       activeNetworkId: activePreset.id,
@@ -1494,6 +1523,16 @@ export class WalletController {
 
     this.unlockedPrivateKey = privateKey;
     this.unlockedSigner = signer;
+
+    // Decrypt mnemonic into session for account switching
+    if (state.encryptedMnemonic) {
+      try {
+        this.unlockedMnemonic = await decryptMnemonic(state.encryptedMnemonic, password);
+      } catch {
+        this.unlockedMnemonic = null;
+      }
+    }
+
     await this.persistUnlockedSession(privateKey);
     void this.notifyUnlockedOrigins(state);
 
@@ -1511,6 +1550,105 @@ export class WalletController {
   async revealPrivateKey(password: string): Promise<string> {
     const state = this.requireStoredWallet(await this.loadWalletState());
     return decryptPrivateKey(state.encryptedPrivateKey, password);
+  }
+
+  async addAccount(password: string): Promise<PopupState> {
+    const state = this.requireStoredWallet(await this.loadWalletState());
+    if (!state.encryptedMnemonic) {
+      throw new Error("multi-account requires a mnemonic-backed wallet");
+    }
+    const mnemonic = await decryptMnemonic(state.encryptedMnemonic, password);
+    const accounts = state.accounts ?? [
+      { index: 0, publicKey: state.publicKey, encryptedPrivateKey: state.encryptedPrivateKey, name: "Account 1" }
+    ];
+    const nextIndex = Math.max(...accounts.map((a) => a.index)) + 1;
+    const privateKey = await derivePrivateKeyFromMnemonic(mnemonic, nextIndex);
+    const signer = new Ed25519Signer(privateKey);
+    const encrypted = await encryptPrivateKey(privateKey, password);
+
+    accounts.push({
+      index: nextIndex,
+      publicKey: signer.address,
+      encryptedPrivateKey: encrypted,
+      name: `Account ${accounts.length + 1}`
+    });
+
+    state.accounts = accounts;
+    await this.store.saveState(state);
+    return this.getPopupState();
+  }
+
+  async switchAccount(index: number): Promise<PopupState> {
+    const state = this.requireStoredWallet(await this.loadWalletState());
+    const accounts = state.accounts ?? [
+      { index: 0, publicKey: state.publicKey, encryptedPrivateKey: state.encryptedPrivateKey, name: "Account 1" }
+    ];
+    const target = accounts.find((a) => a.index === index);
+    if (!target) {
+      throw new Error("account not found");
+    }
+
+    // Update active account in state
+    state.publicKey = target.publicKey;
+    state.encryptedPrivateKey = target.encryptedPrivateKey;
+    state.activeAccountIndex = index;
+    await this.store.saveState(state);
+
+    // If unlocked, switch the in-memory signer
+    if (this.unlockedMnemonic) {
+      const privateKey = await derivePrivateKeyFromMnemonic(this.unlockedMnemonic, index);
+      this.unlockedPrivateKey = privateKey;
+      this.unlockedSigner = new Ed25519Signer(privateKey);
+      await this.persistUnlockedSession(privateKey);
+    } else if (this.unlockedPrivateKey) {
+      // No mnemonic in session — clear unlock (requires re-auth)
+      await this.clearUnlockedSession();
+    }
+
+    // Notify dApps of account change
+    if (state.connectedOrigins.length > 0) {
+      const chainId = this.displayChainId(this.activeNetworkPreset(state), await this.safeGetChainId(state)) ?? "unknown";
+      await Promise.allSettled(
+        state.connectedOrigins.map((origin) =>
+          this.broadcastProviderEvent("accountsChanged", [[target.publicKey]], origin)
+        )
+      );
+    }
+
+    return this.getPopupState();
+  }
+
+  async renameAccount(index: number, name: string): Promise<PopupState> {
+    const state = this.requireStoredWallet(await this.loadWalletState());
+    const accounts = state.accounts ?? [
+      { index: 0, publicKey: state.publicKey, encryptedPrivateKey: state.encryptedPrivateKey, name: "Account 1" }
+    ];
+    const target = accounts.find((a) => a.index === index);
+    if (!target) {
+      throw new Error("account not found");
+    }
+    target.name = name;
+    state.accounts = accounts;
+    await this.store.saveState(state);
+    return this.getPopupState();
+  }
+
+  async removeAccount(index: number): Promise<PopupState> {
+    const state = this.requireStoredWallet(await this.loadWalletState());
+    if (index === 0) {
+      throw new Error("cannot remove the primary account");
+    }
+    const accounts = state.accounts ?? [];
+    state.accounts = accounts.filter((a) => a.index !== index);
+    if (state.activeAccountIndex === index && state.accounts.length > 0) {
+      // Switch back to primary
+      const primary = state.accounts[0]!;
+      state.publicKey = primary.publicKey;
+      state.encryptedPrivateKey = primary.encryptedPrivateKey;
+      state.activeAccountIndex = primary.index;
+    }
+    await this.store.saveState(state);
+    return this.getPopupState();
   }
 
   async lockWallet(): Promise<PopupState> {
