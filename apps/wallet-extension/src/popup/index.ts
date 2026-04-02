@@ -88,6 +88,7 @@ let tokenMetaGeneration = 0;
 let showReceive = false;
 let activeApprovalId: string | null = null;
 let showAccountMenu = false;
+let renamingAccountIndex: number | null = null;
 let confirmWalletRemoval = false;
 let balanceWatchClient: XianClient | null = null;
 let balanceWatchClientKey: string | null = null;
@@ -757,14 +758,26 @@ function renderAccountMenu(state: PopupRuntimeState): string {
   return `
     <div class="account-menu">
       ${state.accounts
-        .map(
-          (a) => `
-            <button class="account-menu-item ${a.index === state.activeAccountIndex ? "is-active" : ""}" data-switch-account="${a.index}">
-              <span class="account-menu-name">${escapeHtml(a.name)}</span>
-              <span class="account-menu-addr mono">${escapeHtml(truncateHash(a.publicKey, 6, 4))}</span>
-            </button>
-          `
-        )
+        .map((a) => {
+          if (renamingAccountIndex === a.index) {
+            return `
+              <form class="account-menu-rename" data-rename-form="${a.index}">
+                <input class="account-rename-input" id="rename-input" value="${escapeAttribute(a.name)}" autofocus />
+                <button type="submit" class="ghost-sm">Save</button>
+                <button type="button" class="ghost-sm" data-cancel-rename>Cancel</button>
+              </form>
+            `;
+          }
+          return `
+            <div class="account-menu-item ${a.index === state.activeAccountIndex ? "is-active" : ""}">
+              <button class="account-menu-main" data-switch-account="${a.index}">
+                <span class="account-menu-name">${escapeHtml(a.name)}</span>
+                <span class="account-menu-addr mono">${escapeHtml(truncateHash(a.publicKey, 6, 4))}</span>
+              </button>
+              <button class="account-menu-action" data-start-rename="${a.index}" title="Rename">Rename</button>
+            </div>
+          `;
+        })
         .join("")}
       <button class="account-menu-item account-menu-add" data-add-account-prompt>
         <span class="account-menu-name">${ICONS.plus} Add account</span>
@@ -2008,8 +2021,17 @@ function renderAccountsCard(state: PopupRuntimeState): string {
       </div>
       <div class="s-card-body stack">
         ${state.accounts
-          .map(
-            (a) => `
+          .map((a) => {
+            if (renamingAccountIndex === a.index) {
+              return `
+                <form class="account-menu-rename" data-settings-rename-form="${a.index}">
+                  <input class="account-rename-input" id="settings-rename-input" value="${escapeAttribute(a.name)}" autofocus />
+                  <button type="submit" class="ghost-sm">Save</button>
+                  <button type="button" class="ghost-sm" data-cancel-rename>Cancel</button>
+                </form>
+              `;
+            }
+            return `
               <div class="contact-edit-row">
                 <div style="flex: 1; min-width: 0">
                   <div class="text-sm">${escapeHtml(a.name)} ${a.index === state.activeAccountIndex ? `<span class="pill pill-strong">Active</span>` : ""}</div>
@@ -2020,8 +2042,8 @@ function renderAccountsCard(state: PopupRuntimeState): string {
                   ${a.index !== 0 ? `<button class="ghost-sm" data-delete-account="${a.index}" title="Remove">×</button>` : ""}
                 </div>
               </div>
-            `
-          )
+            `;
+          })
           .join("")}
       </div>
     </div>
@@ -2338,6 +2360,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     .querySelector<HTMLElement>("[data-toggle-account-menu]")
     ?.addEventListener("click", () => {
       showAccountMenu = !showAccountMenu;
+      renamingAccountIndex = null;
       render(state);
     });
 
@@ -2345,6 +2368,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     btn.addEventListener("click", async () => {
       const index = Number(btn.dataset.switchAccount);
       showAccountMenu = false;
+      renamingAccountIndex = null;
       try {
         await sendRuntimeMessage<PopupState>({
           type: "wallet_switch_account",
@@ -2359,10 +2383,47 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     });
   }
 
+  for (const btn of root.querySelectorAll<HTMLElement>("[data-start-rename]")) {
+    btn.addEventListener("click", () => {
+      renamingAccountIndex = Number(btn.dataset.startRename);
+      render(state);
+    });
+  }
+
+  root
+    .querySelector<HTMLElement>("[data-cancel-rename]")
+    ?.addEventListener("click", () => {
+      renamingAccountIndex = null;
+      render(state);
+    });
+
+  for (const form of root.querySelectorAll<HTMLFormElement>("[data-rename-form]")) {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const index = Number(form.dataset.renameForm);
+      const input = form.querySelector<HTMLInputElement>("#rename-input");
+      const name = input?.value.trim();
+      if (!name) return;
+      try {
+        await sendRuntimeMessage<PopupState>({
+          type: "wallet_rename_account",
+          index,
+          name
+        });
+        renamingAccountIndex = null;
+        await refresh(null);
+      } catch (error) {
+        setFlash(formatError(error), "danger");
+        render(state);
+      }
+    });
+  }
+
   root
     .querySelector<HTMLElement>("[data-add-account-prompt]")
     ?.addEventListener("click", async () => {
       showAccountMenu = false;
+      renamingAccountIndex = null;
       const password = prompt("Enter wallet password to derive a new account:");
       if (!password) return;
       try {
@@ -3265,10 +3326,18 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     });
 
   for (const btn of root.querySelectorAll<HTMLElement>("[data-rename-account]")) {
-    btn.addEventListener("click", async () => {
-      const index = Number(btn.dataset.renameAccount);
-      const acct = state.accounts.find((a) => a.index === index);
-      const name = prompt("Rename account:", acct?.name ?? "");
+    btn.addEventListener("click", () => {
+      renamingAccountIndex = Number(btn.dataset.renameAccount);
+      render(state);
+    });
+  }
+
+  for (const form of root.querySelectorAll<HTMLFormElement>("[data-settings-rename-form]")) {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const index = Number(form.dataset.settingsRenameForm);
+      const input = form.querySelector<HTMLInputElement>("#settings-rename-input");
+      const name = input?.value.trim();
       if (!name) return;
       try {
         await sendRuntimeMessage<PopupState>({
@@ -3276,6 +3345,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           index,
           name
         });
+        renamingAccountIndex = null;
         await refresh(null);
       } catch (error) {
         setFlash(formatError(error), "danger");

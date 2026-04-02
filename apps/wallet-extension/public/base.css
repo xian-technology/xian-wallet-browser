@@ -178,6 +178,52 @@ main {
   font-size: 11px;
   color: var(--muted);
 }
+.account-menu-main {
+  all: unset;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+}
+.account-menu-action {
+  all: unset;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+.account-menu-action:hover {
+  color: var(--fg);
+  background: var(--bg-2);
+}
+
+.account-menu-rename {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+}
+.account-rename-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--bg-0);
+  color: var(--fg);
+  outline: none;
+}
+.account-rename-input:focus {
+  border-color: var(--accent);
+}
+
 .account-menu-add {
   border-top: 1px solid var(--line);
   color: var(--muted);
