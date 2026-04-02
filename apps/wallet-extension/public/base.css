@@ -1541,21 +1541,67 @@ textarea {
   }
 }
 
-/* ── Link button ──────────────────────────────────────────── */
-.link-btn {
+/* ── Input with icon ──────────────────────────────────────── */
+.input-with-icon {
+  position: relative;
+}
+.input-with-icon input {
+  padding-right: 40px;
+}
+.input-icon-btn {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s;
+}
+.input-icon-btn:hover {
+  color: var(--accent);
+}
+.input-icon-btn svg {
+  width: 16px;
+  height: 16px;
+}
+.max-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+  opacity: 0.7;
+}
+.max-badge:hover {
+  opacity: 1;
+  color: var(--accent);
+}
+
+/* ── Send footer links ────────────────────────────────────── */
+.send-footer-links {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.send-footer-link {
   background: none;
   border: none;
   color: var(--muted);
   font-size: 12px;
   cursor: pointer;
-  padding: 0;
-  text-decoration: underline;
-  text-decoration-color: transparent;
-  transition: color 0.15s, text-decoration-color 0.15s;
+  padding: 6px 10px;
+  border-radius: 8px;
+  transition: color 0.15s, background 0.15s;
 }
-.link-btn:hover {
+.send-footer-link:hover {
   color: var(--fg);
-  text-decoration-color: var(--fg);
+  background: var(--bg-2);
 }
 
 /* ── Contact picker / editor ──────────────────────────────── */

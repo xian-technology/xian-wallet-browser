@@ -290,6 +290,10 @@ function assetColor(key: string): string {
   return `hsl(${hue}, 45%, 35%)`;
 }
 
+function isValidXianAddress(addr: string): boolean {
+  return /^[0-9a-fA-F]{64}$/.test(addr);
+}
+
 function truncateHash(hash: string, headLen = 10, tailLen = 8): string {
   if (hash.length <= headLen + tailLen + 3) {
     return hash;
@@ -726,10 +730,6 @@ function renderUnlocked(state: PopupRuntimeState): void {
         <button class="nav-item ${activeTab === "home" ? "is-active" : ""}" data-tab="home">
           ${ICONS.home}
           Home
-        </button>
-        <button class="nav-item ${activeTab === "send" ? "is-active" : ""}" data-tab="send">
-          ${ICONS.send}
-          Send
         </button>
         <button class="nav-item ${activeTab === "apps" ? "is-active" : ""}" data-tab="apps">
           ${ICONS.grid}
@@ -1210,17 +1210,17 @@ function renderSimpleSend(state: PopupRuntimeState): string {
         <div class="s-card-body stack">
           <label>
             Recipient
-            <div style="display: flex; gap: 6px">
-              <input id="simple-to" value="${escapeAttribute(simpleTo)}" placeholder="Wallet address" style="flex: 1" />
-              ${contacts.length > 0 ? `<button type="button" class="ghost-sm" data-toggle-contacts style="white-space: nowrap">${ICONS.contacts}</button>` : ""}
+            <div class="input-with-icon">
+              <input id="simple-to" value="${escapeAttribute(simpleTo)}" placeholder="Wallet address" />
+              ${contacts.length > 0 ? `<button type="button" class="input-icon-btn" data-toggle-contacts title="Contacts">${ICONS.contacts}</button>` : ""}
             </div>
           </label>
           ${showContactPicker ? renderContactList() : ""}
           <label>
             Amount
-            <div style="display: flex; gap: 6px; align-items: center">
-              <input id="simple-amount" type="number" min="0" step="any" value="${escapeAttribute(simpleAmount)}" placeholder="0.00" style="flex: 1" />
-              <button type="button" class="ghost-sm" data-max-amount>Max</button>
+            <div class="input-with-icon">
+              <input id="simple-amount" type="number" min="0" step="any" value="${escapeAttribute(simpleAmount)}" placeholder="0.00" />
+              <button type="button" class="input-icon-btn max-badge" data-max-amount title="Use max balance">MAX</button>
             </div>
             <span class="muted text-sm">Available: ${escapeHtml(displayBalance)} XIAN</span>
           </label>
@@ -1228,9 +1228,9 @@ function renderSimpleSend(state: PopupRuntimeState): string {
       </div>
 
       <button class="full-width" data-review-simple>Review</button>
-      <div style="display: flex; justify-content: center; gap: 16px; margin-top: 4px">
-        <button class="link-btn" data-switch-advanced>Advanced transaction</button>
-        <button class="link-btn" data-edit-contacts>${contacts.length > 0 ? "Manage contacts" : "Add contacts"}</button>
+      <div class="send-footer-links">
+        <button class="send-footer-link" data-switch-advanced>Advanced transaction</button>
+        <button class="send-footer-link" data-edit-contacts>${contacts.length > 0 ? "Manage contacts" : "Add contacts"}</button>
       </div>
     </div>
   `;
@@ -1248,7 +1248,7 @@ function renderContactList(): string {
     return `<p class="muted text-sm">No contacts saved yet.</p>`;
   }
   return `
-    <div class="contact-list">
+    <div class="contact-list" style="max-height: ${Math.min(contacts.length, 5) * 40}px; overflow-y: auto">
       ${contacts
         .map(
           (c) => `
@@ -1274,7 +1274,6 @@ function renderContactsEditor(): string {
             <h3 class="s-card-title">Contacts</h3>
             <p class="s-card-desc">Saved recipient addresses.</p>
           </div>
-          <button class="ghost-sm" data-add-contact>Add</button>
         </div>
         <div class="s-card-body stack">
           ${
@@ -1406,6 +1405,7 @@ function renderFunctionSelect(): string {
 function renderSendDraft(): string {
   return `
     <div class="settings-wrap">
+      <button class="detail-back" data-switch-simple>${ICONS.chevronLeft} Simple send</button>
       <div class="s-card">
         <div class="s-card-head">
           <div>
@@ -2327,6 +2327,13 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     });
 
   root
+    .querySelector<HTMLElement>("[data-switch-simple]")
+    ?.addEventListener("click", () => {
+      sendMode = "simple";
+      render(state);
+    });
+
+  root
     .querySelector<HTMLElement>("[data-toggle-contacts]")
     ?.addEventListener("click", () => {
       const toInput = root.querySelector<HTMLInputElement>("#simple-to");
@@ -2356,7 +2363,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
 
   root
     .querySelector<HTMLElement>("[data-review-simple]")
-    ?.addEventListener("click", () => {
+    ?.addEventListener("click", async () => {
       const toInput = root.querySelector<HTMLInputElement>("#simple-to");
       const amtInput = root.querySelector<HTMLInputElement>("#simple-amount");
       if (toInput) simpleTo = toInput.value.trim();
@@ -2379,8 +2386,20 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       sendFunction = "transfer";
       sendParsedKwargs = { to: simpleTo, amount };
       sendEstimateMode = true;
-      sendStep = "review";
-      render(state);
+
+      try {
+        sendEstimate = await sendRuntimeMessage<{ estimated: number; suggested: number }>({
+          type: "wallet_estimate_transaction",
+          contract: sendContract,
+          function: sendFunction,
+          kwargs: sendParsedKwargs
+        });
+        sendStep = "review";
+        render(state);
+      } catch (error) {
+        setFlash(formatError(error), "danger");
+        render(state);
+      }
     });
 
   root
@@ -2411,6 +2430,12 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         setFlash("Name and address are required.", "warning");
         render(state);
         return;
+      }
+      if (!isValidXianAddress(address)) {
+        const proceed = confirm(
+          "This doesn't look like a valid Xian address (expected 64-character hex string). Save anyway?"
+        );
+        if (!proceed) return;
       }
       contacts.push({ id: crypto.randomUUID(), name, address });
       await sendRuntimeMessage<null>({ type: "contacts_save", contacts });
