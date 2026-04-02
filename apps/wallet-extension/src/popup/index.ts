@@ -798,7 +798,7 @@ function renderSetup(state: PopupRuntimeState | null): void {
             Create
           </button>
           <button type="button" class="tab-button ${mnemonicSelected ? "is-active" : ""}" data-setup-mode="importMnemonic">
-            Phrase
+            Seed
           </button>
           <button type="button" class="tab-button ${privateKeySelected ? "is-active" : ""}" data-setup-mode="importPrivateKey">
             Key
@@ -815,8 +815,8 @@ function renderSetup(state: PopupRuntimeState | null): void {
             createSelected
               ? `
                   <div class="surface surface-quiet">
-                    <strong>New recovery phrase</strong>
-                    <p class="muted text-sm">A BIP39 phrase will be generated. Back it up before closing.</p>
+                    <strong>New recovery seed</strong>
+                    <p class="muted text-sm">A BIP39 seed phrase will be generated. Back it up before closing.</p>
                   </div>
                 `
               : ""
@@ -826,10 +826,9 @@ function renderSetup(state: PopupRuntimeState | null): void {
             mnemonicSelected
               ? `
                   <label>
-                    Recovery phrase
-                    <textarea id="setup-mnemonic" placeholder="Enter your 12 or 24 word BIP39 phrase" required></textarea>
+                    Recovery seed
+                    <textarea id="setup-mnemonic" placeholder="Enter your 12 or 24 word BIP39 seed phrase" required></textarea>
                   </label>
-                  <div class="banner banner-warning">Only enter your phrase inside this wallet. Never on a website or in chat.</div>
                 `
               : ""
           }
@@ -841,10 +840,6 @@ function renderSetup(state: PopupRuntimeState | null): void {
                     Private key
                     <input id="setup-private-key" placeholder="32-byte hex seed" required autocomplete="off" />
                   </label>
-                  <div class="surface surface-quiet">
-                    <strong>No recovery phrase</strong>
-                    <p class="muted text-sm">Raw key import. No phrase backup or recovery.</p>
-                  </div>
                 `
               : ""
           }
@@ -876,7 +871,7 @@ function renderSetup(state: PopupRuntimeState | null): void {
               createSelected
                 ? "Create wallet"
                 : mnemonicSelected
-                  ? "Import recovery phrase"
+                  ? "Import recovery seed"
                   : "Import private key"
             }
           </button>
@@ -1943,7 +1938,7 @@ function renderSecurityTab(state: PopupRuntimeState): string {
         <div class="s-card-head">
           <div>
             <h3 class="s-card-title">Security</h3>
-            <p class="s-card-desc">${escapeHtml(state.seedSource === "mnemonic" ? "Phrase-backed wallet" : "Private key wallet")}.</p>
+            <p class="s-card-desc">${escapeHtml(state.seedSource === "mnemonic" ? "Seed-backed wallet" : "Private key wallet")}.</p>
           </div>
         </div>
         <div class="s-card-body stack">
@@ -1984,14 +1979,14 @@ function renderSecurityTab(state: PopupRuntimeState): string {
           ${
             confirmWalletRemoval
               ? `
-                <div class="banner banner-danger">Are you sure? This permanently removes the wallet and all accounts. Make sure you have your recovery phrase backed up.</div>
+                <div class="banner banner-danger">Are you sure? This permanently removes the wallet and all accounts. Make sure you have your recovery seed backed up.</div>
                 <div style="display: flex; gap: 8px">
                   <button class="ghost full-width" data-confirm-remove style="color: var(--danger); border-color: rgba(255,77,79,0.2)">Yes, remove wallet</button>
                   <button class="ghost full-width" data-cancel-remove>Cancel</button>
                 </div>
               `
               : `
-                <p class="muted text-sm">This permanently removes the wallet from the extension. Make sure you have backed up your recovery phrase before proceeding.</p>
+                <p class="muted text-sm">This permanently removes the wallet from the extension. Make sure you have backed up your recovery seed before proceeding.</p>
                 <button class="ghost full-width" data-remove-wallet style="margin-top: 8px; color: var(--danger); border-color: rgba(255,77,79,0.2)">Remove wallet</button>
               `
           }
@@ -2008,7 +2003,7 @@ function renderAccountsCard(state: PopupRuntimeState): string {
       <div class="s-card-head">
         <div>
           <h3 class="s-card-title">Accounts</h3>
-          <p class="s-card-desc">${state.accounts.length} derived from recovery phrase.</p>
+          <p class="s-card-desc">${state.accounts.length} derived from recovery seed.</p>
         </div>
       </div>
       <div class="s-card-body stack">
@@ -2043,7 +2038,7 @@ function renderExportSection(state: PopupRuntimeState): string {
     secrets.push(renderPhraseCard("Write this down now", generatedMnemonic, "warning"));
   }
   if (revealedMnemonic && revealedMnemonic !== generatedMnemonic) {
-    secrets.push(renderPhraseCard("Recovery phrase", revealedMnemonic, "info"));
+    secrets.push(renderPhraseCard("Recovery seed", revealedMnemonic, "info"));
   }
   if (revealedPrivateKey) {
     secrets.push(renderSecretCard("Private key", revealedPrivateKey));
@@ -2063,7 +2058,7 @@ function renderExportSection(state: PopupRuntimeState): string {
         <input id="export-password" type="password" required autocomplete="current-password" />
       </label>
       <div style="display: flex; gap: 8px">
-        ${hasMnemonic ? `<button type="submit" class="secondary full-width" data-export-mnemonic>Show phrase</button>` : ""}
+        ${hasMnemonic ? `<button type="submit" class="secondary full-width" data-export-mnemonic>Show seed</button>` : ""}
         <button type="submit" class="secondary full-width" data-export-private-key>Show private key</button>
       </div>
     </form>
@@ -2227,8 +2222,8 @@ function bindSetupEvents(): void {
         activeTab = generatedMnemonic ? "security" : "home";
         setFlash(
           generatedMnemonic
-            ? "Wallet created. Write down the recovery phrase before closing this popup."
-            : `Wallet imported from ${result.importedSeedSource === "mnemonic" ? "recovery phrase" : "private key"}.`,
+            ? "Wallet created. Write down the recovery seed before closing this popup."
+            : `Wallet imported from ${result.importedSeedSource === "mnemonic" ? "recovery seed" : "private key"}.`,
           "success"
         );
         balancesLoading =
@@ -3220,7 +3215,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           type: "wallet_reveal_mnemonic",
           password: value("#export-password")
         });
-        setFlash("Recovery phrase revealed. Store it offline.", "warning");
+        setFlash("Recovery seed revealed. Store it offline.", "warning");
         render(state);
       } catch (error) {
         setFlash(formatError(error), "danger");
@@ -3277,7 +3272,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
   for (const btn of root.querySelectorAll<HTMLElement>("[data-delete-account]")) {
     btn.addEventListener("click", async () => {
       const index = Number(btn.dataset.deleteAccount);
-      if (!confirm("Remove this account? You can re-derive it later from the recovery phrase.")) return;
+      if (!confirm("Remove this account? You can re-derive it later from the recovery seed.")) return;
       try {
         await sendRuntimeMessage<PopupState>({
           type: "wallet_remove_account",
