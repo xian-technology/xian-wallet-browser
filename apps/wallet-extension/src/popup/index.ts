@@ -1304,11 +1304,13 @@ function renderAppsTab(state: PopupRuntimeState): string {
 
 function renderOriginItem(origin: string): string {
   const hostname = safeOriginLabel(origin);
-  const letter = hostname.charAt(0).toUpperCase();
+  const letter = escapeHtml(hostname.charAt(0).toUpperCase());
+  const fallback = `this.replaceWith(Object.assign(document.createElement('div'),{className:'token-icon',style:'background:${assetColor(origin)}',textContent:'${letter}'}))`;
+  const faviconUrl = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=32`;
 
   return `
     <div class="app-item">
-      <div class="token-icon" style="background: ${assetColor(origin)}">${escapeHtml(letter)}</div>
+      <img class="app-favicon" src="${escapeAttribute(faviconUrl)}" alt="" width="32" height="32" onerror="${escapeAttribute(fallback)}" />
       <div class="app-item-info">
         <div class="app-item-host">${escapeHtml(hostname)}</div>
         <div class="app-item-url">${escapeHtml(origin)}</div>

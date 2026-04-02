@@ -679,6 +679,14 @@ main {
   border-bottom: none;
 }
 
+.app-favicon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  object-fit: contain;
+}
+
 .app-item-info {
   flex: 1;
   min-width: 0;
