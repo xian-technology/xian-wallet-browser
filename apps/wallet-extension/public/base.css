@@ -1498,6 +1498,14 @@ textarea {
   border: 1px solid var(--line);
 }
 
+.copyable-secret {
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.copyable-secret:hover {
+  opacity: 0.85;
+}
+
 /* ═══════════════════════════════════════════════════════════
    APPROVAL WINDOW (legacy layout for approval.html)
    ═══════════════════════════════════════════════════════════ */

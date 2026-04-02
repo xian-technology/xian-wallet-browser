@@ -2132,7 +2132,7 @@ function renderNetworkEditor(state: PopupRuntimeState): string {
 
 function renderSecretCard(title: string, secret: string): string {
   return `
-    <div class="banner banner-info">
+    <div class="banner banner-info copyable-secret" data-copy-secret="${escapeAttribute(secret)}" title="Click to copy">
       <strong>${escapeHtml(title)}</strong>
       <div class="recovery-phrase">${escapeHtml(secret)}</div>
     </div>
@@ -2145,7 +2145,7 @@ function renderPhraseCard(
   tone: "warning" | "info"
 ): string {
   return `
-    <div class="banner banner-${tone}">
+    <div class="banner banner-${tone} copyable-secret" data-copy-secret="${escapeAttribute(phrase)}" title="Click to copy">
       <strong>${escapeHtml(title)}</strong>
       <div class="recovery-phrase">${escapeHtml(phrase)}</div>
     </div>
@@ -3239,6 +3239,21 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         render(state);
       }
     });
+
+  for (const el of root.querySelectorAll<HTMLElement>("[data-copy-secret]")) {
+    el.addEventListener("click", async () => {
+      const secret = el.dataset.copySecret;
+      if (!secret) return;
+      try {
+        await navigator.clipboard.writeText(secret);
+        setFlash("Copied to clipboard.", "success");
+        renderToast();
+      } catch {
+        setFlash("Failed to copy.", "danger");
+        renderToast();
+      }
+    });
+  }
 
   root
     .querySelector<HTMLElement>("[data-hide-secrets]")
