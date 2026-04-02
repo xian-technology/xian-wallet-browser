@@ -1643,6 +1643,7 @@ textarea {
   padding: 8px 10px;
   background: var(--bg-0);
   border: none;
+  border-radius: 0;
   cursor: pointer;
   color: var(--fg);
   text-align: left;
@@ -1650,6 +1651,7 @@ textarea {
 }
 .contact-item:hover {
   background: var(--bg-2);
+  transform: none;
 }
 .contact-name {
   font-size: 13px;
