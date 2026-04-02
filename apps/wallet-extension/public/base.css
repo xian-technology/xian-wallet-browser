@@ -1549,12 +1549,12 @@ textarea {
   padding-right: 40px;
 }
 .input-icon-btn {
+  all: unset;
   position: absolute;
   right: 6px;
   top: 50%;
   transform: translateY(-50%);
   background: none;
-  border: none;
   color: var(--muted);
   cursor: pointer;
   padding: 4px 6px;
@@ -1563,10 +1563,13 @@ textarea {
   align-items: center;
   justify-content: center;
   transition: color 0.15s, background 0.15s;
+  box-sizing: border-box;
+  font-family: inherit;
 }
 .input-icon-btn:hover {
   color: var(--fg);
   background: var(--bg-2);
+  transform: translateY(-50%);
 }
 .input-icon-btn svg {
   width: 16px;
