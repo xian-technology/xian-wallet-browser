@@ -1692,8 +1692,16 @@ export class WalletController {
       name: `Account ${accounts.length + 1}`
     });
 
+    state.publicKey = signer.address;
+    state.encryptedPrivateKey = encrypted;
+    state.activeAccountIndex = nextIndex;
     state.accounts = accounts;
     await this.store.saveState(state);
+
+    this.unlockedPrivateKey = privateKey;
+    this.unlockedSigner = signer;
+    await this.persistUnlockedSession(privateKey);
+
     return this.getPopupState();
   }
 
