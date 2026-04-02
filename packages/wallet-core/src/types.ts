@@ -101,6 +101,7 @@ export interface PopupState {
   activeNetworkName?: string;
   networkPresets: WalletNetworkPreset[];
   watchedAssets: XianWatchedAsset[];
+  detectedAssets: WalletDetectedAsset[];
   /** Maps contract address to raw balance (number as string), or null if fetch failed. */
   assetBalances: Record<string, string | null>;
   /** Maps contract address to fiat display string (e.g. "$12.34"), or null if unavailable. */
@@ -152,6 +153,11 @@ export interface ApprovalDetail {
   value: string;
   monospace?: boolean;
   tone?: "default" | "accent" | "warning" | "danger";
+}
+
+export interface WalletDetectedAsset extends XianWatchedAsset {
+  balance: string | null;
+  tracked: boolean;
 }
 
 export interface WalletSetupInput {

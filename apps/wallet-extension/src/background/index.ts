@@ -239,8 +239,14 @@ chrome.runtime.onMessage.addListener(
           case "wallet_get_asset_balances":
             sendResponse(ok(await controller.getAssetBalances()));
             return;
+          case "wallet_get_detected_assets":
+            sendResponse(ok(await controller.getDetectedAssets()));
+            return;
           case "wallet_get_token_metadata":
             sendResponse(ok(await controller.getTokenMetadata(message.contract)));
+            return;
+          case "wallet_track_asset":
+            sendResponse(ok(await controller.trackAsset(message.asset)));
             return;
           case "wallet_update_asset_decimals":
             sendResponse(ok(await controller.updateWatchedAssetDecimals(message.contract, message.decimals)));

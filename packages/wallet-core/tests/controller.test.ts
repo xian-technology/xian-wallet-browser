@@ -90,6 +90,41 @@ function createStore(): MemoryStore {
 function createClient(): WalletNetworkClient {
   return {
     getChainId: vi.fn(async () => "xian-local"),
+    getBalance: vi.fn(async () => "12"),
+    getTokenBalances: vi.fn(async () => ({
+      available: true,
+      address: "alice",
+      items: [
+        {
+          contract: "currency",
+          balance: "12",
+          name: "Xian",
+          symbol: "XIAN",
+          logoUrl: "https://example.com/xian.svg"
+        },
+        {
+          contract: "con_token",
+          balance: "8",
+          name: "Example",
+          symbol: "EXP",
+          logoUrl: null
+        }
+      ],
+      total: 2,
+      limit: 100,
+      offset: 0
+    })),
+    getTokenMetadata: vi.fn(async (contract: string) => ({
+      contract,
+      name: contract === "currency" ? "Xian" : "Example",
+      symbol: contract === "currency" ? "XIAN" : "EXP",
+      logoUrl: null
+    })),
+    estimateStamps: vi.fn(async () => ({
+      estimated: 12_000,
+      suggested: 14_400
+    })),
+    getContractMethods: vi.fn(async () => []),
     buildTx: vi.fn(async (intent) => ({
       payload: {
         chain_id: intent.chainId ?? "xian-local",
@@ -405,6 +440,86 @@ describe("@xian-tech/wallet-core controller", () => {
     );
   });
 
+  it("surfaces detected assets without auto-tracking them", async () => {
+    const store = createStore();
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => createClient(),
+      onApprovalRequested: vi.fn(async () => undefined)
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+
+    const popupState = await controller.getPopupState();
+    const detectedAssets = await controller.getDetectedAssets();
+
+    expect(popupState.watchedAssets).toEqual([
+      expect.objectContaining({ contract: "currency" })
+    ]);
+    expect(detectedAssets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          contract: "currency",
+          tracked: true,
+          balance: "12"
+        }),
+        expect.objectContaining({
+          contract: "con_token",
+          tracked: false,
+          balance: "8"
+        })
+      ])
+    );
+  });
+
+  it("tracks detected assets explicitly through the wallet controller", async () => {
+    const store = createStore();
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => createClient(),
+      onApprovalRequested: vi.fn(async () => undefined)
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+
+    const popupState = await controller.trackAsset({
+      contract: "con_token",
+      name: "Example",
+      symbol: "EXP"
+    });
+
+    expect(popupState.watchedAssets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          contract: "currency"
+        }),
+        expect.objectContaining({
+          contract: "con_token",
+          name: "Example",
+          symbol: "EXP"
+        })
+      ])
+    );
+  });
+
   it("saves network presets and switches chains through configured presets", async () => {
     const store = createStore();
     const onProviderEvent = vi.fn(async () => undefined);
@@ -420,6 +535,26 @@ describe("@xian-tech/wallet-core controller", () => {
         getChainId: vi.fn(async () =>
           state.activeNetworkId === "mainnet-preset" ? "xian-1" : "xian-local"
         ),
+        getBalance: vi.fn(async () => "12"),
+        getTokenBalances: vi.fn(async () => ({
+          available: true,
+          address: state.publicKey,
+          items: [],
+          total: 0,
+          limit: 100,
+          offset: 0
+        })),
+        getTokenMetadata: vi.fn(async (contract: string) => ({
+          contract,
+          name: contract,
+          symbol: contract.toUpperCase(),
+          logoUrl: null
+        })),
+        estimateStamps: vi.fn(async () => ({
+          estimated: 12_000,
+          suggested: 14_400
+        })),
+        getContractMethods: vi.fn(async () => []),
         buildTx: vi.fn(async (intent) => ({
           payload: {
             chain_id: intent.chainId ?? "xian-local",

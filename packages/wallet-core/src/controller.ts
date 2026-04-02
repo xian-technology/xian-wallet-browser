@@ -45,6 +45,7 @@ import type {
   StoredWalletState,
   WalletControllerStore,
   WalletCreateResult,
+  WalletDetectedAsset,
   WalletNetworkPreset,
   WalletNetworkPresetInput,
   WalletNetworkStatus,
@@ -64,6 +65,23 @@ const SAFE_CHAIN_ID_LOOKUP_TIMEOUT_MS = 2_000;
 export interface WalletNetworkClient {
   getChainId(): Promise<string>;
   getBalance(address: string, options?: { contract?: string }): Promise<unknown>;
+  getTokenBalances(
+    address: string,
+    options?: { limit?: number; offset?: number; includeZero?: boolean }
+  ): Promise<{
+    available: boolean;
+    address: string;
+    items: Array<{
+      contract: string;
+      balance: string | null;
+      name: string | null;
+      symbol: string | null;
+      logoUrl: string | null;
+    }>;
+    total: number;
+    limit: number;
+    offset: number;
+  }>;
   getTokenMetadata(contract: string): Promise<{
     contract: string;
     name: string | null;
@@ -157,6 +175,18 @@ function parseIntentNumber(
 function trimOptionalString(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function normalizeTrackedAsset(
+  asset: XianWatchAssetRequest["options"]
+): XianWatchAssetRequest["options"] {
+  return {
+    contract: asset.contract.trim(),
+    name: trimOptionalString(asset.name),
+    symbol: trimOptionalString(asset.symbol),
+    icon: trimOptionalString(asset.icon),
+    decimals: asset.decimals
+  };
 }
 
 function createLocalNetworkPreset(): WalletNetworkPreset {
@@ -599,6 +629,60 @@ export class WalletController {
     });
   }
 
+  private async fetchDetectedAssets(
+    state: StoredWalletState | null
+  ): Promise<WalletDetectedAsset[]> {
+    if (!state) {
+      return [];
+    }
+
+    const client = this.currentClient(state);
+    const trackedContracts = new Set(
+      state.watchedAssets.map((asset) => asset.contract)
+    );
+    const detectedAssets: WalletDetectedAsset[] = [];
+    const seenContracts = new Set<string>();
+    const pageSize = 200;
+    let offset = 0;
+
+    while (true) {
+      const page = await client.getTokenBalances(state.publicKey, {
+        limit: pageSize,
+        offset
+      });
+
+      for (const item of page.items) {
+        const contract = item.contract.trim();
+        if (!contract || seenContracts.has(contract)) {
+          continue;
+        }
+        seenContracts.add(contract);
+        detectedAssets.push({
+          contract,
+          name: trimOptionalString(item.name ?? undefined),
+          symbol: trimOptionalString(item.symbol ?? undefined),
+          icon: trimOptionalString(item.logoUrl ?? undefined),
+          balance: item.balance,
+          tracked: trackedContracts.has(contract)
+        });
+      }
+
+      const fetched = page.items.length;
+      if (fetched === 0 || offset + fetched >= page.total) {
+        break;
+      }
+      offset += fetched;
+    }
+
+    detectedAssets.sort((left, right) => {
+      if (left.tracked !== right.tracked) {
+        return left.tracked ? 1 : -1;
+      }
+      return left.contract.localeCompare(right.contract);
+    });
+    return detectedAssets;
+  }
+
   private sanitizeNetworkPresetInput(
     input: WalletNetworkPresetInput
   ): WalletNetworkPresetInput {
@@ -803,7 +887,7 @@ export class WalletController {
         const assetRequest = firstParamObject(
           request.params
         ) as unknown as XianWatchAssetRequest;
-        const asset = assetRequest.options;
+        const asset = normalizeTrackedAsset(assetRequest.options);
         await this.updateWatchedAssets((assets) => {
           const next = assets.filter((entry) => entry.contract !== asset.contract);
           next.push(asset);
@@ -1167,6 +1251,7 @@ export class WalletController {
       activeNetworkName: activePreset?.name,
       networkPresets: state?.networkPresets ?? DEFAULT_NETWORK_PRESETS,
       watchedAssets,
+      detectedAssets: [],
       assetBalances: {},
       assetFiatValues: {},
       connectedOrigins: state?.connectedOrigins ?? [],
@@ -1195,6 +1280,35 @@ export class WalletController {
   }> {
     const state = this.requireStoredWallet(await this.loadWalletState());
     return this.currentClient(state).getTokenMetadata(contract);
+  }
+
+  async getDetectedAssets(): Promise<WalletDetectedAsset[]> {
+    const state = await this.loadWalletState();
+    if (!state) {
+      return [];
+    }
+    try {
+      return await this.fetchDetectedAssets(state);
+    } catch {
+      return [];
+    }
+  }
+
+  async trackAsset(
+    asset: XianWatchAssetRequest["options"]
+  ): Promise<PopupState> {
+    const normalized = normalizeTrackedAsset(asset);
+    if (!normalized.contract) {
+      throw new TypeError("asset contract is required");
+    }
+    await this.updateWatchedAssets((assets) => {
+      const next = assets.filter(
+        (entry) => entry.contract !== normalized.contract
+      );
+      next.push(normalized);
+      return next;
+    });
+    return this.getPopupState();
   }
 
   async updateWatchedAssetDecimals(

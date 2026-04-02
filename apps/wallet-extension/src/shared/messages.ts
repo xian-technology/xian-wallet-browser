@@ -134,9 +134,24 @@ export interface WalletGetAssetBalancesRuntimeMessage {
   type: "wallet_get_asset_balances";
 }
 
+export interface WalletGetDetectedAssetsRuntimeMessage {
+  type: "wallet_get_detected_assets";
+}
+
 export interface WalletGetTokenMetadataRuntimeMessage {
   type: "wallet_get_token_metadata";
   contract: string;
+}
+
+export interface WalletTrackAssetRuntimeMessage {
+  type: "wallet_track_asset";
+  asset: {
+    contract: string;
+    name?: string;
+    symbol?: string;
+    icon?: string;
+    decimals?: number;
+  };
 }
 
 export interface WalletUpdateAssetDecimalsRuntimeMessage {
@@ -223,7 +238,9 @@ export type RuntimeMessage =
   | WalletRemoveAssetRuntimeMessage
   | WalletGetPopupStateRuntimeMessage
   | WalletGetAssetBalancesRuntimeMessage
+  | WalletGetDetectedAssetsRuntimeMessage
   | WalletGetTokenMetadataRuntimeMessage
+  | WalletTrackAssetRuntimeMessage
   | WalletUpdateAssetDecimalsRuntimeMessage
   | WalletEstimateTransactionRuntimeMessage
   | WalletSendDirectTransactionRuntimeMessage
