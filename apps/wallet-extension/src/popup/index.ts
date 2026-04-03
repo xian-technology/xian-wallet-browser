@@ -121,6 +121,7 @@ let sendStep: SendStep = "draft";
 
 // Simple send
 let simpleToken = "currency";
+let showTokenPicker = false;
 let simpleTo = "";
 let simpleAmount = "";
 
@@ -159,6 +160,7 @@ function resetSendState(): void {
   sendMode = "simple";
   sendStep = "draft";
   simpleToken = "currency";
+  showTokenPicker = false;
   simpleTo = "";
   simpleAmount = "";
   showContactPicker = false;
@@ -1675,10 +1677,35 @@ function renderSimpleSend(state: PopupRuntimeState): string {
         <div class="s-card-body stack">
           <label>
             Token
-            <select id="simple-token" style="padding: 10px 12px; border-radius: 10px; background: var(--bg-0); border: 1px solid var(--line); color: var(--fg); font-size: 14px; width: 100%">
-              ${visibleTokens.map((a) => `<option value="${escapeAttribute(a.contract)}" ${a.contract === simpleToken ? "selected" : ""}>${escapeHtml(a.symbol ?? a.contract)} — ${escapeHtml(a.name ?? a.contract)}</option>`).join("")}
-            </select>
+            <button type="button" class="token-chooser" data-toggle-token-picker>
+              <span class="token-chooser-icon" style="background: ${tokenColor}">${escapeHtml(tokenLetter)}</span>
+              <span class="token-chooser-info">
+                <span class="token-chooser-sym">${escapeHtml(tokenSymbol)}</span>
+                <span class="token-chooser-name">${escapeHtml(selectedAssetObj?.name ?? simpleToken)}</span>
+              </span>
+              ${ICONS.chevronDown}
+            </button>
+            <input type="hidden" id="simple-token" value="${escapeAttribute(simpleToken)}" />
           </label>
+          ${showTokenPicker ? `
+            <div class="token-picker-list">
+              ${visibleTokens.map((a) => {
+                const s = a.symbol ?? a.contract.slice(0, 6);
+                const l = s.charAt(0).toUpperCase();
+                const c = a.contract === "currency" ? "var(--accent-dim)" : assetColor(a.contract);
+                const active = a.contract === simpleToken;
+                return `
+                  <button type="button" class="token-picker-item ${active ? "is-active" : ""}" data-pick-token="${escapeAttribute(a.contract)}">
+                    <span class="token-chooser-icon" style="background: ${c}">${escapeHtml(l)}</span>
+                    <span class="token-chooser-info">
+                      <span class="token-chooser-sym">${escapeHtml(s)}</span>
+                      <span class="token-chooser-name">${escapeHtml(a.name ?? a.contract)}</span>
+                    </span>
+                  </button>
+                `;
+              }).join("")}
+            </div>
+          ` : ""}
           <label>
             Recipient
             <div class="input-with-icon">
@@ -3170,6 +3197,21 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       sendMode = "simple";
       render(state);
     });
+
+  root
+    .querySelector<HTMLElement>("[data-toggle-token-picker]")
+    ?.addEventListener("click", () => {
+      showTokenPicker = !showTokenPicker;
+      render(state);
+    });
+
+  for (const btn of root.querySelectorAll<HTMLElement>("[data-pick-token]")) {
+    btn.addEventListener("click", () => {
+      simpleToken = btn.dataset.pickToken ?? "currency";
+      showTokenPicker = false;
+      render(state);
+    });
+  }
 
   root
     .querySelector<HTMLElement>("[data-toggle-contacts]")
