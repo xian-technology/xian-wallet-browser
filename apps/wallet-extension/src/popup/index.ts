@@ -120,6 +120,7 @@ let sendMode: SendMode = "simple";
 let sendStep: SendStep = "draft";
 
 // Simple send
+let simpleToken = "currency";
 let simpleTo = "";
 let simpleAmount = "";
 
@@ -157,6 +158,7 @@ let contractMethodsFor: string | null = null;
 function resetSendState(): void {
   sendMode = "simple";
   sendStep = "draft";
+  simpleToken = "currency";
   simpleTo = "";
   simpleAmount = "";
   showContactPicker = false;
@@ -1653,8 +1655,13 @@ function renderSimpleSend(state: PopupRuntimeState): string {
     return renderContactsEditor();
   }
 
-  const xianBalance = state.assetBalances["currency"] ?? "0";
-  const displayBalance = formatSimpleBalance(xianBalance);
+  const selectedAssetObj = state.watchedAssets.find((a) => a.contract === simpleToken);
+  const tokenSymbol = selectedAssetObj?.symbol ?? simpleToken.slice(0, 6).toUpperCase();
+  const tokenLetter = tokenSymbol.charAt(0).toUpperCase();
+  const tokenBalance = state.assetBalances[simpleToken] ?? "0";
+  const displayBalance = formatSimpleBalance(tokenBalance);
+  const tokenColor = simpleToken === "currency" ? "var(--accent-dim)" : assetColor(simpleToken);
+  const visibleTokens = state.watchedAssets.filter((a) => !a.hidden).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
   return `
     <div class="settings-wrap">
@@ -1666,6 +1673,12 @@ function renderSimpleSend(state: PopupRuntimeState): string {
           </div>
         </div>
         <div class="s-card-body stack">
+          <label>
+            Token
+            <select id="simple-token" style="padding: 10px 12px; border-radius: 10px; background: var(--bg-0); border: 1px solid var(--line); color: var(--fg); font-size: 14px; width: 100%">
+              ${visibleTokens.map((a) => `<option value="${escapeAttribute(a.contract)}" ${a.contract === simpleToken ? "selected" : ""}>${escapeHtml(a.symbol ?? a.contract)} — ${escapeHtml(a.name ?? a.contract)}</option>`).join("")}
+            </select>
+          </label>
           <label>
             Recipient
             <div class="input-with-icon">
@@ -1680,7 +1693,7 @@ function renderSimpleSend(state: PopupRuntimeState): string {
               <input id="simple-amount" type="number" min="0" step="any" value="${escapeAttribute(simpleAmount)}" placeholder="0.00" />
               <button type="button" class="input-icon-btn max-badge" data-max-amount title="Use max balance">MAX</button>
             </div>
-            <span class="muted text-sm">Available: ${escapeHtml(displayBalance)} XIAN</span>
+            <span class="muted text-sm">Available: ${escapeHtml(displayBalance)} ${escapeHtml(tokenSymbol)}</span>
           </label>
         </div>
       </div>
@@ -3180,7 +3193,9 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
   root
     .querySelector<HTMLElement>("[data-max-amount]")
     ?.addEventListener("click", () => {
-      const raw = state.assetBalances["currency"] ?? "0";
+      const tokenSelect = root.querySelector<HTMLSelectElement>("#simple-token");
+      if (tokenSelect) simpleToken = tokenSelect.value;
+      const raw = state.assetBalances[simpleToken] ?? "0";
       const n = Number(raw);
       simpleAmount = Number.isNaN(n) ? "0" : String(n);
       render(state);
@@ -3189,6 +3204,8 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
   {
     const reviewBtn = root.querySelector<HTMLButtonElement>("[data-review-simple]");
     reviewBtn?.addEventListener("click", async () => {
+      const tokenSelect = root.querySelector<HTMLSelectElement>("#simple-token");
+      if (tokenSelect) simpleToken = tokenSelect.value;
       const toInput = root.querySelector<HTMLInputElement>("#simple-to");
       const amtInput = root.querySelector<HTMLInputElement>("#simple-amount");
       if (toInput) simpleTo = toInput.value.trim();
@@ -3206,8 +3223,8 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         return;
       }
 
-      // Set up as a currency.transfer call
-      sendContract = "currency";
+      // Set up as a token.transfer call
+      sendContract = simpleToken;
       sendFunction = "transfer";
       sendParsedKwargs = { to: simpleTo, amount };
       sendEstimateMode = true;
