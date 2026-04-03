@@ -28,7 +28,7 @@ document.body.appendChild(toastRoot);
 
 /* ── Types ─────────────────────────────────────────────────── */
 
-type PopupTab = "home" | "send" | "apps" | "security";
+type PopupTab = "home" | "send" | "activity" | "apps" | "security";
 type SetupMode = "create" | "importMnemonic" | "importPrivateKey";
 type FlashTone = "info" | "success" | "danger" | "warning";
 
@@ -65,6 +65,7 @@ const ICONS = {
   trendingUp: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>',
   repeat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>',
   contacts: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+  clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
   chevronDown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>',
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
   pencil: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>',
@@ -565,6 +566,10 @@ function setActiveTab(tab: PopupTab): void {
   showReceive = false;
   activeApprovalId = null;
   revealedPrivateKey = null;
+  selectedTxHash = null;
+  if (tab === "activity" && currentState?.publicKey) {
+    void fetchActivityTxs(currentState.publicKey);
+  }
   if (currentState) {
     render(currentState);
   }
@@ -1013,6 +1018,10 @@ function renderUnlocked(state: PopupRuntimeState): void {
           ${ICONS.home}
           Home
         </button>
+        <button class="nav-item ${activeTab === "activity" ? "is-active" : ""}" data-tab="activity">
+          ${ICONS.clock}
+          Activity
+        </button>
         <button class="nav-item ${activeTab === "apps" ? "is-active" : ""}" data-tab="apps">
           ${ICONS.grid}
           Apps
@@ -1043,6 +1052,8 @@ function renderTabPanel(state: PopupRuntimeState): string {
       return renderHomeTab(state);
     case "send":
       return renderSendTab(state);
+    case "activity":
+      return renderActivityTab(state);
     case "apps":
       return renderAppsTab(state);
     case "security":
@@ -1402,6 +1413,114 @@ function renderOriginItem(origin: string): string {
         <div class="app-item-url">${escapeHtml(origin)}</div>
       </div>
       <button class="ghost-sm" data-disconnect-origin="${escapeAttribute(origin)}">Disconnect</button>
+    </div>
+  `;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ACTIVITY TAB
+   ═══════════════════════════════════════════════════════════ */
+
+let activityTxs: Array<{
+  tx_hash: string;
+  contract: string;
+  function: string;
+  sender: string;
+  success: boolean;
+  stamps_used: number;
+  created: string;
+  block_height: number;
+}> = [];
+let activityLoading = false;
+
+async function fetchActivityTxs(address: string): Promise<void> {
+  activityLoading = true;
+  if (currentState) render(currentState);
+  try {
+    const rpcUrl = currentState?.rpcUrl ?? "http://127.0.0.1:26657";
+    const resp = await fetch(
+      `${rpcUrl}/abci_query?path=%22/txs_by_sender/${address}/limit=50/offset=0%22`
+    );
+    if (resp.ok) {
+      const data = await resp.json();
+      const val = data?.result?.response?.value;
+      if (val) {
+        const decoded = JSON.parse(atob(val));
+        activityTxs = Array.isArray(decoded) ? decoded : decoded?.items ?? [];
+      } else {
+        activityTxs = [];
+      }
+    }
+  } catch {
+    activityTxs = [];
+  }
+  activityLoading = false;
+  if (currentState) render(currentState);
+}
+let selectedTxHash: string | null = null;
+
+function renderActivityTab(state: PopupRuntimeState): string {
+  if (selectedTxHash) {
+    const tx = activityTxs.find((t) => t.tx_hash === selectedTxHash);
+    if (tx) {
+      const isOut = tx.sender === state.publicKey;
+      const explorerBase = state.dashboardUrl ? state.dashboardUrl.replace(/\/+$/, "") + "/explorer/tx/" : null;
+      return `
+        <div class="settings-wrap">
+          <button class="detail-back" data-close-tx-detail>${ICONS.chevronLeft} Back</button>
+          <div class="s-card">
+            <div class="s-card-head">
+              <div>
+                <h3 class="s-card-title">${escapeHtml(tx.contract)}.${escapeHtml(tx.function)}</h3>
+                <p class="s-card-desc">${isOut ? "Sent" : "Received"} · ${tx.success ? "Success" : "Failed"}</p>
+              </div>
+              <span class="pill ${tx.success ? "pill-info" : "pill-warning"}">${tx.success ? "✓" : "✗"}</span>
+            </div>
+            <div class="s-card-body">
+              <div class="s-row"><span class="s-row-key">Hash</span><span class="s-row-val mono" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeAttribute(tx.tx_hash)}">${explorerBase ? `<a href="${escapeAttribute(explorerBase + tx.tx_hash)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${escapeHtml(truncateHash(tx.tx_hash))}</a>` : escapeHtml(truncateHash(tx.tx_hash))}</span></div>
+              <div class="s-row"><span class="s-row-key">Block</span><span class="s-row-val">${tx.block_height}</span></div>
+              <div class="s-row"><span class="s-row-key">Stamps</span><span class="s-row-val">${tx.stamps_used.toLocaleString()}</span></div>
+              <div class="s-row"><span class="s-row-key">Time</span><span class="s-row-val">${escapeHtml(tx.created)}</span></div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+    selectedTxHash = null;
+  }
+
+  if (activityLoading) {
+    return `<div class="send-centered"><div class="spinner"></div><p class="muted text-sm">Loading transactions...</p></div>`;
+  }
+
+  if (activityTxs.length === 0) {
+    return `
+      <div class="send-centered" style="padding: 48px 0">
+        <p class="muted text-sm">No transactions yet.</p>
+        <p class="muted text-sm" style="opacity: 0.6">Send or receive tokens to see activity here.</p>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="token-list">
+      ${activityTxs.map((tx) => {
+        const isOut = tx.sender === state.publicKey;
+        return `
+          <div class="token-item" data-select-tx="${escapeAttribute(tx.tx_hash)}" style="cursor:pointer">
+            <div class="token-icon" style="background: ${isOut ? "var(--danger-soft, rgba(255,77,79,0.12))" : "var(--success-soft, rgba(34,197,94,0.12))"}">
+              ${isOut ? ICONS.arrowUp : ICONS.arrowDown}
+            </div>
+            <div class="token-body">
+              <div class="token-name">${escapeHtml(tx.contract)}.${escapeHtml(tx.function)}</div>
+              <div class="token-sub">${escapeHtml(tx.created)}</div>
+            </div>
+            <div class="token-end">
+              <span class="pill ${tx.success ? "pill-info" : "pill-warning"}" style="font-size:11px">${tx.success ? "✓" : "✗"}</span>
+            </div>
+          </div>
+        `;
+      }).join("")}
     </div>
   `;
 }
@@ -3193,6 +3312,20 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       render(state);
     });
   }
+
+  /* ── Activity tab ──────────────────────────────────────────── */
+  for (const el of root.querySelectorAll<HTMLElement>("[data-select-tx]")) {
+    el.addEventListener("click", () => {
+      selectedTxHash = el.dataset.selectTx ?? null;
+      render(state);
+    });
+  }
+  root
+    .querySelector<HTMLElement>("[data-close-tx-detail]")
+    ?.addEventListener("click", () => {
+      selectedTxHash = null;
+      render(state);
+    });
 
   for (const button of root.querySelectorAll<HTMLButtonElement>(
     "[data-open-approval]"
