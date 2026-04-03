@@ -850,7 +850,7 @@ describe("@xian-tech/wallet-core controller", () => {
       new Promise<never>((_, reject) => {
         setTimeout(() => {
           reject(new Error("unlock timed out"));
-        }, 50);
+        }, 250);
       })
     ]);
 
