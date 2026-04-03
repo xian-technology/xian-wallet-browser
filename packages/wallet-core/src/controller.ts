@@ -1820,6 +1820,10 @@ export class WalletController {
     if (!target) {
       throw new Error("account not found");
     }
+    const duplicate = accounts.find((a) => a.index !== index && a.name.toLowerCase() === name.toLowerCase());
+    if (duplicate) {
+      throw new Error(`An account named "${name}" already exists`);
+    }
     target.name = name;
     state.accounts = accounts;
     await this.store.saveState(state);
