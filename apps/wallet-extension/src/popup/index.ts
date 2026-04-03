@@ -66,7 +66,9 @@ const ICONS = {
   repeat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>',
   contacts: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
   chevronDown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>',
-  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'
+  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+  pencil: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>'
 };
 
 /* ── State ─────────────────────────────────────────────────── */
@@ -89,6 +91,7 @@ let showReceive = false;
 let activeApprovalId: string | null = null;
 let showAccountMenu = false;
 let renamingAccountIndex: number | null = null;
+let confirmDeleteAccountIndex: number | null = null;
 let confirmWalletRemoval = false;
 let balanceWatchClient: XianClient | null = null;
 let balanceWatchClientKey: string | null = null;
@@ -1996,10 +1999,8 @@ function renderSecurityTab(state: PopupRuntimeState): string {
             </label>
             <div style="display: flex; gap: 8px">
               <button type="submit" class="secondary full-width">Export</button>
-              <label class="secondary full-width" style="text-align: center; cursor: pointer; display: flex; align-items: center; justify-content: center">
-                Import
-                <input type="file" accept=".json" id="import-wallet-file" style="display: none" />
-              </label>
+              <button type="button" class="secondary full-width" data-import-trigger>Import</button>
+              <input type="file" accept=".json" id="import-wallet-file" style="display: none" />
             </div>
           </form>
           <p class="muted text-sm">Export saves your ${escapeHtml(state.seedSource === "mnemonic" ? "seed and all accounts" : "private key")} to an encrypted file. Import restores from a previously exported file.</p>
@@ -2057,6 +2058,17 @@ function renderAccountsCard(state: PopupRuntimeState): string {
                 </div>
               `;
             }
+            if (confirmDeleteAccountIndex === a.index) {
+              return `
+                <div class="contact-edit-row" style="flex-direction: column; align-items: stretch; gap: 8px">
+                  <div class="banner banner-warning">Remove <strong>${escapeHtml(a.name)}</strong>? You can re-derive it later from the recovery seed.</div>
+                  <div style="display: flex; gap: 8px">
+                    <button class="ghost-sm full-width" data-confirm-delete-account="${a.index}" style="color: var(--danger)">Remove</button>
+                    <button class="ghost-sm full-width" data-cancel-delete-account>Cancel</button>
+                  </div>
+                </div>
+              `;
+            }
             return `
               <div class="contact-edit-row">
                 <div style="flex: 1; min-width: 0">
@@ -2064,8 +2076,8 @@ function renderAccountsCard(state: PopupRuntimeState): string {
                   <div class="muted text-sm mono" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">${escapeHtml(a.publicKey)}</div>
                 </div>
                 <div class="inline-actions">
-                  <button class="ghost-sm" data-rename-account="${a.index}" title="Rename">Rename</button>
-                  ${a.index !== 0 ? `<button class="ghost-sm" data-delete-account="${a.index}" title="Remove">×</button>` : ""}
+                  <button class="icon-action" data-rename-account="${a.index}" title="Rename">${ICONS.pencil}</button>
+                  ${a.index !== 0 ? `<button class="icon-action" data-delete-account="${a.index}" title="Remove">${ICONS.trash}</button>` : ""}
                 </div>
               </div>
             `;
@@ -3379,9 +3391,26 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
 
 
   for (const btn of root.querySelectorAll<HTMLElement>("[data-delete-account]")) {
-    btn.addEventListener("click", async () => {
-      const index = Number(btn.dataset.deleteAccount);
-      if (!confirm("Remove this account? You can re-derive it later from the recovery seed.")) return;
+    btn.addEventListener("click", () => {
+      confirmDeleteAccountIndex = Number(btn.dataset.deleteAccount);
+      render(state);
+    });
+  }
+
+  root
+    .querySelector<HTMLElement>("[data-cancel-delete-account]")
+    ?.addEventListener("click", () => {
+      confirmDeleteAccountIndex = null;
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-confirm-delete-account]")
+    ?.addEventListener("click", async () => {
+      const index = Number(
+        root.querySelector<HTMLElement>("[data-confirm-delete-account]")?.dataset.confirmDeleteAccount
+      );
+      confirmDeleteAccountIndex = null;
       try {
         await sendRuntimeMessage<PopupState>({
           type: "wallet_remove_account",
@@ -3394,7 +3423,6 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         render(state);
       }
     });
-  }
 
   /* ── Export / Import ──────────────────────────────────────── */
 
@@ -3424,6 +3452,12 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         setFlash(formatError(error), "danger");
         render(state);
       }
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-import-trigger]")
+    ?.addEventListener("click", () => {
+      root.querySelector<HTMLInputElement>("#import-wallet-file")?.click();
     });
 
   root

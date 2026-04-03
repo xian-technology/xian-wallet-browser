@@ -227,6 +227,28 @@ main {
   border-color: var(--accent);
 }
 
+.icon-action {
+  all: unset;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+.icon-action:hover {
+  color: var(--fg);
+  background: var(--bg-2);
+}
+.icon-action svg {
+  width: 14px;
+  height: 14px;
+}
+
 .account-menu-add {
   border-top: 1px solid var(--line);
   color: var(--muted);
