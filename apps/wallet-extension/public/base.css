@@ -513,10 +513,14 @@ main {
   color: var(--muted);
   flex-shrink: 0;
   cursor: grab;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .drag-handle svg {
   width: 16px;
   height: 16px;
+  display: block;
 }
 
 .manage-assets-footer {
