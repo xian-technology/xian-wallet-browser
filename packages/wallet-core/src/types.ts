@@ -34,7 +34,7 @@ export interface StoredWalletState {
   dashboardUrl?: string;
   activeNetworkId: string;
   networkPresets: WalletNetworkPreset[];
-  watchedAssets: XianWatchedAsset[];
+  watchedAssets: WalletWatchedAsset[];
   connectedOrigins: string[];
   createdAt: string;
 }
@@ -111,7 +111,7 @@ export interface PopupState {
   activeNetworkId?: string;
   activeNetworkName?: string;
   networkPresets: WalletNetworkPreset[];
-  watchedAssets: XianWatchedAsset[];
+  watchedAssets: WalletWatchedAsset[];
   detectedAssets: WalletDetectedAsset[];
   /** Maps contract address to raw balance (number as string), or null if fetch failed. */
   assetBalances: Record<string, string | null>;
@@ -168,6 +168,11 @@ export interface ApprovalDetail {
   tone?: "default" | "accent" | "warning" | "danger";
 }
 
+export interface WalletWatchedAsset extends XianWatchedAsset {
+  hidden?: boolean;
+  order?: number;
+}
+
 export interface WalletDetectedAsset extends XianWatchedAsset {
   balance: string | null;
   tracked: boolean;
@@ -196,6 +201,8 @@ export interface WalletBackup {
   mnemonic?: string;
   privateKey?: string;
   accounts?: Array<{ index: number; name: string }>;
+  activeAccountIndex?: number;
+  activeNetworkId?: string;
   networkPresets?: WalletNetworkPreset[];
   watchedAssets?: Array<{ contract: string; name?: string; symbol?: string; icon?: string; decimals?: number }>;
 }

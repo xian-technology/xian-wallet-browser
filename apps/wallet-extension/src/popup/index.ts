@@ -68,7 +68,10 @@ const ICONS = {
   chevronDown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>',
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
   pencil: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>',
-  trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>'
+  trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+  grip: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg>',
+  eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
+  eyeOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>'
 };
 
 /* ── State ─────────────────────────────────────────────────── */
@@ -88,6 +91,7 @@ let tokenMeta: { name: string | null; symbol: string | null; logoUrl: string | n
 let tokenMetaLoading = false;
 let tokenMetaGeneration = 0;
 let showReceive = false;
+let managingAssets = false;
 let activeApprovalId: string | null = null;
 let showAccountMenu = false;
 let renamingAccountIndex: number | null = null;
@@ -1087,13 +1091,23 @@ function renderHomeTab(state: PopupRuntimeState): string {
       `
     : "";
 
+  const sortedAssets = [...state.watchedAssets].sort(
+    (a, b) => (a.order ?? 0) - (b.order ?? 0)
+  );
+  const visibleAssets = managingAssets
+    ? sortedAssets
+    : sortedAssets.filter((a) => !a.hidden);
+
   const trackedAssetsHtml =
-    state.watchedAssets.length === 0
+    visibleAssets.length === 0 && !managingAssets
       ? `<div class="token-list"><div style="padding: 24px 0; text-align: center" class="muted text-sm">No assets tracked yet.</div></div>`
-      : `<div class="token-list">${state.watchedAssets.map((a) => renderAssetItem(a, state)).join("")}</div>`;
+      : managingAssets
+        ? `<div class="token-list" id="manage-asset-list">${sortedAssets.map((a, i) => renderManageAssetRow(a, i)).join("")}</div>`
+        : `<div class="token-list">${visibleAssets.map((a) => renderAssetItem(a, state)).join("")}</div>`;
+
   const detectedAssets = visibleDetectedAssets(state);
   const detectedAssetsHtml =
-    detectedAssets.length === 0
+    detectedAssets.length === 0 || managingAssets
       ? ""
       : `
           <div class="section-hd">
@@ -1102,6 +1116,8 @@ function renderHomeTab(state: PopupRuntimeState): string {
           </div>
           <div class="token-list">${detectedAssets.map((asset) => renderAssetItem(asset, state)).join("")}</div>
         `;
+
+  const hiddenCount = state.watchedAssets.filter((a) => a.hidden).length;
 
   return `
     <div class="balance-hero">
@@ -1134,10 +1150,13 @@ function renderHomeTab(state: PopupRuntimeState): string {
 
     <div class="section-hd">
       <span class="section-hd-label">Assets</span>
-      <span class="section-hd-badge">${state.watchedAssets.length}</span>
+      <span class="section-hd-badge">${managingAssets ? state.watchedAssets.length : visibleAssets.length}${hiddenCount > 0 && !managingAssets ? ` · ${hiddenCount} hidden` : ""}</span>
     </div>
     ${trackedAssetsHtml}
     ${detectedAssetsHtml}
+    <div class="manage-assets-footer">
+      <button class="send-footer-link" data-toggle-manage-assets>${managingAssets ? "Done" : "Manage assets"}</button>
+    </div>
   `;
 }
 
@@ -1194,6 +1213,27 @@ function renderAssetItem(asset: DisplayedAsset, state: PopupRuntimeState): strin
             : fiatHtml
         }</div>
       </div>
+    </div>
+  `;
+}
+
+function renderManageAssetRow(asset: { contract: string; name?: string; symbol?: string; hidden?: boolean }, index: number): string {
+  const symbol = asset.symbol ?? asset.contract.slice(0, 6);
+  const letter = symbol.charAt(0).toUpperCase();
+  const color = asset.contract === "currency" ? "var(--accent-dim)" : assetColor(asset.contract);
+  const isHidden = asset.hidden === true;
+
+  return `
+    <div class="manage-asset-row ${isHidden ? "is-hidden" : ""}" draggable="true" data-drag-contract="${escapeAttribute(asset.contract)}" data-drag-index="${index}">
+      <span class="drag-handle">${ICONS.grip}</span>
+      <div class="token-icon" style="background: ${color}; width: 28px; height: 28px; font-size: 12px">${escapeHtml(letter)}</div>
+      <div class="token-body" style="flex: 1; min-width: 0">
+        <div class="token-name">${escapeHtml(symbol)}</div>
+        <div class="token-sub">${escapeHtml(asset.name ?? asset.contract)}</div>
+      </div>
+      <button class="icon-action" data-toggle-hide="${escapeAttribute(asset.contract)}" title="${isHidden ? "Show" : "Hide"}">
+        ${isHidden ? ICONS.eyeOff : ICONS.eye}
+      </button>
     </div>
   `;
 }
@@ -2354,6 +2394,93 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       clearFlash();
       render(state);
     });
+
+  /* ── Manage assets ────────────────────────────────────────── */
+
+  root
+    .querySelector<HTMLElement>("[data-toggle-manage-assets]")
+    ?.addEventListener("click", () => {
+      managingAssets = !managingAssets;
+      render(state);
+    });
+
+  for (const btn of root.querySelectorAll<HTMLElement>("[data-toggle-hide]")) {
+    btn.addEventListener("click", async () => {
+      const contract = btn.dataset.toggleHide!;
+      const asset = state.watchedAssets.find((a) => a.contract === contract);
+      if (!asset) return;
+      try {
+        await sendRuntimeMessage<PopupState>({
+          type: "wallet_update_assets",
+          assets: [{ contract, hidden: !asset.hidden }]
+        });
+        await refresh(null);
+        managingAssets = true;
+        render(currentState);
+      } catch (error) {
+        setFlash(formatError(error), "danger");
+        render(state);
+      }
+    });
+  }
+
+  // Drag-and-drop reordering
+  {
+    const list = root.querySelector<HTMLElement>("#manage-asset-list");
+    if (list) {
+      let draggedContract: string | null = null;
+
+      for (const row of list.querySelectorAll<HTMLElement>("[data-drag-contract]")) {
+        row.addEventListener("dragstart", (e) => {
+          draggedContract = row.dataset.dragContract!;
+          row.classList.add("dragging");
+          e.dataTransfer?.setData("text/plain", draggedContract);
+        });
+        row.addEventListener("dragend", () => {
+          draggedContract = null;
+          row.classList.remove("dragging");
+        });
+        row.addEventListener("dragover", (e) => {
+          e.preventDefault();
+          if (!draggedContract || draggedContract === row.dataset.dragContract) return;
+          const rect = row.getBoundingClientRect();
+          const mid = rect.top + rect.height / 2;
+          if (e.clientY < mid) {
+            list.insertBefore(
+              list.querySelector(`[data-drag-contract="${draggedContract}"]`)!,
+              row
+            );
+          } else {
+            list.insertBefore(
+              list.querySelector(`[data-drag-contract="${draggedContract}"]`)!,
+              row.nextSibling
+            );
+          }
+        });
+        row.addEventListener("drop", async (e) => {
+          e.preventDefault();
+          // Read new order from DOM
+          const rows = list.querySelectorAll<HTMLElement>("[data-drag-contract]");
+          const updates: Array<{ contract: string; order: number }> = [];
+          rows.forEach((r, i) => {
+            updates.push({ contract: r.dataset.dragContract!, order: i });
+          });
+          try {
+            await sendRuntimeMessage<PopupState>({
+              type: "wallet_update_assets",
+              assets: updates
+            });
+            await refresh(null);
+            managingAssets = true;
+            render(currentState);
+          } catch (error) {
+            setFlash(formatError(error), "danger");
+            render(state);
+          }
+        });
+      }
+    }
+  }
 
   root
     .querySelector<HTMLElement>("[data-open-dashboard]")

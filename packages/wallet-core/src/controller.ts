@@ -15,7 +15,7 @@ import {
   type XianWatchAssetRequest
 } from "@xian-tech/provider";
 
-import { approvalKindFromMethod, buildApprovalView } from "./approvals";
+import { approvalKindFromMethod, buildApprovalView } from "./approvals.js";
 import {
   DEFAULT_NETWORK_PRESETS,
   DEFAULT_DASHBOARD_URL,
@@ -24,7 +24,7 @@ import {
   DEFAULT_WALLET_CAPABILITIES,
   LOCAL_NETWORK_PRESET_ID,
   UNLOCKED_SESSION_TIMEOUT_MS
-} from "./constants";
+} from "./constants.js";
 import {
   createWalletSecret,
   decryptMnemonic,
@@ -33,7 +33,7 @@ import {
   encryptMnemonic,
   encryptPrivateKey,
   isUnsafeMessageToSign
-} from "./crypto";
+} from "./crypto.js";
 import type {
   ApprovalView,
   PendingApprovalRecord,
@@ -56,7 +56,7 @@ import type {
   WalletSettingsInput,
   WalletSetupInput,
   WalletStateStore
-} from "./types";
+} from "./types.js";
 
 interface RequestWaiter {
   resolve(value: unknown): void;
@@ -817,6 +817,57 @@ export class WalletController {
     );
   }
 
+  private async emitSelectedAccountChangedForConnectedOrigins(
+    state: StoredWalletState
+  ): Promise<void> {
+    if (state.connectedOrigins.length === 0) {
+      return;
+    }
+
+    if (await this.restoreUnlockedSession()) {
+      await Promise.allSettled(
+        state.connectedOrigins.map((origin) =>
+          this.broadcastProviderEvent(
+            "accountsChanged",
+            [[state.publicKey]],
+            origin
+          )
+        )
+      );
+      return;
+    }
+
+    await Promise.allSettled(
+      state.connectedOrigins.map((origin) =>
+        this.emitDisconnectLifecycle(origin)
+      )
+    );
+  }
+
+  private async invalidatePendingRequests(reason: unknown): Promise<void> {
+    const requestStates = await this.store.listRequestStates();
+    const settledPendingRequestIds = new Set<string>();
+
+    for (const requestState of requestStates) {
+      if (requestState.status !== "pending") {
+        continue;
+      }
+      settledPendingRequestIds.add(requestState.requestId);
+      await this.rejectRequest(requestState, reason);
+    }
+
+    for (const [requestId, waiter] of this.requestWaiters.entries()) {
+      if (!settledPendingRequestIds.has(requestId)) {
+        waiter.reject(reason);
+      }
+    }
+    this.requestWaiters.clear();
+
+    for (const approval of await this.store.listApprovalStates()) {
+      await this.store.deleteApprovalState(approval.id);
+    }
+  }
+
   private async prepareTransaction(
     state: StoredWalletState,
     intent: XianTransactionIntent
@@ -1337,6 +1388,27 @@ export class WalletController {
     return this.getPopupState();
   }
 
+  async updateAssetSettings(
+    assets: Array<{ contract: string; hidden?: boolean; order?: number }>
+  ): Promise<PopupState> {
+    const state = this.requireStoredWallet(await this.loadWalletState());
+    for (const update of assets) {
+      const asset = state.watchedAssets.find(
+        (a) => a.contract === update.contract
+      );
+      if (asset) {
+        if (update.hidden !== undefined) {
+          asset.hidden = update.hidden;
+        }
+        if (update.order !== undefined) {
+          asset.order = update.order;
+        }
+      }
+    }
+    await this.store.saveState(state);
+    return this.getPopupState();
+  }
+
   async updateWatchedAssetDecimals(
     contract: string,
     decimals: number
@@ -1441,17 +1513,9 @@ export class WalletController {
     this.unlockedPassword = input.password;
     await this.persistUnlockedSession(secret.privateKey);
 
-    const waiters = [...this.requestWaiters.values()];
-    this.requestWaiters.clear();
-    for (const waiter of waiters) {
-      waiter.reject(new ProviderUnauthorizedError("wallet was replaced"));
-    }
-    for (const requestState of await this.store.listRequestStates()) {
-      await this.store.deleteRequestState(requestState.requestId);
-    }
-    for (const approval of await this.store.listApprovalStates()) {
-      await this.store.deleteApprovalState(approval.id);
-    }
+    await this.invalidatePendingRequests(
+      new ProviderUnauthorizedError("wallet was replaced")
+    );
 
     const setupRpcUrl = trimOptionalString(input.rpcUrl) ?? DEFAULT_RPC_URL;
     const setupDashboardUrl =
@@ -1571,6 +1635,8 @@ export class WalletController {
       version: 1,
       type: state.seedSource,
       accounts: accounts.map((a) => ({ index: a.index, name: a.name })),
+      activeAccountIndex: state.activeAccountIndex ?? accounts[0]?.index ?? 0,
+      activeNetworkId: state.activeNetworkId,
       networkPresets: state.networkPresets.filter((p) => !p.builtin),
       watchedAssets: state.watchedAssets
     };
@@ -1598,8 +1664,6 @@ export class WalletController {
       throw new Error("backup must contain a mnemonic or private key");
     }
 
-    const signer = new Ed25519Signer(primaryKey);
-    const encryptedPrivateKey = await encryptPrivateKey(primaryKey, password);
     const encryptedMnemonic = mnemonic
       ? await encryptMnemonic(mnemonic, password)
       : undefined;
@@ -1607,10 +1671,12 @@ export class WalletController {
     // Build accounts list
     const accountEntries = backup.accounts ?? [{ index: 0, name: "Account 1" }];
     const accounts: WalletAccount[] = [];
+    const privateKeysByIndex = new Map<number, string>();
     for (const entry of accountEntries) {
       const key = mnemonic
         ? await derivePrivateKeyFromMnemonic(mnemonic, entry.index)
         : primaryKey;
+      privateKeysByIndex.set(entry.index, key);
       const acctSigner = new Ed25519Signer(key);
       accounts.push({
         index: entry.index,
@@ -1620,23 +1686,25 @@ export class WalletController {
       });
     }
 
-    this.unlockedPrivateKey = primaryKey;
+    const activeAccount =
+      accounts.find((account) => account.index === backup.activeAccountIndex) ??
+      accounts[0];
+    if (!activeAccount) {
+      throw new Error("backup must contain at least one account");
+    }
+    const activePrivateKey =
+      privateKeysByIndex.get(activeAccount.index) ?? primaryKey;
+    const signer = new Ed25519Signer(activePrivateKey);
+
+    this.unlockedPrivateKey = activePrivateKey;
     this.unlockedSigner = signer;
     this.unlockedMnemonic = mnemonic ?? null;
-    await this.persistUnlockedSession(primaryKey);
+    this.unlockedPassword = password;
+    await this.persistUnlockedSession(activePrivateKey);
 
-    // Clear pending state
-    const waiters = [...this.requestWaiters.values()];
-    this.requestWaiters.clear();
-    for (const waiter of waiters) {
-      waiter.reject(new ProviderUnauthorizedError("wallet was replaced"));
-    }
-    for (const requestState of await this.store.listRequestStates()) {
-      await this.store.deleteRequestState(requestState.requestId);
-    }
-    for (const approval of await this.store.listApprovalStates()) {
-      await this.store.deleteApprovalState(approval.id);
-    }
+    await this.invalidatePendingRequests(
+      new ProviderUnauthorizedError("wallet was replaced")
+    );
 
     // Merge network presets
     const presets = [...DEFAULT_NETWORK_PRESETS];
@@ -1646,19 +1714,24 @@ export class WalletController {
       }
     }
 
-    const activePreset = presets[0]!;
+    const activePreset =
+      presets.find((preset) => preset.id === backup.activeNetworkId) ??
+      presets[0];
+    if (!activePreset) {
+      throw new Error("backup must contain at least one network preset");
+    }
     const watchedAssets = backup.watchedAssets?.length
       ? backup.watchedAssets
       : [{ contract: "currency", name: "Xian", symbol: "XIAN" }];
 
     await this.persistWalletState({
-      publicKey: signer.address,
-      encryptedPrivateKey,
+      publicKey: activeAccount.publicKey,
+      encryptedPrivateKey: activeAccount.encryptedPrivateKey,
       encryptedMnemonic,
       seedSource: backup.type,
       mnemonicWordCount: mnemonic ? mnemonic.split(" ").length : undefined,
       accounts,
-      activeAccountIndex: 0,
+      activeAccountIndex: activeAccount.index,
       rpcUrl: activePreset.rpcUrl,
       dashboardUrl: activePreset.dashboardUrl,
       activeNetworkId: activePreset.id,
@@ -1701,6 +1774,7 @@ export class WalletController {
     this.unlockedPrivateKey = privateKey;
     this.unlockedSigner = signer;
     await this.persistUnlockedSession(privateKey);
+    await this.emitSelectedAccountChangedForConnectedOrigins(state);
 
     return this.getPopupState();
   }
@@ -1732,15 +1806,7 @@ export class WalletController {
       await this.clearUnlockedSession();
     }
 
-    // Notify dApps of account change
-    if (state.connectedOrigins.length > 0) {
-      const chainId = this.displayChainId(this.activeNetworkPreset(state), await this.safeGetChainId(state)) ?? "unknown";
-      await Promise.allSettled(
-        state.connectedOrigins.map((origin) =>
-          this.broadcastProviderEvent("accountsChanged", [[target.publicKey]], origin)
-        )
-      );
-    }
+    await this.emitSelectedAccountChangedForConnectedOrigins(state);
 
     return this.getPopupState();
   }
@@ -1766,15 +1832,39 @@ export class WalletController {
       throw new Error("cannot remove the primary account");
     }
     const accounts = state.accounts ?? [];
-    state.accounts = accounts.filter((a) => a.index !== index);
-    if (state.activeAccountIndex === index && state.accounts.length > 0) {
-      // Switch back to primary
-      const primary = state.accounts[0]!;
-      state.publicKey = primary.publicKey;
-      state.encryptedPrivateKey = primary.encryptedPrivateKey;
-      state.activeAccountIndex = primary.index;
+    const nextAccounts = accounts.filter((account) => account.index !== index);
+    if (nextAccounts.length === 0) {
+      throw new Error("cannot remove the last remaining account");
     }
+
+    const removedActiveAccount = state.activeAccountIndex === index;
+    state.accounts = nextAccounts;
+
+    if (removedActiveAccount) {
+      const nextActiveAccount = nextAccounts[0]!;
+      state.publicKey = nextActiveAccount.publicKey;
+      state.encryptedPrivateKey = nextActiveAccount.encryptedPrivateKey;
+      state.activeAccountIndex = nextActiveAccount.index;
+
+      if (this.unlockedMnemonic) {
+        const privateKey = await derivePrivateKeyFromMnemonic(
+          this.unlockedMnemonic,
+          nextActiveAccount.index
+        );
+        this.unlockedPrivateKey = privateKey;
+        this.unlockedSigner = new Ed25519Signer(privateKey);
+        await this.persistUnlockedSession(privateKey);
+      } else if (this.unlockedPrivateKey) {
+        await this.clearUnlockedSession();
+      }
+    }
+
     await this.store.saveState(state);
+
+    if (removedActiveAccount) {
+      await this.emitSelectedAccountChangedForConnectedOrigins(state);
+    }
+
     return this.getPopupState();
   }
 
@@ -1803,17 +1893,9 @@ export class WalletController {
       );
     }
 
-    const waiters = [...this.requestWaiters.values()];
-    this.requestWaiters.clear();
-    for (const waiter of waiters) {
-      waiter.reject(new ProviderUnauthorizedError("wallet was removed"));
-    }
-    for (const requestState of await this.store.listRequestStates()) {
-      await this.store.deleteRequestState(requestState.requestId);
-    }
-    for (const approval of await this.store.listApprovalStates()) {
-      await this.store.deleteApprovalState(approval.id);
-    }
+    await this.invalidatePendingRequests(
+      new ProviderUnauthorizedError("wallet was removed")
+    );
 
     await this.store.clearState();
     return this.getPopupState();

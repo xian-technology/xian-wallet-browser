@@ -488,6 +488,42 @@ main {
   background: rgba(255, 255, 255, 0.03);
 }
 
+.token-item.is-hidden {
+  opacity: 0.4;
+}
+
+.manage-asset-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 10px;
+  cursor: grab;
+  transition: background 120ms;
+}
+.manage-asset-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.manage-asset-row.dragging {
+  opacity: 0.5;
+  background: var(--bg-2);
+}
+
+.drag-handle {
+  color: var(--muted);
+  flex-shrink: 0;
+  cursor: grab;
+}
+.drag-handle svg {
+  width: 16px;
+  height: 16px;
+}
+
+.manage-assets-footer {
+  padding: 8px 16px 4px;
+  text-align: center;
+}
+
 /* ── Send Tab / Arg Rows ── */
 
 .arg-row {
@@ -712,15 +748,16 @@ main {
 /* ── Token / Asset List ── */
 
 .token-list {
-  padding: 0 16px;
+  padding: 0 8px;
 }
 
 .token-item {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--line);
+  padding: 10px 8px;
+  border-radius: 10px;
+  border-bottom: none;
 }
 
 .token-item:last-child {
@@ -1695,7 +1732,7 @@ textarea {
 
   .token-list,
   .app-list {
-    padding: 0 12px;
+    padding: 0 6px;
   }
 
   .section-hd {

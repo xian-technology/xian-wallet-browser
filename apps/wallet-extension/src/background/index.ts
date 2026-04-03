@@ -248,6 +248,9 @@ chrome.runtime.onMessage.addListener(
           case "wallet_track_asset":
             sendResponse(ok(await controller.trackAsset(message.asset)));
             return;
+          case "wallet_update_assets":
+            sendResponse(ok(await controller.updateAssetSettings(message.assets)));
+            return;
           case "wallet_update_asset_decimals":
             sendResponse(ok(await controller.updateWatchedAssetDecimals(message.contract, message.decimals)));
             return;

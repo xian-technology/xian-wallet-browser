@@ -154,6 +154,11 @@ export interface WalletTrackAssetRuntimeMessage {
   };
 }
 
+export interface WalletUpdateAssetsRuntimeMessage {
+  type: "wallet_update_assets";
+  assets: Array<{ contract: string; hidden?: boolean; order?: number }>;
+}
+
 export interface WalletUpdateAssetDecimalsRuntimeMessage {
   type: "wallet_update_asset_decimals";
   contract: string;
@@ -213,6 +218,8 @@ export interface WalletImportBackupRuntimeMessage {
     mnemonic?: string;
     privateKey?: string;
     accounts?: Array<{ index: number; name: string }>;
+    activeAccountIndex?: number;
+    activeNetworkId?: string;
     networkPresets?: Array<{ id: string; name: string; chainId?: string; rpcUrl: string; dashboardUrl?: string }>;
     watchedAssets?: Array<{ contract: string; name?: string; symbol?: string; icon?: string; decimals?: number }>;
   };
@@ -280,6 +287,7 @@ export type RuntimeMessage =
   | WalletGetDetectedAssetsRuntimeMessage
   | WalletGetTokenMetadataRuntimeMessage
   | WalletTrackAssetRuntimeMessage
+  | WalletUpdateAssetsRuntimeMessage
   | WalletUpdateAssetDecimalsRuntimeMessage
   | WalletEstimateTransactionRuntimeMessage
   | WalletSendDirectTransactionRuntimeMessage
