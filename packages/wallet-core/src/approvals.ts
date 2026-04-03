@@ -5,7 +5,7 @@ import type {
   ApprovalKind,
   ApprovalView,
   PendingApprovalRecord
-} from "./types";
+} from "./types.js";
 
 function prettyJson(value: unknown): string {
   return JSON.stringify(value, null, 2);

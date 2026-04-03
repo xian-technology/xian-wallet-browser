@@ -82,7 +82,7 @@ async function awaitProviderRequestResult(requestId: string): Promise<unknown> {
       case "pending":
         continue;
       case "not_found":
-        continue;
+        throw new Error("provider request is no longer active");
       case "fulfilled":
         return status.result;
       case "rejected":

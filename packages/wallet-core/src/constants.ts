@@ -1,6 +1,6 @@
 import type { XianWalletCapabilities } from "@xian-tech/provider";
 
-import type { WalletNetworkPreset } from "./types";
+import type { WalletNetworkPreset } from "./types.js";
 
 export const DEFAULT_RPC_URL = "http://127.0.0.1:26657";
 export const DEFAULT_DASHBOARD_URL = "http://127.0.0.1:8080";

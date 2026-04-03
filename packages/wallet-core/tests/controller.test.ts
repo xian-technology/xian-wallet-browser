@@ -39,6 +39,9 @@ function createStore(): MemoryStore {
     async saveState(nextState) {
       state = nextState;
     },
+    async clearState() {
+      state = null;
+    },
     async loadUnlockedSession() {
       return unlockedSession;
     },
@@ -1019,5 +1022,199 @@ describe("@xian-tech/wallet-core controller", () => {
     const popupAfterExpiry = await controllerC.getPopupState();
     expect(popupAfterExpiry.unlocked).toBe(false);
     expect(store.currentSession()).toBeNull();
+  });
+
+  it("re-syncs the unlocked signer when the active account is removed", async () => {
+    const store = createStore();
+    const client = createClient();
+    const onProviderEvent = vi.fn(async () => undefined);
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined),
+      onProviderEvent,
+      createId: vi.fn(() => "approval-connect")
+    });
+
+    const created = await controller.createOrImportWallet({
+      password: "secret",
+      createWithMnemonic: true
+    });
+    const primaryPublicKey = created.popupState.publicKey;
+
+    await controller.startProviderRequest("request-connect", ORIGIN, {
+      method: "xian_requestAccounts"
+    });
+    await controller.resolveApproval("approval-connect", true);
+    const addedAccountState = await controller.addAccount();
+    expect(addedAccountState.publicKey).not.toBe(primaryPublicKey);
+
+    onProviderEvent.mockClear();
+
+    const nextState = await controller.removeAccount(
+      addedAccountState.activeAccountIndex
+    );
+    expect(nextState.publicKey).toBe(primaryPublicKey);
+    expect(nextState.unlocked).toBe(true);
+
+    await controller.sendDirectTransaction({
+      contract: "currency",
+      function: "transfer",
+      kwargs: { to: "bob", amount: "5" }
+    });
+
+    expect(client.buildTx).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        sender: primaryPublicKey
+      })
+    );
+    expect(onProviderEvent).toHaveBeenCalledWith(
+      "accountsChanged",
+      [[primaryPublicKey]],
+      ORIGIN
+    );
+  });
+
+  it("round-trips the active account and network through wallet backups", async () => {
+    const store = createStore();
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => createClient(),
+      onApprovalRequested: vi.fn(async () => undefined),
+      createId: vi.fn(() => "mainnet-preset")
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      createWithMnemonic: true
+    });
+    const accountTwo = await controller.addAccount();
+
+    await controller.saveNetworkPreset({
+      name: "Mainnet",
+      chainId: "xian-1",
+      rpcUrl: "https://rpc.mainnet.example",
+      dashboardUrl: "https://dashboard.mainnet.example",
+      makeActive: true
+    });
+
+    const backup = await controller.exportWallet("secret");
+    expect(backup.activeAccountIndex).toBe(accountTwo.activeAccountIndex);
+    expect(backup.activeNetworkId).toBe("mainnet-preset");
+
+    const restored = await controller.importWalletBackup(backup, "new-secret");
+    expect(restored.activeAccountIndex).toBe(accountTwo.activeAccountIndex);
+    expect(restored.publicKey).toBe(accountTwo.publicKey);
+    expect(restored.activeNetworkId).toBe("mainnet-preset");
+    expect(store.currentSession()).toMatchObject({
+      password: "new-secret"
+    });
+
+    await expect(controller.addAccount()).resolves.toMatchObject({
+      activeAccountIndex: 2
+    });
+  });
+
+  it("rejects pending requests when the wallet is replaced", async () => {
+    const store = createStore();
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => createClient(),
+      onApprovalRequested: vi.fn(async () => undefined),
+      createId: vi.fn(() => "approval-1")
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+    await controller.startProviderRequest("request-connect", ORIGIN, {
+      method: "xian_requestAccounts"
+    });
+    await controller.resolveApproval("approval-1", true);
+
+    await controller.startProviderRequest("request-sign", ORIGIN, {
+      method: "xian_signMessage",
+      params: [{ message: "replace me" }]
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret-2",
+      privateKey: "22".repeat(32)
+    });
+
+    await expect(controller.getApprovalView("approval-1")).rejects.toThrow(
+      "approval request not found"
+    );
+    await expect(controller.getProviderRequestStatus("request-sign")).resolves.toEqual({
+      status: "rejected",
+      error: expect.objectContaining({
+        code: 4100,
+        message: "wallet was replaced",
+        name: "ProviderUnauthorizedError"
+      })
+    });
+  });
+
+  it("rejects pending requests when the wallet is removed", async () => {
+    const store = createStore();
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => createClient(),
+      onApprovalRequested: vi.fn(async () => undefined),
+      createId: vi.fn(() => "approval-1")
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+    await controller.startProviderRequest("request-connect", ORIGIN, {
+      method: "xian_requestAccounts"
+    });
+    await controller.resolveApproval("approval-1", true);
+
+    await controller.startProviderRequest("request-sign", ORIGIN, {
+      method: "xian_signMessage",
+      params: [{ message: "remove me" }]
+    });
+
+    await controller.removeWallet();
+
+    await expect(controller.getApprovalView("approval-1")).rejects.toThrow(
+      "approval request not found"
+    );
+    await expect(controller.getProviderRequestStatus("request-sign")).resolves.toEqual({
+      status: "rejected",
+      error: expect.objectContaining({
+        code: 4100,
+        message: "wallet was removed",
+        name: "ProviderUnauthorizedError"
+      })
+    });
   });
 });

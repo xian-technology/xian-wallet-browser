@@ -5,6 +5,7 @@ import {
   SESSION_STORAGE_KEY,
   STORAGE_KEY,
   STORAGE_SCHEMA_VERSION,
+  clearWalletState,
   clearUnlockedSession,
   loadUnlockedSession,
   loadWalletShellMode,
@@ -212,5 +213,55 @@ describe("wallet-extension storage", () => {
 
     expect(storage[PREFERENCES_STORAGE_KEY]).toBe("sidePanel");
     expect(await loadWalletShellMode()).toBe("sidePanel");
+  });
+
+  it("clears only the wallet state while preserving request history", async () => {
+    storage[STORAGE_KEY] = {
+      version: STORAGE_SCHEMA_VERSION,
+      wallet: {
+        publicKey: "a".repeat(64),
+        encryptedPrivateKey: "ciphertext",
+        seedSource: "privateKey",
+        rpcUrl: "http://legacy-rpc",
+        dashboardUrl: "http://legacy-dashboard",
+        activeNetworkId: "custom-network",
+        networkPresets: [
+          {
+            id: "custom-network",
+            name: "Custom network",
+            rpcUrl: "http://legacy-rpc",
+            dashboardUrl: "http://legacy-dashboard"
+          }
+        ],
+        watchedAssets: [],
+        connectedOrigins: [],
+        createdAt: "2026-01-01T00:00:00.000Z"
+      },
+      providerRequests: {
+        "request-1": {
+          requestId: "request-1",
+          origin: "https://app.example",
+          request: { method: "xian_signMessage", params: [{ message: "hi" }] },
+          createdAt: 1,
+          updatedAt: 2,
+          status: "rejected",
+          error: {
+            name: "ProviderUnauthorizedError",
+            message: "wallet was removed",
+            code: 4100
+          }
+        }
+      },
+      approvals: {}
+    };
+
+    await clearWalletState();
+
+    expect(await loadWalletState()).toBeNull();
+    expect(await loadRequestState("request-1")).toEqual(
+      expect.objectContaining({
+        status: "rejected"
+      })
+    );
   });
 });
