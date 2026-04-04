@@ -285,8 +285,10 @@ function buildSendKwargs(): Record<string, unknown> {
 
 /* ── Utilities ─────────────────────────────────────────────── */
 
-function escapeHtml(value: string): string {
-  return String(value ?? "")
+function escapeHtml(value: unknown): string {
+  if (value == null) return "";
+  const s = typeof value === "string" ? value : String(value);
+  return s
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
