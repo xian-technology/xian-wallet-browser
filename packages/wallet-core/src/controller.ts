@@ -1378,6 +1378,20 @@ export class WalletController {
     if (!normalized.contract) {
       throw new TypeError("asset contract is required");
     }
+
+    // Auto-fetch metadata if name/symbol not provided
+    if (!normalized.name || !normalized.symbol) {
+      try {
+        const state = this.requireStoredWallet(await this.loadWalletState());
+        const meta = await this.currentClient(state).getTokenMetadata(normalized.contract);
+        if (meta.name && !normalized.name) normalized.name = meta.name;
+        if (meta.symbol && !normalized.symbol) normalized.symbol = meta.symbol;
+        if (meta.logoUrl && !normalized.icon) normalized.icon = meta.logoUrl;
+      } catch {
+        // Metadata fetch failed — use contract name as fallback
+      }
+    }
+
     await this.updateWatchedAssets((assets) => {
       const next = assets.filter(
         (entry) => entry.contract !== normalized.contract
