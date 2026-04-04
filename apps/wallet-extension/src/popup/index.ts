@@ -937,7 +937,7 @@ function renderLocked(state: PopupRuntimeState): void {
         confirmWalletRemoval
           ? `
             <div class="banner banner-danger" style="margin-top: 12px; text-align: left">
-              This will permanently remove the wallet and all data. Are you sure?
+              Permanently remove the wallet and all data?
               <div style="display: flex; gap: 8px; margin-top: 8px">
                 <button class="ghost-sm full-width" data-lock-confirm-remove style="color: var(--danger); border-color: rgba(255,77,79,0.2)">Yes, remove</button>
                 <button class="ghost-sm full-width" data-lock-cancel-remove>Cancel</button>
@@ -1467,13 +1467,13 @@ function renderOriginItem(origin: string): string {
    ═══════════════════════════════════════════════════════════ */
 
 let activityTxs: Array<{
-  tx_hash: string;
+  hash: string;
   contract: string;
   function: string;
   sender: string;
   success: boolean;
   stamps_used: number;
-  created: string;
+  created_at: string;
   block_height: number;
 }> = [];
 let activityLoading = false;
@@ -1506,7 +1506,7 @@ let selectedTxHash: string | null = null;
 
 function renderActivityTab(state: PopupRuntimeState): string {
   if (selectedTxHash) {
-    const tx = activityTxs.find((t) => t.tx_hash === selectedTxHash);
+    const tx = activityTxs.find((t) => t.hash === selectedTxHash);
     if (tx) {
       const isOut = tx.sender === state.publicKey;
       const explorerBase = state.dashboardUrl ? state.dashboardUrl.replace(/\/+$/, "") + "/explorer/tx/" : null;
@@ -1522,10 +1522,10 @@ function renderActivityTab(state: PopupRuntimeState): string {
               <span class="pill ${tx.success ? "pill-info" : "pill-warning"}">${tx.success ? "✓" : "✗"}</span>
             </div>
             <div class="s-card-body">
-              <div class="s-row"><span class="s-row-key">Hash</span><span class="s-row-val mono" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeAttribute(tx.tx_hash)}">${explorerBase ? `<a href="${escapeAttribute(explorerBase + tx.tx_hash)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${escapeHtml(truncateHash(tx.tx_hash))}</a>` : escapeHtml(truncateHash(tx.tx_hash))}</span></div>
+              <div class="s-row"><span class="s-row-key">Hash</span><span class="s-row-val mono" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeAttribute(tx.hash)}">${explorerBase ? `<a href="${escapeAttribute(explorerBase + tx.hash)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${escapeHtml(truncateHash(tx.hash))}</a>` : escapeHtml(truncateHash(tx.hash))}</span></div>
               <div class="s-row"><span class="s-row-key">Block</span><span class="s-row-val">${tx.block_height}</span></div>
               <div class="s-row"><span class="s-row-key">Stamps</span><span class="s-row-val">${tx.stamps_used.toLocaleString()}</span></div>
-              <div class="s-row"><span class="s-row-key">Time</span><span class="s-row-val">${escapeHtml(tx.created)}</span></div>
+              <div class="s-row"><span class="s-row-key">Time</span><span class="s-row-val">${escapeHtml(tx.created_at)}</span></div>
             </div>
           </div>
         </div>
@@ -1552,13 +1552,13 @@ function renderActivityTab(state: PopupRuntimeState): string {
       ${activityTxs.map((tx) => {
         const isOut = tx.sender === state.publicKey;
         return `
-          <div class="token-item" data-select-tx="${escapeAttribute(tx.tx_hash)}" style="cursor:pointer">
+          <div class="token-item" data-select-tx="${escapeAttribute(tx.hash)}" style="cursor:pointer">
             <div class="token-icon" style="background: ${isOut ? "var(--danger-soft, rgba(255,77,79,0.12))" : "var(--success-soft, rgba(34,197,94,0.12))"}">
               ${isOut ? ICONS.arrowUp : ICONS.arrowDown}
             </div>
             <div class="token-body">
               <div class="token-name">${escapeHtml(tx.contract)}.${escapeHtml(tx.function)}</div>
-              <div class="token-sub">${escapeHtml(tx.created)}</div>
+              <div class="token-sub">${escapeHtml(tx.created_at)}</div>
             </div>
             <div class="token-end">
               <span class="pill ${tx.success ? "pill-info" : "pill-warning"}" style="font-size:11px">${tx.success ? "✓" : "✗"}</span>
