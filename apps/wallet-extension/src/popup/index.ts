@@ -289,15 +289,15 @@ function escapeHtml(value: unknown): string {
   if (value == null) return "";
   const s = typeof value === "string" ? value : String(value);
   return s
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
+    .split("&").join("&amp;")
+    .split("<").join("&lt;")
+    .split(">").join("&gt;")
+    .split('"').join("&quot;")
+    .split("'").join("&#39;");
 }
 
-function escapeAttribute(value: string): string {
-  return escapeHtml(value).replaceAll("`", "&#96;");
+function escapeAttribute(value: unknown): string {
+  return escapeHtml(value).split("`").join("&#96;");
 }
 
 function safeOriginLabel(origin: string): string {
