@@ -933,6 +933,7 @@ function renderLocked(state: PopupRuntimeState): void {
         </label>
         <button type="submit" class="full-width">Unlock</button>
       </form>
+      <button class="send-footer-link" data-lock-remove-wallet style="margin-top: 12px">Forgot password? Remove wallet</button>
     </div>
   `;
 
@@ -964,6 +965,21 @@ function renderLocked(state: PopupRuntimeState): void {
         });
       } catch {
         setFlash("Invalid password.", "danger");
+        render(currentState);
+      }
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-lock-remove-wallet]")
+    ?.addEventListener("click", async () => {
+      const confirmed = confirm("This will permanently remove the wallet and all data. Are you sure?");
+      if (!confirmed) return;
+      try {
+        await sendRuntimeMessage<PopupState>({ type: "wallet_remove" });
+        resetSendState();
+        await refresh({ tone: "info", message: "Wallet removed." });
+      } catch (error) {
+        setFlash(formatError(error), "danger");
         render(currentState);
       }
     });
@@ -3154,6 +3170,10 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
             : null;
         applyReceiptStateWrites(execution);
         void refresh(ok ? null : undefined);
+        // Refresh activity cache so the new tx shows up
+        if (ok && currentState?.publicKey) {
+          void fetchActivityTxs(currentState.publicKey);
+        }
         render(state);
       } catch (error) {
         sendStep = "review";
