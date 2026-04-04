@@ -933,7 +933,19 @@ function renderLocked(state: PopupRuntimeState): void {
         </label>
         <button type="submit" class="full-width">Unlock</button>
       </form>
-      <button class="send-footer-link" data-lock-remove-wallet style="margin-top: 12px">Forgot password? Remove wallet</button>
+      ${
+        confirmWalletRemoval
+          ? `
+            <div class="banner banner-danger" style="margin-top: 12px; text-align: left">
+              This will permanently remove the wallet and all data. Are you sure?
+              <div style="display: flex; gap: 8px; margin-top: 8px">
+                <button class="ghost-sm full-width" data-lock-confirm-remove style="color: var(--danger); border-color: rgba(255,77,79,0.2)">Yes, remove</button>
+                <button class="ghost-sm full-width" data-lock-cancel-remove>Cancel</button>
+              </div>
+            </div>
+          `
+          : `<button class="send-footer-link" data-lock-remove-wallet style="margin-top: 12px">Forgot password? Remove wallet</button>`
+      }
     </div>
   `;
 
@@ -971,10 +983,23 @@ function renderLocked(state: PopupRuntimeState): void {
 
   root
     .querySelector<HTMLElement>("[data-lock-remove-wallet]")
+    ?.addEventListener("click", () => {
+      confirmWalletRemoval = true;
+      render(currentState);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-lock-cancel-remove]")
+    ?.addEventListener("click", () => {
+      confirmWalletRemoval = false;
+      render(currentState);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-lock-confirm-remove]")
     ?.addEventListener("click", async () => {
-      const confirmed = confirm("This will permanently remove the wallet and all data. Are you sure?");
-      if (!confirmed) return;
       try {
+        confirmWalletRemoval = false;
         await sendRuntimeMessage<PopupState>({ type: "wallet_remove" });
         resetSendState();
         await refresh({ tone: "info", message: "Wallet removed." });
