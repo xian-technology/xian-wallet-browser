@@ -157,7 +157,7 @@ export async function createWalletInPopup(
   ).toBeVisible();
   await popup.getByLabel("Password").fill(password);
   await popup.getByRole("button", { name: createButtonLabel }).click();
-  await expect(popup.getByText("Recovery phrase")).toBeVisible();
+  await expect(popup.locator(".recovery-phrase").first()).toBeVisible();
   await expect
     .poll(() =>
       sendRuntimeMessage<{ hasWallet: boolean; unlocked: boolean }>(popup, {
