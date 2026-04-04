@@ -286,7 +286,7 @@ function buildSendKwargs(): Record<string, unknown> {
 /* ── Utilities ─────────────────────────────────────────────── */
 
 function escapeHtml(value: string): string {
-  return value
+  return String(value ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
@@ -1210,6 +1210,14 @@ function renderHomeTab(state: PopupRuntimeState): string {
     </div>
     ${trackedAssetsHtml}
     ${detectedAssetsHtml}
+    ${managingAssets ? `
+      <div style="padding: 8px 16px">
+        <div style="display: flex; gap: 6px">
+          <input id="add-token-input" class="ide-input" style="flex: 1; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg-0); color: var(--fg); font-size: 12px; font-family: var(--font-mono)" placeholder="Contract name" />
+          <button class="ghost-sm" data-add-token>Add</button>
+        </div>
+      </div>
+    ` : ""}
     <div class="manage-assets-footer">
       <button class="send-footer-link" data-toggle-manage-assets>${managingAssets ? "Done" : "Manage assets"}</button>
     </div>
@@ -2602,6 +2610,27 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     ?.addEventListener("click", () => {
       managingAssets = !managingAssets;
       render(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-add-token]")
+    ?.addEventListener("click", async () => {
+      const input = root.querySelector<HTMLInputElement>("#add-token-input");
+      const contract = input?.value.trim();
+      if (!contract) return;
+      try {
+        await sendRuntimeMessage<PopupState>({
+          type: "wallet_track_asset",
+          asset: { contract }
+        });
+        setFlash(`Added ${contract}.`, "success");
+        await refresh(null);
+        managingAssets = true;
+        render(currentState);
+      } catch (error) {
+        setFlash(formatError(error), "danger");
+        render(state);
+      }
     });
 
   for (const btn of root.querySelectorAll<HTMLElement>("[data-toggle-hide]")) {
