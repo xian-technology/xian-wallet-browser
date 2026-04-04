@@ -16,13 +16,15 @@ if (!approvalIdParam) {
 
 const approvalId = approvalIdParam;
 
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
+function escapeHtml(value: unknown): string {
+  if (value == null) return "";
+  const s = typeof value === "string" ? value : String(value);
+  return s
+    .split("&").join("&amp;")
+    .split("<").join("&lt;")
+    .split(">").join("&gt;")
+    .split('"').join("&quot;")
+    .split("'").join("&#39;");
 }
 
 function formatTimestamp(value: number): string {
