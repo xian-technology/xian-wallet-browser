@@ -74,15 +74,31 @@ describe("wallet-extension storage", () => {
     vi.unstubAllGlobals();
   });
 
-  it("migrates legacy wallet state into the versioned envelope", async () => {
+  it("loads versioned wallet state from the storage envelope", async () => {
     storage[STORAGE_KEY] = {
-      publicKey: "a".repeat(64),
-      encryptedPrivateKey: "ciphertext",
-      rpcUrl: "http://legacy-rpc",
-      dashboardUrl: "http://legacy-dashboard",
-      watchedAssets: [],
-      connectedOrigins: ["https://app.example"],
-      createdAt: "2026-01-01T00:00:00.000Z"
+      version: STORAGE_SCHEMA_VERSION,
+      wallet: {
+        publicKey: "a".repeat(64),
+        encryptedPrivateKey: "ciphertext",
+        walletEncryptionSalt: "salt",
+        seedSource: "privateKey",
+        rpcUrl: "http://custom-rpc",
+        dashboardUrl: "http://custom-dashboard",
+        activeNetworkId: "custom-network",
+        networkPresets: [
+          {
+            id: "custom-network",
+            name: "Custom network",
+            rpcUrl: "http://custom-rpc",
+            dashboardUrl: "http://custom-dashboard"
+          }
+        ],
+        watchedAssets: [],
+        connectedOrigins: ["https://app.example"],
+        createdAt: "2026-01-01T00:00:00.000Z"
+      },
+      providerRequests: {},
+      approvals: {}
     };
 
     const state = await loadWalletState();
@@ -94,19 +110,16 @@ describe("wallet-extension storage", () => {
       activeNetworkId: "custom-network",
       networkPresets: [
         expect.objectContaining({
-          id: "local-node"
-        }),
-        expect.objectContaining({
           id: "custom-network",
-          rpcUrl: "http://legacy-rpc",
-          dashboardUrl: "http://legacy-dashboard"
+          rpcUrl: "http://custom-rpc",
+          dashboardUrl: "http://custom-dashboard"
         })
       ]
     });
     expect(storage[STORAGE_KEY]).toMatchObject({
-      version: STORAGE_SCHEMA_VERSION,
       wallet: expect.objectContaining({
         publicKey: "a".repeat(64),
+        walletEncryptionSalt: "salt",
         seedSource: "privateKey",
         activeNetworkId: "custom-network"
       })
@@ -190,15 +203,18 @@ describe("wallet-extension storage", () => {
   it("round-trips unlocked session state through chrome.storage.session", async () => {
     await saveUnlockedSession({
       privateKey: "11".repeat(32),
+      sessionKey: "session-key",
       expiresAt: 12345
     });
 
     expect(sessionStorage[SESSION_STORAGE_KEY]).toEqual({
       privateKey: "11".repeat(32),
+      sessionKey: "session-key",
       expiresAt: 12345
     });
     expect(await loadUnlockedSession()).toEqual({
       privateKey: "11".repeat(32),
+      sessionKey: "session-key",
       expiresAt: 12345
     });
 
@@ -221,16 +237,17 @@ describe("wallet-extension storage", () => {
       wallet: {
         publicKey: "a".repeat(64),
         encryptedPrivateKey: "ciphertext",
+        walletEncryptionSalt: "salt",
         seedSource: "privateKey",
-        rpcUrl: "http://legacy-rpc",
-        dashboardUrl: "http://legacy-dashboard",
+        rpcUrl: "http://custom-rpc",
+        dashboardUrl: "http://custom-dashboard",
         activeNetworkId: "custom-network",
         networkPresets: [
           {
             id: "custom-network",
             name: "Custom network",
-            rpcUrl: "http://legacy-rpc",
-            dashboardUrl: "http://legacy-dashboard"
+            rpcUrl: "http://custom-rpc",
+            dashboardUrl: "http://custom-dashboard"
           }
         ],
         watchedAssets: [],

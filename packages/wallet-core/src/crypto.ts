@@ -7,6 +7,7 @@ import type { WalletSeedSource } from "./types.js";
 const ENCODER = new TextEncoder();
 const DECODER = new TextDecoder();
 const ITERATIONS = 250_000;
+const SESSION_KEY_LENGTH = 32;
 const MNEMONIC_STRENGTH_BY_WORD_COUNT = new Map<number, number>([
   [12, 128],
   [15, 160],
@@ -73,6 +74,47 @@ async function deriveKey(
   );
 }
 
+async function deriveSessionKeyBytes(
+  password: string,
+  salt: Uint8Array
+): Promise<Uint8Array> {
+  const passwordKey = await getWebCrypto().subtle.importKey(
+    "raw",
+    ENCODER.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  );
+  const derivedBits = await getWebCrypto().subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      hash: "SHA-256",
+      iterations: ITERATIONS,
+      salt: toArrayBuffer(salt)
+    },
+    passwordKey,
+    SESSION_KEY_LENGTH * 8
+  );
+  return new Uint8Array(derivedBits);
+}
+
+async function importSessionKey(sessionKey: string): Promise<CryptoKey> {
+  const bytes = base64ToBytes(sessionKey);
+  if (bytes.length !== SESSION_KEY_LENGTH) {
+    throw new Error("wallet session key must be 32 bytes");
+  }
+  return getWebCrypto().subtle.importKey(
+    "raw",
+    toArrayBuffer(bytes),
+    {
+      name: "AES-GCM",
+      length: 256
+    },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
 async function encryptText(value: string, password: string): Promise<string> {
   const salt = getWebCrypto().getRandomValues(new Uint8Array(16));
   const iv = getWebCrypto().getRandomValues(new Uint8Array(12));
@@ -100,6 +142,52 @@ async function decryptText(payload: string, password: string): Promise<string> {
     ciphertext: string;
   };
   const key = await deriveKey(password, base64ToBytes(parsed.salt));
+  try {
+    const plaintext = await getWebCrypto().subtle.decrypt(
+      { name: "AES-GCM", iv: toArrayBuffer(base64ToBytes(parsed.iv)) },
+      key,
+      toArrayBuffer(base64ToBytes(parsed.ciphertext))
+    );
+    return DECODER.decode(plaintext);
+  } catch {
+    throw new Error("invalid password");
+  }
+}
+
+async function encryptTextWithSessionKey(
+  value: string,
+  sessionKey: string
+): Promise<string> {
+  const iv = getWebCrypto().getRandomValues(new Uint8Array(12));
+  const key = await importSessionKey(sessionKey);
+  const ciphertext = new Uint8Array(
+    await getWebCrypto().subtle.encrypt(
+      { name: "AES-GCM", iv: toArrayBuffer(iv) },
+      key,
+      toArrayBuffer(ENCODER.encode(value))
+    )
+  );
+  return JSON.stringify({
+    algorithm: "AES-GCM",
+    keySource: "wallet-session-key",
+    iv: bytesToBase64(iv),
+    ciphertext: bytesToBase64(ciphertext)
+  });
+}
+
+async function decryptTextWithSessionKey(
+  payload: string,
+  sessionKey: string
+): Promise<string> {
+  const parsed = JSON.parse(payload) as {
+    keySource?: string;
+    iv: string;
+    ciphertext: string;
+  };
+  if (parsed.keySource !== "wallet-session-key") {
+    throw new Error("payload is not encrypted with a wallet session key");
+  }
+  const key = await importSessionKey(sessionKey);
   try {
     const plaintext = await getWebCrypto().subtle.decrypt(
       { name: "AES-GCM", iv: toArrayBuffer(base64ToBytes(parsed.iv)) },
@@ -249,6 +337,54 @@ export async function decryptPrivateKey(
   return privateKey;
 }
 
+export async function createWalletSessionKey(password: string): Promise<{
+  walletEncryptionSalt: string;
+  sessionKey: string;
+}> {
+  const walletEncryptionSalt = bytesToBase64(
+    getWebCrypto().getRandomValues(new Uint8Array(16))
+  );
+  return {
+    walletEncryptionSalt,
+    sessionKey: await deriveWalletSessionKey(password, walletEncryptionSalt)
+  };
+}
+
+export async function deriveWalletSessionKey(
+  password: string,
+  walletEncryptionSalt: string
+): Promise<string> {
+  const sessionKeyBytes = await deriveSessionKeyBytes(
+    password,
+    base64ToBytes(walletEncryptionSalt)
+  );
+  return bytesToBase64(sessionKeyBytes);
+}
+
+export async function encryptPrivateKeyWithSessionKey(
+  privateKey: string,
+  sessionKey: string
+): Promise<string> {
+  const normalized = normalizePrivateKeyInput(privateKey);
+  if (!normalized) {
+    throw new Error("private key must be a 32-byte hex seed");
+  }
+  return encryptTextWithSessionKey(normalized, sessionKey);
+}
+
+export async function decryptPrivateKeyWithSessionKey(
+  payload: string,
+  sessionKey: string
+): Promise<string> {
+  const privateKey = normalizePrivateKeyInput(
+    await decryptTextWithSessionKey(payload, sessionKey)
+  );
+  if (!privateKey) {
+    throw new Error("missing private key after decryption");
+  }
+  return privateKey;
+}
+
 export async function encryptMnemonic(
   mnemonic: string,
   password: string
@@ -265,6 +401,30 @@ export async function decryptMnemonic(
   password: string
 ): Promise<string> {
   const mnemonic = normalizeMnemonicInput(await decryptText(payload, password));
+  if (!mnemonic) {
+    throw new Error("missing mnemonic after decryption");
+  }
+  return mnemonic;
+}
+
+export async function encryptMnemonicWithSessionKey(
+  mnemonic: string,
+  sessionKey: string
+): Promise<string> {
+  const normalized = normalizeMnemonicInput(mnemonic);
+  if (!normalized) {
+    throw new Error("mnemonic must be a valid BIP39 English phrase");
+  }
+  return encryptTextWithSessionKey(normalized, sessionKey);
+}
+
+export async function decryptMnemonicWithSessionKey(
+  payload: string,
+  sessionKey: string
+): Promise<string> {
+  const mnemonic = normalizeMnemonicInput(
+    await decryptTextWithSessionKey(payload, sessionKey)
+  );
   if (!mnemonic) {
     throw new Error("missing mnemonic after decryption");
   }

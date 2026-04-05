@@ -138,6 +138,7 @@ function normalizeUnlockedSession(value: unknown): StoredUnlockedSession | null 
   if (
     !isRecord(value) ||
     typeof value.privateKey !== "string" ||
+    typeof value.sessionKey !== "string" ||
     typeof value.expiresAt !== "number"
   ) {
     return null;
@@ -146,7 +147,7 @@ function normalizeUnlockedSession(value: unknown): StoredUnlockedSession | null 
   return {
     privateKey: value.privateKey,
     mnemonic: typeof value.mnemonic === "string" ? value.mnemonic : undefined,
-    password: typeof value.password === "string" ? value.password : undefined,
+    sessionKey: value.sessionKey,
     expiresAt: value.expiresAt
   };
 }
@@ -161,19 +162,12 @@ function normalizeWalletState(value: unknown): StoredWalletState | null {
   }
   if (
     typeof value.publicKey !== "string" ||
-    typeof value.encryptedPrivateKey !== "string"
+    typeof value.encryptedPrivateKey !== "string" ||
+    typeof value.walletEncryptionSalt !== "string"
   ) {
     return null;
   }
 
-  const legacyRpcUrl =
-    typeof value.rpcUrl === "string" && value.rpcUrl.length > 0
-      ? value.rpcUrl
-      : DEFAULT_RPC_URL;
-  const legacyDashboardUrl =
-    typeof value.dashboardUrl === "string" && value.dashboardUrl.length > 0
-      ? value.dashboardUrl
-      : DEFAULT_DASHBOARD_URL;
   const localPreset: WalletNetworkPreset = DEFAULT_NETWORK_PRESETS[0]
     ? {
         ...DEFAULT_NETWORK_PRESETS[0]
@@ -209,32 +203,14 @@ function normalizeWalletState(value: unknown): StoredWalletState | null {
         ];
       })
     : [];
-  const usingLegacyCustomPreset =
-    rawPresets.length === 0 &&
-    !(
-      legacyRpcUrl === localPreset.rpcUrl &&
-      legacyDashboardUrl === (localPreset.dashboardUrl ?? DEFAULT_DASHBOARD_URL)
-    );
   const networkPresets: WalletNetworkPreset[] =
     rawPresets.length > 0
       ? rawPresets
-      : !usingLegacyCustomPreset
-        ? [localPreset]
-        : [
-            localPreset,
-            {
-              id: "custom-network",
-              name: "Custom network",
-              rpcUrl: legacyRpcUrl,
-              dashboardUrl: legacyDashboardUrl
-            }
-          ];
+      : [localPreset];
   const activeNetworkId =
     typeof value.activeNetworkId === "string" &&
     networkPresets.some((preset) => preset.id === value.activeNetworkId)
       ? value.activeNetworkId
-      : usingLegacyCustomPreset
-        ? "custom-network"
       : networkPresets[0]?.id ?? LOCAL_NETWORK_PRESET_ID;
   const activePreset =
     networkPresets.find((preset) => preset.id === activeNetworkId) ?? localPreset;
@@ -246,6 +222,7 @@ function normalizeWalletState(value: unknown): StoredWalletState | null {
       typeof value.encryptedMnemonic === "string"
         ? value.encryptedMnemonic
         : undefined,
+    walletEncryptionSalt: value.walletEncryptionSalt,
     seedSource: value.seedSource === "mnemonic" ? "mnemonic" : "privateKey",
     mnemonicWordCount:
       typeof value.mnemonicWordCount === "number" ? value.mnemonicWordCount : undefined,

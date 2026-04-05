@@ -26,12 +26,14 @@ import {
   UNLOCKED_SESSION_TIMEOUT_MS
 } from "./constants.js";
 import {
+  createWalletSessionKey,
   createWalletSecret,
-  decryptMnemonic,
-  decryptPrivateKey,
+  decryptMnemonicWithSessionKey,
+  decryptPrivateKeyWithSessionKey,
+  deriveWalletSessionKey,
   derivePrivateKeyFromMnemonic,
-  encryptMnemonic,
-  encryptPrivateKey,
+  encryptMnemonicWithSessionKey,
+  encryptPrivateKeyWithSessionKey,
   isUnsafeMessageToSign
 } from "./crypto.js";
 import type {
@@ -324,6 +326,8 @@ export class WalletController {
   private readonly requestWaiters = new Map<string, RequestWaiter>();
   private unlockedPrivateKey: string | null = null;
   private unlockedSigner: Ed25519Signer | null = null;
+  private unlockedSessionKey: string | null = null;
+  private unlockedMnemonic: string | null = null;
 
   constructor(private readonly options: WalletControllerOptions) {}
 
@@ -387,14 +391,9 @@ export class WalletController {
     if (session.mnemonic) {
       this.unlockedMnemonic = session.mnemonic;
     }
-    if (session.password) {
-      this.unlockedPassword = session.password;
-    }
+    this.unlockedSessionKey = session.sessionKey;
     return true;
   }
-
-  private unlockedMnemonic: string | null = null;
-  private unlockedPassword: string | null = null;
 
   private async persistUnlockedSession(
     privateKey: string,
@@ -403,7 +402,7 @@ export class WalletController {
     const session: StoredUnlockedSession = {
       privateKey,
       mnemonic: this.unlockedMnemonic ?? undefined,
-      password: this.unlockedPassword ?? undefined,
+      sessionKey: this.unlockedSessionKey as string,
       expiresAt
     };
     await this.store.saveUnlockedSession(session);
@@ -413,7 +412,7 @@ export class WalletController {
     this.unlockedPrivateKey = null;
     this.unlockedSigner = null;
     this.unlockedMnemonic = null;
-    this.unlockedPassword = null;
+    this.unlockedSessionKey = null;
     await this.store.clearUnlockedSession();
   }
 
@@ -446,6 +445,43 @@ export class WalletController {
       throw new ProviderUnauthorizedError("wallet is not configured");
     }
     return normalizeStoredWalletNetworks(state);
+  }
+
+  private requireAccounts(state: StoredWalletState): WalletAccount[] {
+    if (!state.accounts || state.accounts.length === 0) {
+      throw new Error("wallet state has no accounts");
+    }
+    return state.accounts;
+  }
+
+  private async sessionKeyForState(
+    state: StoredWalletState,
+    password: string
+  ): Promise<string> {
+    return deriveWalletSessionKey(password, state.walletEncryptionSalt);
+  }
+
+  private async decryptPrivateKeyForState(
+    state: StoredWalletState,
+    password: string
+  ): Promise<string> {
+    return decryptPrivateKeyWithSessionKey(
+      state.encryptedPrivateKey,
+      await this.sessionKeyForState(state, password)
+    );
+  }
+
+  private async decryptMnemonicForState(
+    state: StoredWalletState,
+    password: string
+  ): Promise<string> {
+    if (!state.encryptedMnemonic) {
+      throw new Error("wallet does not have a recovery phrase");
+    }
+    return decryptMnemonicWithSessionKey(
+      state.encryptedMnemonic,
+      await this.sessionKeyForState(state, password)
+    );
   }
 
   private activeNetworkPreset(state: StoredWalletState): WalletNetworkPreset {
@@ -1289,11 +1325,11 @@ export class WalletController {
   }
 
   private getAccountsList(state: StoredWalletState): Array<{ index: number; publicKey: string; name: string }> {
-    if (state.accounts && state.accounts.length > 0) {
-      return state.accounts.map((a) => ({ index: a.index, publicKey: a.publicKey, name: a.name }));
-    }
-    // Backward compat: create virtual account from legacy fields
-    return [{ index: 0, publicKey: state.publicKey, name: "Account 1" }];
+    return this.requireAccounts(state).map((account) => ({
+      index: account.index,
+      publicKey: account.publicKey,
+      name: account.name
+    }));
   }
 
   async getPopupState(): Promise<PopupState> {
@@ -1516,15 +1552,21 @@ export class WalletController {
       createWithMnemonic: input.createWithMnemonic
     });
     const signer = new Ed25519Signer(secret.privateKey);
-    const encryptedPrivateKey = await encryptPrivateKey(secret.privateKey, input.password);
+    const { walletEncryptionSalt, sessionKey } = await createWalletSessionKey(
+      input.password
+    );
+    const encryptedPrivateKey = await encryptPrivateKeyWithSessionKey(
+      secret.privateKey,
+      sessionKey
+    );
     const encryptedMnemonic = secret.mnemonic
-      ? await encryptMnemonic(secret.mnemonic, input.password)
+      ? await encryptMnemonicWithSessionKey(secret.mnemonic, sessionKey)
       : undefined;
 
     this.unlockedPrivateKey = secret.privateKey;
     this.unlockedSigner = signer;
     this.unlockedMnemonic = secret.mnemonic ?? null;
-    this.unlockedPassword = input.password;
+    this.unlockedSessionKey = sessionKey;
     await this.persistUnlockedSession(secret.privateKey);
 
     await this.invalidatePendingRequests(
@@ -1573,6 +1615,7 @@ export class WalletController {
       publicKey: signer.address,
       encryptedPrivateKey,
       encryptedMnemonic,
+      walletEncryptionSalt,
       seedSource: secret.seedSource,
       mnemonicWordCount: secret.mnemonicWordCount,
       accounts: [initialAccount],
@@ -1601,7 +1644,11 @@ export class WalletController {
 
   async unlockWallet(password: string): Promise<PopupState> {
     const state = this.requireStoredWallet(await this.loadWalletState());
-    const privateKey = await decryptPrivateKey(state.encryptedPrivateKey, password);
+    const sessionKey = await this.sessionKeyForState(state, password);
+    const privateKey = await decryptPrivateKeyWithSessionKey(
+      state.encryptedPrivateKey,
+      sessionKey
+    );
     const signer = new Ed25519Signer(privateKey);
     if (signer.address !== state.publicKey) {
       throw new Error("decrypted private key does not match stored wallet");
@@ -1609,12 +1656,15 @@ export class WalletController {
 
     this.unlockedPrivateKey = privateKey;
     this.unlockedSigner = signer;
-    this.unlockedPassword = password;
+    this.unlockedSessionKey = sessionKey;
 
     // Decrypt mnemonic into session for account switching
     if (state.encryptedMnemonic) {
       try {
-        this.unlockedMnemonic = await decryptMnemonic(state.encryptedMnemonic, password);
+        this.unlockedMnemonic = await decryptMnemonicWithSessionKey(
+          state.encryptedMnemonic,
+          sessionKey
+        );
       } catch {
         this.unlockedMnemonic = null;
       }
@@ -1628,22 +1678,17 @@ export class WalletController {
 
   async revealMnemonic(password: string): Promise<string> {
     const state = this.requireStoredWallet(await this.loadWalletState());
-    if (!state.encryptedMnemonic) {
-      throw new Error("wallet does not have a recovery phrase");
-    }
-    return decryptMnemonic(state.encryptedMnemonic, password);
+    return this.decryptMnemonicForState(state, password);
   }
 
   async revealPrivateKey(password: string): Promise<string> {
     const state = this.requireStoredWallet(await this.loadWalletState());
-    return decryptPrivateKey(state.encryptedPrivateKey, password);
+    return this.decryptPrivateKeyForState(state, password);
   }
 
   async exportWallet(password: string): Promise<WalletBackup> {
     const state = this.requireStoredWallet(await this.loadWalletState());
-    const accounts = state.accounts ?? [
-      { index: 0, publicKey: state.publicKey, encryptedPrivateKey: state.encryptedPrivateKey, name: "Account 1" }
-    ];
+    const accounts = this.requireAccounts(state);
 
     const backup: WalletBackup = {
       version: 1,
@@ -1656,9 +1701,9 @@ export class WalletController {
     };
 
     if (state.encryptedMnemonic) {
-      backup.mnemonic = await decryptMnemonic(state.encryptedMnemonic, password);
+      backup.mnemonic = await this.decryptMnemonicForState(state, password);
     } else {
-      backup.privateKey = await decryptPrivateKey(state.encryptedPrivateKey, password);
+      backup.privateKey = await this.decryptPrivateKeyForState(state, password);
     }
 
     return backup;
@@ -1678,12 +1723,16 @@ export class WalletController {
       throw new Error("backup must contain a mnemonic or private key");
     }
 
+    const { walletEncryptionSalt, sessionKey } = await createWalletSessionKey(password);
     const encryptedMnemonic = mnemonic
-      ? await encryptMnemonic(mnemonic, password)
+      ? await encryptMnemonicWithSessionKey(mnemonic, sessionKey)
       : undefined;
 
     // Build accounts list
-    const accountEntries = backup.accounts ?? [{ index: 0, name: "Account 1" }];
+    const accountEntries = backup.accounts;
+    if (!accountEntries || accountEntries.length === 0) {
+      throw new Error("backup must contain at least one account");
+    }
     const accounts: WalletAccount[] = [];
     const privateKeysByIndex = new Map<number, string>();
     for (const entry of accountEntries) {
@@ -1695,7 +1744,7 @@ export class WalletController {
       accounts.push({
         index: entry.index,
         publicKey: acctSigner.address,
-        encryptedPrivateKey: await encryptPrivateKey(key, password),
+        encryptedPrivateKey: await encryptPrivateKeyWithSessionKey(key, sessionKey),
         name: entry.name
       });
     }
@@ -1713,7 +1762,7 @@ export class WalletController {
     this.unlockedPrivateKey = activePrivateKey;
     this.unlockedSigner = signer;
     this.unlockedMnemonic = mnemonic ?? null;
-    this.unlockedPassword = password;
+    this.unlockedSessionKey = sessionKey;
     await this.persistUnlockedSession(activePrivateKey);
 
     await this.invalidatePendingRequests(
@@ -1742,6 +1791,7 @@ export class WalletController {
       publicKey: activeAccount.publicKey,
       encryptedPrivateKey: activeAccount.encryptedPrivateKey,
       encryptedMnemonic,
+      walletEncryptionSalt,
       seedSource: backup.type,
       mnemonicWordCount: mnemonic ? mnemonic.split(" ").length : undefined,
       accounts,
@@ -1760,17 +1810,18 @@ export class WalletController {
 
   async addAccount(): Promise<PopupState> {
     await this.restoreUnlockedSession();
-    if (!this.unlockedMnemonic || !this.unlockedPassword) {
+    if (!this.unlockedMnemonic || !this.unlockedSessionKey) {
       throw new Error("wallet must be unlocked to add an account");
     }
     const state = this.requireStoredWallet(await this.loadWalletState());
-    const accounts = state.accounts ?? [
-      { index: 0, publicKey: state.publicKey, encryptedPrivateKey: state.encryptedPrivateKey, name: "Account 1" }
-    ];
+    const accounts = this.requireAccounts(state);
     const nextIndex = Math.max(...accounts.map((a) => a.index)) + 1;
     const privateKey = await derivePrivateKeyFromMnemonic(this.unlockedMnemonic, nextIndex);
     const signer = new Ed25519Signer(privateKey);
-    const encrypted = await encryptPrivateKey(privateKey, this.unlockedPassword);
+    const encrypted = await encryptPrivateKeyWithSessionKey(
+      privateKey,
+      this.unlockedSessionKey
+    );
 
     accounts.push({
       index: nextIndex,
@@ -1795,9 +1846,7 @@ export class WalletController {
 
   async switchAccount(index: number): Promise<PopupState> {
     const state = this.requireStoredWallet(await this.loadWalletState());
-    const accounts = state.accounts ?? [
-      { index: 0, publicKey: state.publicKey, encryptedPrivateKey: state.encryptedPrivateKey, name: "Account 1" }
-    ];
+    const accounts = this.requireAccounts(state);
     const target = accounts.find((a) => a.index === index);
     if (!target) {
       throw new Error("account not found");
@@ -1827,9 +1876,7 @@ export class WalletController {
 
   async renameAccount(index: number, name: string): Promise<PopupState> {
     const state = this.requireStoredWallet(await this.loadWalletState());
-    const accounts = state.accounts ?? [
-      { index: 0, publicKey: state.publicKey, encryptedPrivateKey: state.encryptedPrivateKey, name: "Account 1" }
-    ];
+    const accounts = this.requireAccounts(state);
     const target = accounts.find((a) => a.index === index);
     if (!target) {
       throw new Error("account not found");
@@ -1849,7 +1896,7 @@ export class WalletController {
     if (index === 0) {
       throw new Error("cannot remove the primary account");
     }
-    const accounts = state.accounts ?? [];
+    const accounts = this.requireAccounts(state);
     const nextAccounts = accounts.filter((account) => account.index !== index);
     if (nextAccounts.length === 0) {
       throw new Error("cannot remove the last remaining account");
