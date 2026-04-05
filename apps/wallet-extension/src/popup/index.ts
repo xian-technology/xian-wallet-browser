@@ -226,14 +226,36 @@ function mapContractType(annotation: string): TxArgType {
   }
 }
 
+function parseIntegerInput(value: string): number | bigint | null {
+  const trimmed = value.trim();
+  if (!/^-?\d+$/.test(trimmed)) {
+    return null;
+  }
+  const parsed = BigInt(trimmed);
+  const maxSafe = BigInt(Number.MAX_SAFE_INTEGER);
+  const minSafe = BigInt(Number.MIN_SAFE_INTEGER);
+  return parsed >= minSafe && parsed <= maxSafe ? Number(parsed) : parsed;
+}
+
+function parseRuntimeNumberInput(value: string): number | bigint | null {
+  const trimmed = value.trim();
+  if (/^-?\d+$/.test(trimmed)) {
+    return parseIntegerInput(trimmed);
+  }
+  if (!/^-?(?:\d+\.?\d*|\.\d+)$/.test(trimmed)) {
+    return null;
+  }
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function parseArgValue(val: string, type: TxArgType): unknown {
   switch (type) {
     case "str":
     case "Any":
       return val;
     case "int": {
-      const n = parseInt(val, 10);
-      return Number.isFinite(n) ? n : val;
+      return parseIntegerInput(val) ?? val;
     }
     case "float": {
       const n = parseFloat(val);
@@ -3314,8 +3336,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       const tokenSelect = root.querySelector<HTMLSelectElement>("#simple-token");
       if (tokenSelect) simpleToken = tokenSelect.value;
       const raw = state.assetBalances[simpleToken] ?? "0";
-      const n = Number(raw);
-      simpleAmount = Number.isNaN(n) ? "0" : String(n);
+      simpleAmount = raw;
       render(state);
     });
 
@@ -3334,8 +3355,11 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         render(state);
         return;
       }
-      const amount = Number(simpleAmount);
-      if (!simpleAmount || Number.isNaN(amount) || amount <= 0) {
+      const amount = parseRuntimeNumberInput(simpleAmount);
+      if (
+        amount == null ||
+        (typeof amount === "bigint" ? amount <= 0n : amount <= 0)
+      ) {
         setFlash("Enter a valid amount.", "warning");
         render(state);
         return;

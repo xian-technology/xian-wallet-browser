@@ -1119,7 +1119,7 @@ describe("@xian-tech/wallet-core controller", () => {
     expect(restored.publicKey).toBe(accountTwo.publicKey);
     expect(restored.activeNetworkId).toBe("mainnet-preset");
     expect(store.currentSession()).toMatchObject({
-      password: "new-secret"
+      sessionKey: expect.any(String)
     });
 
     await expect(controller.addAccount()).resolves.toMatchObject({

@@ -26,6 +26,7 @@ export interface StoredWalletState {
   publicKey: string;
   encryptedPrivateKey: string;
   encryptedMnemonic?: string;
+  walletEncryptionSalt: string;
   seedSource: WalletSeedSource;
   mnemonicWordCount?: number;
   accounts?: WalletAccount[];
@@ -55,7 +56,7 @@ export interface WalletSerializedError {
 export interface StoredUnlockedSession {
   privateKey: string;
   mnemonic?: string;
-  password?: string;
+  sessionKey: string;
   expiresAt: number;
 }
 

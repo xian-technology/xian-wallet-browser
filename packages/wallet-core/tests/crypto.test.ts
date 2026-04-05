@@ -1,13 +1,19 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  createWalletSessionKey,
   createPrivateKey,
   createWalletSecret,
   decryptMnemonic,
+  decryptMnemonicWithSessionKey,
   decryptPrivateKey,
+  decryptPrivateKeyWithSessionKey,
+  deriveWalletSessionKey,
   derivePrivateKeyFromMnemonic,
   encryptMnemonic,
+  encryptMnemonicWithSessionKey,
   encryptPrivateKey,
+  encryptPrivateKeyWithSessionKey,
   generateMnemonicPhrase,
   isUnsafeMessageToSign,
   normalizeMnemonicInput,
@@ -34,6 +40,34 @@ describe("@xian-tech/wallet-core crypto helpers", () => {
     await expect(decryptMnemonic(encrypted, "secret-password")).resolves.toBe(
       mnemonic
     );
+  });
+
+  it("derives a stable wallet session key and encrypts with it", async () => {
+    const privateKey = createPrivateKey();
+    const mnemonic = generateMnemonicPhrase(12);
+    const material = await createWalletSessionKey("secret-password");
+    const sameSessionKey = await deriveWalletSessionKey(
+      "secret-password",
+      material.walletEncryptionSalt
+    );
+
+    expect(sameSessionKey).toBe(material.sessionKey);
+
+    const encryptedPrivateKey = await encryptPrivateKeyWithSessionKey(
+      privateKey,
+      material.sessionKey
+    );
+    const encryptedMnemonic = await encryptMnemonicWithSessionKey(
+      mnemonic,
+      material.sessionKey
+    );
+
+    await expect(
+      decryptPrivateKeyWithSessionKey(encryptedPrivateKey, sameSessionKey)
+    ).resolves.toBe(privateKey);
+    await expect(
+      decryptMnemonicWithSessionKey(encryptedMnemonic, sameSessionKey)
+    ).resolves.toBe(mnemonic);
   });
 
   it("normalizes and validates private key input", () => {
