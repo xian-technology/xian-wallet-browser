@@ -1,6 +1,6 @@
 {
   "name": "xian-wallet-browser",
-  "version": "0.1.4",
+  "version": "0.2.1",
   "private": true,
   "description": "Browser wallet workspace for Xian",
   "repository": {
