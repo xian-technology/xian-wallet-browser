@@ -1,6 +1,6 @@
 {
   "name": "xian-wallet-extension",
-  "version": "0.1.4",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@xian-tech/provider": "0.1.4",
-    "@xian-tech/wallet-core": "0.1.4",
+    "@xian-tech/wallet-core": "0.2.1",
     "uqr": "^0.1.2"
   },
   "devDependencies": {
