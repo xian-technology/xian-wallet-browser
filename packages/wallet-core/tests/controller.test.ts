@@ -7,6 +7,7 @@ import type {
 } from "@xian-tech/provider";
 
 import {
+  UNLOCKED_SESSION_TIMEOUT_MS,
   WalletController,
   type PersistedApproval,
   type StoredProviderRequest,
@@ -1022,6 +1023,93 @@ describe("@xian-tech/wallet-core controller", () => {
     const popupAfterExpiry = await controllerC.getPopupState();
     expect(popupAfterExpiry.unlocked).toBe(false);
     expect(store.currentSession()).toBeNull();
+  });
+
+  it("keeps the current session unlocked when auto-lock is disabled and restores five-minute expiry on the next unlock", async () => {
+    const store = createStore();
+    const client = createClient();
+    const baseNow = 1_000_000;
+    let autoLockEnabled = false;
+    const getUnlockedSessionExpiry = vi.fn((now: number) =>
+      autoLockEnabled ? now + UNLOCKED_SESSION_TIMEOUT_MS : Number.MAX_SAFE_INTEGER
+    );
+
+    const controllerA = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined),
+      now: vi.fn(() => baseNow),
+      getUnlockedSessionExpiry
+    });
+
+    await controllerA.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+
+    expect(store.currentSession()).toMatchObject({
+      privateKey: PRIVATE_KEY,
+      expiresAt: Number.MAX_SAFE_INTEGER
+    });
+
+    const controllerB = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined),
+      now: vi.fn(() => baseNow + 10 * 60 * 1000),
+      getUnlockedSessionExpiry
+    });
+
+    expect((await controllerB.getPopupState()).unlocked).toBe(true);
+
+    autoLockEnabled = true;
+
+    await controllerB.sendDirectTransaction({
+      contract: "currency",
+      function: "transfer",
+      kwargs: { to: "bob", amount: "5" }
+    });
+
+    expect(store.currentSession()).toMatchObject({
+      privateKey: PRIVATE_KEY,
+      expiresAt: Number.MAX_SAFE_INTEGER
+    });
+
+    await controllerB.lockWallet();
+
+    const relockNow = baseNow + 11 * 60 * 1000;
+    const controllerC = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined),
+      now: vi.fn(() => relockNow),
+      getUnlockedSessionExpiry
+    });
+
+    await controllerC.unlockWallet("secret");
+
+    expect(store.currentSession()).toMatchObject({
+      privateKey: PRIVATE_KEY,
+      expiresAt: relockNow + UNLOCKED_SESSION_TIMEOUT_MS
+    });
   });
 
   it("re-syncs the unlocked signer when the active account is removed", async () => {

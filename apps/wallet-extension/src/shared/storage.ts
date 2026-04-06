@@ -12,6 +12,7 @@ import {
 } from "@xian-tech/wallet-core";
 
 import {
+  DEFAULT_AUTO_LOCK,
   DEFAULT_WALLET_SHELL_MODE,
   type WalletShellMode
 } from "./preferences";
@@ -371,11 +372,11 @@ export async function saveWalletShellMode(mode: WalletShellMode): Promise<void> 
   });
 }
 
-const AUTO_LOCK_STORAGE_KEY = "xianWalletAutoLock";
+export const AUTO_LOCK_STORAGE_KEY = "xianWalletAutoLock";
 
 export async function loadAutoLock(): Promise<boolean> {
   const value = await storageGet<unknown>(AUTO_LOCK_STORAGE_KEY);
-  return value !== false;
+  return typeof value === "boolean" ? value : DEFAULT_AUTO_LOCK;
 }
 
 export async function saveAutoLock(enabled: boolean): Promise<void> {

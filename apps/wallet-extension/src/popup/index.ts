@@ -13,7 +13,10 @@ import {
   sendRuntimeMessage,
   type WalletCreateRuntimeResult
 } from "../shared/messages";
-import type { WalletShellMode } from "../shared/preferences";
+import {
+  DEFAULT_AUTO_LOCK,
+  type WalletShellMode
+} from "../shared/preferences";
 
 const appRoot = document.querySelector<HTMLElement>("#app");
 if (!appRoot) {
@@ -99,7 +102,7 @@ let renamingAccountIndex: number | null = null;
 let confirmDeleteAccountIndex: number | null = null;
 let confirmWalletRemoval = false;
 let showSaveRecipient = false;
-let autoLockEnabled = true;
+let autoLockEnabled = DEFAULT_AUTO_LOCK;
 let balanceWatchClient: XianClient | null = null;
 let balanceWatchClientKey: string | null = null;
 const balanceSubscriptions = new Map<string, WatchSubscription>();
@@ -4033,8 +4036,16 @@ window.addEventListener("beforeunload", () => {
 });
 
 renderLoading();
-// Load auto-lock preference
-sendRuntimeMessage<boolean>({ type: "wallet_get_auto_lock" }).then((v) => {
-  autoLockEnabled = v;
-});
-void refresh(null);
+
+async function initializePopup(): Promise<void> {
+  try {
+    autoLockEnabled = await sendRuntimeMessage<boolean>({
+      type: "wallet_get_auto_lock"
+    });
+  } catch {
+    autoLockEnabled = DEFAULT_AUTO_LOCK;
+  }
+  await refresh(null);
+}
+
+void initializePopup();

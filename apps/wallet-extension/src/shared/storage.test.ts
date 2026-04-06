@@ -1,17 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  AUTO_LOCK_STORAGE_KEY,
   PREFERENCES_STORAGE_KEY,
   SESSION_STORAGE_KEY,
   STORAGE_KEY,
   STORAGE_SCHEMA_VERSION,
   clearWalletState,
   clearUnlockedSession,
+  loadAutoLock,
   loadUnlockedSession,
   loadWalletShellMode,
   loadApprovalState,
   loadRequestState,
   loadWalletState,
+  saveAutoLock,
   saveUnlockedSession,
   saveWalletShellMode,
   saveApprovalState,
@@ -229,6 +232,20 @@ describe("wallet-extension storage", () => {
 
     expect(storage[PREFERENCES_STORAGE_KEY]).toBe("sidePanel");
     expect(await loadWalletShellMode()).toBe("sidePanel");
+  });
+
+  it("defaults auto-lock to enabled and persists explicit overrides", async () => {
+    expect(await loadAutoLock()).toBe(true);
+
+    await saveAutoLock(false);
+
+    expect(storage[AUTO_LOCK_STORAGE_KEY]).toBe(false);
+    expect(await loadAutoLock()).toBe(false);
+
+    await saveAutoLock(true);
+
+    expect(storage[AUTO_LOCK_STORAGE_KEY]).toBe(true);
+    expect(await loadAutoLock()).toBe(true);
   });
 
   it("clears only the wallet state while preserving request history", async () => {

@@ -139,6 +139,7 @@ export interface WalletControllerOptions {
     view: ApprovalView
   ): Promise<void> | void;
   createId?(): string;
+  getUnlockedSessionExpiry?(now: number): Promise<number> | number;
   now?(): number;
 }
 
@@ -395,15 +396,32 @@ export class WalletController {
     return true;
   }
 
+  private async resolveUnlockedSessionExpiry(): Promise<number> {
+    const now = this.now();
+    const expiresAt = await this.options.getUnlockedSessionExpiry?.(now);
+    return typeof expiresAt === "number" && Number.isFinite(expiresAt)
+      ? expiresAt
+      : now + UNLOCKED_SESSION_TIMEOUT_MS;
+  }
+
   private async persistUnlockedSession(
     privateKey: string,
-    expiresAt = this.now() + UNLOCKED_SESSION_TIMEOUT_MS
+    expiresAt?: number
   ): Promise<void> {
+    const resolvedExpiresAt =
+      expiresAt ?? (await this.resolveUnlockedSessionExpiry());
+    const currentSession = await this.store.loadUnlockedSession();
+    const nextExpiresAt =
+      currentSession?.privateKey === privateKey &&
+      currentSession.sessionKey === this.unlockedSessionKey &&
+      currentSession.expiresAt > resolvedExpiresAt
+        ? currentSession.expiresAt
+        : resolvedExpiresAt;
     const session: StoredUnlockedSession = {
       privateKey,
       mnemonic: this.unlockedMnemonic ?? undefined,
       sessionKey: this.unlockedSessionKey as string,
-      expiresAt
+      expiresAt: nextExpiresAt
     };
     await this.store.saveUnlockedSession(session);
   }
