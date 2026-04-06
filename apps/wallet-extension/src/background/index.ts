@@ -1,4 +1,7 @@
-import { WalletController } from "@xian-tech/wallet-core";
+import {
+  UNLOCKED_SESSION_TIMEOUT_MS,
+  WalletController
+} from "@xian-tech/wallet-core";
 
 import { fail, ok, type RuntimeMessage } from "../shared/messages";
 import {
@@ -34,7 +37,20 @@ const WALLET_METADATA = {
   rdns: "org.xian.wallet.shell"
 };
 
+const DISABLED_AUTO_LOCK_EXPIRES_AT = Number.MAX_SAFE_INTEGER;
+
 const approvalWindowIds = new Map<number, string>();
+
+async function updateApprovalBadge(): Promise<void> {
+  try {
+    const approvals = await listApprovalStates();
+    const count = approvals.length;
+    await chrome.action.setBadgeText({ text: count > 0 ? String(count) : "" });
+    await chrome.action.setBadgeBackgroundColor({ color: "#ff4d4f" });
+  } catch {
+    // Badge API may not be available in all contexts
+  }
+}
 let syncApprovalsPromise: Promise<void> | null = null;
 
 async function applyShellMode(shellMode: WalletShellMode): Promise<void> {
@@ -129,7 +145,12 @@ const controller = new WalletController({
     deleteApprovalState,
     listApprovalStates
   },
+  getUnlockedSessionExpiry: async (now) =>
+    (await loadAutoLock())
+      ? now + UNLOCKED_SESSION_TIMEOUT_MS
+      : DISABLED_AUTO_LOCK_EXPIRES_AT,
   onApprovalRequested: async (approvalId) => {
+    void updateApprovalBadge();
     const shellMode = await loadWalletShellMode();
     if (shellMode === "sidePanel") {
       // Side panel is always visible — notify it to show the approval inline
@@ -193,6 +214,7 @@ async function syncApprovalWindows(): Promise<void> {
     await syncApprovalsPromise;
   } finally {
     syncApprovalsPromise = null;
+    void updateApprovalBadge();
   }
 }
 
@@ -221,7 +243,7 @@ chrome.windows.onRemoved.addListener((windowId: number) => {
   }
 
   approvalWindowIds.delete(windowId);
-  void controller.dismissApproval(approvalId);
+  void controller.dismissApproval(approvalId).then(() => updateApprovalBadge());
 });
 
 chrome.runtime.onMessage.addListener(
@@ -351,7 +373,7 @@ chrome.runtime.onMessage.addListener(
             if (!message.enabled) {
               const session = await loadUnlockedSession();
               if (session) {
-                session.expiresAt = Date.now() + 365 * 24 * 60 * 60 * 1000;
+                session.expiresAt = DISABLED_AUTO_LOCK_EXPIRES_AT;
                 await saveUnlockedSession(session);
               }
             }
@@ -367,9 +389,12 @@ chrome.runtime.onMessage.addListener(
           case "approval_get":
             sendResponse(ok(await controller.getApprovalView(message.approvalId)));
             return;
-          case "approval_resolve":
-            sendResponse(ok(await controller.resolveApproval(message.approvalId, message.approved)));
+          case "approval_resolve": {
+            const result = await controller.resolveApproval(message.approvalId, message.approved);
+            void updateApprovalBadge();
+            sendResponse(ok(result));
             return;
+          }
           case "provider_request":
             sendResponse(
               ok(
