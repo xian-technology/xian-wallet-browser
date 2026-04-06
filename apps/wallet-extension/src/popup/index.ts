@@ -98,6 +98,7 @@ let showAccountMenu = false;
 let renamingAccountIndex: number | null = null;
 let confirmDeleteAccountIndex: number | null = null;
 let confirmWalletRemoval = false;
+let showSaveRecipient = false;
 let balanceWatchClient: XianClient | null = null;
 let balanceWatchClientKey: string | null = null;
 const balanceSubscriptions = new Map<string, WatchSubscription>();
@@ -163,6 +164,7 @@ function resetSendState(): void {
   showTokenPicker = false;
   simpleTo = "";
   simpleAmount = "";
+  showSaveRecipient = false;
   showContactPicker = false;
   editingContacts = false;
   pendingContact = null;
@@ -2151,7 +2153,13 @@ function renderSendResult(state: PopupRuntimeState): string {
         ok &&
         simpleTo &&
         !contacts.some((c) => c.address === simpleTo)
-          ? `<button class="secondary full-width" data-save-recipient>Save recipient as contact</button>`
+          ? showSaveRecipient
+            ? `<div style="display: flex; gap: 6px; align-items: center">
+                 <input id="save-contact-name" class="ide-input" style="flex: 1; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg-0); color: var(--fg); font-size: 13px" placeholder="Contact name" autofocus />
+                 <button class="ghost-sm" data-confirm-save-recipient>Save</button>
+                 <button class="ghost-sm" data-cancel-save-recipient>Cancel</button>
+               </div>`
+            : `<button class="secondary full-width" data-save-recipient>Save recipient as contact</button>`
           : ""
       }
 
@@ -3270,12 +3278,41 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
 
   root
     .querySelector<HTMLElement>("[data-save-recipient]")
+    ?.addEventListener("click", () => {
+      showSaveRecipient = true;
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-cancel-save-recipient]")
+    ?.addEventListener("click", () => {
+      showSaveRecipient = false;
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-confirm-save-recipient]")
     ?.addEventListener("click", async () => {
-      if (!simpleTo) return;
-      const name = prompt("Contact name:");
-      if (!name) return;
+      const input = root.querySelector<HTMLInputElement>("#save-contact-name");
+      const name = input?.value.trim();
+      if (!name || !simpleTo) return;
       contacts.push({ id: crypto.randomUUID(), name, address: simpleTo });
       await sendRuntimeMessage<null>({ type: "contacts_save", contacts });
+      showSaveRecipient = false;
+      setFlash("Contact saved.", "success");
+      render(state);
+    });
+
+  // Also support Enter key in the contact name input
+  root
+    .querySelector<HTMLInputElement>("#save-contact-name")
+    ?.addEventListener("keydown", async (e) => {
+      if (e.key !== "Enter") return;
+      const name = (e.target as HTMLInputElement).value.trim();
+      if (!name || !simpleTo) return;
+      contacts.push({ id: crypto.randomUUID(), name, address: simpleTo });
+      await sendRuntimeMessage<null>({ type: "contacts_save", contacts });
+      showSaveRecipient = false;
       setFlash("Contact saved.", "success");
       render(state);
     });
