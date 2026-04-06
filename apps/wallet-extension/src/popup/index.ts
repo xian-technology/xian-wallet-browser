@@ -99,6 +99,7 @@ let renamingAccountIndex: number | null = null;
 let confirmDeleteAccountIndex: number | null = null;
 let confirmWalletRemoval = false;
 let showSaveRecipient = false;
+let autoLockEnabled = true;
 let balanceWatchClient: XianClient | null = null;
 let balanceWatchClientKey: string | null = null;
 const balanceSubscriptions = new Map<string, WatchSubscription>();
@@ -2287,6 +2288,22 @@ function renderSecurityTab(state: PopupRuntimeState): string {
         </div>
       </div>
 
+      <!-- Auto-lock -->
+      <div class="s-card">
+        <div class="s-card-head">
+          <div>
+            <h3 class="s-card-title">Auto-lock</h3>
+            <p class="s-card-desc">Lock the wallet after 5 minutes of inactivity.</p>
+          </div>
+        </div>
+        <div class="s-card-body">
+          <div class="s-row" style="cursor: pointer" data-toggle-auto-lock>
+            <span class="s-row-key">Auto-lock</span>
+            <span class="s-row-val">${autoLockEnabled ? "Enabled" : "Disabled"}</span>
+          </div>
+        </div>
+      </div>
+
       <!-- Danger zone -->
       <div class="s-card">
         <div class="s-card-head">
@@ -3648,6 +3665,18 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
   }
 
   root
+    .querySelector<HTMLElement>("[data-toggle-auto-lock]")
+    ?.addEventListener("click", async () => {
+      autoLockEnabled = !autoLockEnabled;
+      await sendRuntimeMessage<null>({
+        type: "wallet_set_auto_lock",
+        enabled: autoLockEnabled
+      });
+      setFlash(autoLockEnabled ? "Auto-lock enabled." : "Auto-lock disabled.", "success");
+      render(state);
+    });
+
+  root
     .querySelector<HTMLElement>("[data-remove-wallet]")
     ?.addEventListener("click", () => {
       confirmWalletRemoval = true;
@@ -4004,4 +4033,8 @@ window.addEventListener("beforeunload", () => {
 });
 
 renderLoading();
+// Load auto-lock preference
+sendRuntimeMessage<boolean>({ type: "wallet_get_auto_lock" }).then((v) => {
+  autoLockEnabled = v;
+});
 void refresh(null);

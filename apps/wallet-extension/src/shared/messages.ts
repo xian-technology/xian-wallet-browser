@@ -241,6 +241,15 @@ export interface WalletSetShellModeRuntimeMessage {
   shellMode: WalletShellMode;
 }
 
+export interface WalletGetAutoLockRuntimeMessage {
+  type: "wallet_get_auto_lock";
+}
+
+export interface WalletSetAutoLockRuntimeMessage {
+  type: "wallet_set_auto_lock";
+  enabled: boolean;
+}
+
 export interface ContactsGetRuntimeMessage {
   type: "contacts_get";
 }
@@ -301,6 +310,8 @@ export type RuntimeMessage =
   | WalletRevealMnemonicRuntimeMessage
   | WalletRevealPrivateKeyRuntimeMessage
   | WalletSetShellModeRuntimeMessage
+  | WalletGetAutoLockRuntimeMessage
+  | WalletSetAutoLockRuntimeMessage
   | ContactsGetRuntimeMessage
   | ContactsSaveRuntimeMessage
   | ApprovalGetRuntimeMessage

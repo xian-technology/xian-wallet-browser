@@ -371,6 +371,17 @@ export async function saveWalletShellMode(mode: WalletShellMode): Promise<void> 
   });
 }
 
+const AUTO_LOCK_STORAGE_KEY = "xianWalletAutoLock";
+
+export async function loadAutoLock(): Promise<boolean> {
+  const value = await storageGet<unknown>(AUTO_LOCK_STORAGE_KEY);
+  return value !== false;
+}
+
+export async function saveAutoLock(enabled: boolean): Promise<void> {
+  await storageSet({ [AUTO_LOCK_STORAGE_KEY]: enabled });
+}
+
 export async function loadRequestState(
   requestId: string
 ): Promise<StoredProviderRequest | null> {

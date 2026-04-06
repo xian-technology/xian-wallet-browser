@@ -23,7 +23,9 @@ import {
   clearUnlockedSession,
   clearWalletState,
   loadContacts,
-  saveContacts
+  saveContacts,
+  loadAutoLock,
+  saveAutoLock
 } from "../shared/storage";
 
 const WALLET_METADATA = {
@@ -339,6 +341,21 @@ chrome.runtime.onMessage.addListener(
             return;
           case "wallet_set_shell_mode":
             sendResponse(ok(await setShellMode(message.shellMode)));
+            return;
+          case "wallet_get_auto_lock":
+            sendResponse(ok(await loadAutoLock()));
+            return;
+          case "wallet_set_auto_lock":
+            await saveAutoLock(message.enabled);
+            // If disabling auto-lock, extend current session to far future
+            if (!message.enabled) {
+              const session = await loadUnlockedSession();
+              if (session) {
+                session.expiresAt = Date.now() + 365 * 24 * 60 * 60 * 1000;
+                await saveUnlockedSession(session);
+              }
+            }
+            sendResponse(ok(null));
             return;
           case "contacts_get":
             sendResponse(ok(await loadContacts()));
