@@ -2346,6 +2346,8 @@ function renderSecurityTab(state: PopupRuntimeState): string {
           }
         </div>
       </div>
+
+      <p class="muted text-sm" style="text-align: center; opacity: 0.5; margin-top: 4px">v${escapeHtml(chrome.runtime.getManifest().version)}</p>
     </div>
   `;
 }
