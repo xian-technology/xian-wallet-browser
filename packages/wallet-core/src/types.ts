@@ -22,6 +22,27 @@ export interface WalletAccount {
   name: string;
 }
 
+export interface StoredShieldedWalletSnapshot {
+  id: string;
+  label: string;
+  assetId: string;
+  encryptedStateSnapshot: string;
+  noteCount: number;
+  commitmentCount: number;
+  lastScannedIndex: number;
+  updatedAt: string;
+}
+
+export interface ShieldedWalletSnapshotSummary {
+  id: string;
+  label: string;
+  assetId: string;
+  noteCount: number;
+  commitmentCount: number;
+  lastScannedIndex: number;
+  updatedAt: string;
+}
+
 export interface StoredWalletState {
   publicKey: string;
   encryptedPrivateKey: string;
@@ -36,6 +57,7 @@ export interface StoredWalletState {
   activeNetworkId: string;
   networkPresets: WalletNetworkPreset[];
   watchedAssets: WalletWatchedAsset[];
+  shieldedWalletSnapshots?: StoredShieldedWalletSnapshot[];
   connectedOrigins: string[];
   createdAt: string;
 }
@@ -126,6 +148,7 @@ export interface PopupState {
   mnemonicWordCount?: number;
   accounts: Array<{ index: number; publicKey: string; name: string }>;
   activeAccountIndex: number;
+  shieldedWalletSnapshots: ShieldedWalletSnapshotSummary[];
   version: string;
 }
 
@@ -206,6 +229,10 @@ export interface WalletBackup {
   activeNetworkId?: string;
   networkPresets?: WalletNetworkPreset[];
   watchedAssets?: Array<{ contract: string; name?: string; symbol?: string; icon?: string; decimals?: number }>;
+  shieldedStateSnapshots?: Array<{
+    label: string;
+    stateSnapshot: string;
+  }>;
 }
 
 export interface WalletSettingsInput {

@@ -358,6 +358,35 @@ chrome.runtime.onMessage.addListener(
           case "wallet_import_backup":
             sendResponse(ok(await controller.importWalletBackup(message.backup, message.password)));
             return;
+          case "wallet_save_shielded_snapshot":
+            sendResponse(
+              ok(
+                await controller.saveShieldedWalletSnapshot(
+                  message.stateSnapshot,
+                  message.label
+                )
+              )
+            );
+            return;
+          case "wallet_export_shielded_snapshot":
+            sendResponse(
+              ok(
+                await controller.exportShieldedWalletSnapshot(
+                  message.snapshotId,
+                  message.password
+                )
+              )
+            );
+            return;
+          case "wallet_remove_shielded_snapshot":
+            sendResponse(
+              ok(
+                await controller.removeShieldedWalletSnapshot(
+                  message.snapshotId
+                )
+              )
+            );
+            return;
           case "wallet_reveal_mnemonic":
             sendResponse(ok(await controller.revealMnemonic(message.password)));
             return;

@@ -65,6 +65,8 @@ It currently supports:
 - wallet creation and import from a private-key seed or BIP39 recovery phrase
 - recovery-phrase reveal with password confirmation
 - password-based encryption for local persistence
+- shielded `state_snapshot` storage, direct export/removal, and inclusion in
+  encrypted wallet backup exports
 - built-in and custom network presets with active-network switching
 - configured-chain tracking with ready, unreachable, and mismatch states
 - per-origin connect permissions

@@ -361,6 +361,20 @@ export async function deriveWalletSessionKey(
   return bytesToBase64(sessionKeyBytes);
 }
 
+export async function encryptSecretTextWithSessionKey(
+  value: string,
+  sessionKey: string
+): Promise<string> {
+  return encryptTextWithSessionKey(value, sessionKey);
+}
+
+export async function decryptSecretTextWithSessionKey(
+  payload: string,
+  sessionKey: string
+): Promise<string> {
+  return decryptTextWithSessionKey(payload, sessionKey);
+}
+
 export async function encryptPrivateKeyWithSessionKey(
   privateKey: string,
   sessionKey: string
