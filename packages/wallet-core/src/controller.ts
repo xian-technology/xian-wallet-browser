@@ -1509,6 +1509,17 @@ export class WalletController {
     });
   }
 
+  async getStampRate(): Promise<number | null> {
+    const state = await this.loadWalletState();
+    if (!state) return null;
+    try {
+      const rate = await this.currentClient(state).getStampRate();
+      return rate != null ? Number(rate) : null;
+    } catch {
+      return null;
+    }
+  }
+
   async sendDirectTransaction(intent: {
     contract: string;
     function: string;

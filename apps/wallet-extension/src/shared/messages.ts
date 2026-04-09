@@ -172,6 +172,10 @@ export interface WalletEstimateTransactionRuntimeMessage {
   kwargs: Record<string, unknown>;
 }
 
+export interface WalletGetStampRateRuntimeMessage {
+  type: "wallet_get_stamp_rate";
+}
+
 export interface WalletSendDirectTransactionRuntimeMessage {
   type: "wallet_send_direct_transaction";
   contract: string;
@@ -299,6 +303,7 @@ export type RuntimeMessage =
   | WalletUpdateAssetsRuntimeMessage
   | WalletUpdateAssetDecimalsRuntimeMessage
   | WalletEstimateTransactionRuntimeMessage
+  | WalletGetStampRateRuntimeMessage
   | WalletSendDirectTransactionRuntimeMessage
   | WalletGetContractMethodsRuntimeMessage
   | WalletAddAccountRuntimeMessage

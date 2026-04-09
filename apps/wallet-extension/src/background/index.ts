@@ -285,6 +285,9 @@ chrome.runtime.onMessage.addListener(
               kwargs: message.kwargs
             })));
             return;
+          case "wallet_get_stamp_rate":
+            sendResponse(ok(await controller.getStampRate()));
+            return;
           case "wallet_send_direct_transaction":
             sendResponse(ok(await controller.sendDirectTransaction({
               contract: message.contract,

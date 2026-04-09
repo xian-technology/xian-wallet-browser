@@ -149,6 +149,7 @@ let sendEstimateMode = true;
 let sendManualStamps = "";
 let sendParsedKwargs: Record<string, unknown> | null = null;
 let sendEstimate: { estimated: number; suggested: number } | null = null;
+let sendStampRate: number | null = null;
 let sendResult: {
   submitted: boolean;
   accepted: boolean | null;
@@ -180,6 +181,7 @@ function resetSendState(): void {
   sendManualStamps = "";
   sendParsedKwargs = null;
   sendEstimate = null;
+  sendStampRate = null;
   sendResult = null;
   contractMethods = [];
   contractMethodsLoading = false;
@@ -2076,9 +2078,12 @@ function renderSendDraft(): string {
 
 function renderSendReview(): string {
   const entries = sendParsedKwargs ? Object.entries(sendParsedKwargs) : [];
-  const stampsLabel = sendEstimate
-    ? sendEstimate.estimated.toLocaleString()
-    : Number(sendManualStamps).toLocaleString();
+  const stampsNum = sendEstimate
+    ? sendEstimate.estimated
+    : Number(sendManualStamps);
+  const xianCost = sendStampRate ? stampsNum / sendStampRate : null;
+  const stampsLabel = stampsNum.toLocaleString()
+    + (xianCost != null ? ` (~${xianCost.toLocaleString(undefined, { maximumFractionDigits: 8 })} XIAN)` : "");
 
   return `
     <div class="settings-wrap">
@@ -3215,15 +3220,15 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
 
       if (sendEstimateMode) {
         try {
-          sendEstimate = await sendRuntimeMessage<{
-            estimated: number;
-            suggested: number;
-          }>({
-            type: "wallet_estimate_transaction",
-            contract: sendContract,
-            function: sendFunction,
-            kwargs: sendParsedKwargs
-          });
+          [sendEstimate, sendStampRate] = await Promise.all([
+            sendRuntimeMessage<{ estimated: number; suggested: number }>({
+              type: "wallet_estimate_transaction",
+              contract: sendContract,
+              function: sendFunction,
+              kwargs: sendParsedKwargs
+            }),
+            sendRuntimeMessage<number | null>({ type: "wallet_get_stamp_rate" }),
+          ]);
           sendStep = "review";
           clearFlash();
           render(state);
@@ -3469,12 +3474,15 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       }, 15000);
 
       try {
-        sendEstimate = await sendRuntimeMessage<{ estimated: number; suggested: number }>({
-          type: "wallet_estimate_transaction",
-          contract: sendContract,
-          function: sendFunction,
-          kwargs: sendParsedKwargs
-        });
+        [sendEstimate, sendStampRate] = await Promise.all([
+          sendRuntimeMessage<{ estimated: number; suggested: number }>({
+            type: "wallet_estimate_transaction",
+            contract: sendContract,
+            function: sendFunction,
+            kwargs: sendParsedKwargs
+          }),
+          sendRuntimeMessage<number | null>({ type: "wallet_get_stamp_rate" }),
+        ]);
         clearTimeout(timeout);
         sendStep = "review";
         render(state);
