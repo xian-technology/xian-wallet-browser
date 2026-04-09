@@ -119,6 +119,7 @@ interface TxArg {
   value: string;
   type: TxArgType;
   fixed?: boolean;
+  typeFixed?: boolean;
 }
 
 let sendMode: SendMode = "simple";
@@ -1936,7 +1937,7 @@ const ARG_TYPE_OPTIONS: TxArgType[] = [
 
 function renderArgRow(arg: TxArg): string {
   const nameAttrs = arg.fixed ? "readonly" : "";
-  const typeAttrs = arg.fixed ? "disabled" : "";
+  const typeAttrs = arg.typeFixed ? "disabled" : "";
   const typeOptions = ARG_TYPE_OPTIONS.map(
     (t) =>
       `<option value="${t}" ${arg.type === t ? "selected" : ""}>${t}</option>`
@@ -3126,13 +3127,17 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         (m) => m.name === sendFunction
       );
       if (method) {
-        sendArgs = method.arguments.map((a) => ({
-          id: String(++argIdCounter),
-          name: a.name,
-          value: "",
-          type: mapContractType(a.type),
-          fixed: true
-        }));
+        sendArgs = method.arguments.map((a) => {
+          const t = mapContractType(a.type);
+          return {
+            id: String(++argIdCounter),
+            name: a.name,
+            value: "",
+            type: t,
+            fixed: true,
+            typeFixed: t !== "Any"
+          };
+        });
       } else {
         sendArgs = [];
       }
@@ -3151,6 +3156,13 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       });
       render(state);
     });
+
+  for (const sel of root.querySelectorAll<HTMLSelectElement>(".arg-type")) {
+    sel.addEventListener("change", () => {
+      captureSendFormState();
+      render(state);
+    });
+  }
 
   for (const btn of root.querySelectorAll<HTMLButtonElement>(
     "[data-remove-arg]"
