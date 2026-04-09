@@ -1150,7 +1150,20 @@ function renderReceiveView(state: PopupRuntimeState): string {
       </button>
       <div class="qr-frame">${generateQrSvg(address)}</div>
       <p class="muted text-sm" style="margin: 0">Your Xian address</p>
-      <div class="receive-address">${escapeHtml(address)}</div>
+      <div class="receive-address">${
+        [0, 1, 2, 3]
+          .map(
+            (row) =>
+              `<div class="addr-row">${[0, 1, 2, 3]
+                .map((col) => {
+                  const i = row * 4 + col;
+                  const chunk = address.slice(i * 4, i * 4 + 4);
+                  return `<span class="${i % 2 === 0 ? "addr-bright" : "addr-dim"}">${escapeHtml(chunk)}</span>`;
+                })
+                .join("")}</div>`
+          )
+          .join("")
+      }</div>
       <button class="secondary full-width" data-copy-address>Copy Address</button>
     </div>
   `;
