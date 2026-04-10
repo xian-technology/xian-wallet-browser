@@ -4,6 +4,8 @@ import type {
   PopupState,
   ProviderRequestStartResult,
   ProviderRequestStatusResult,
+  ShieldedWalletHistoryStatus,
+  WalletBackup,
   WalletCreateResult
 } from "@xian-tech/wallet-core";
 
@@ -216,18 +218,31 @@ export interface WalletExportRuntimeMessage {
 
 export interface WalletImportBackupRuntimeMessage {
   type: "wallet_import_backup";
-  backup: {
-    version: 1;
-    type: "privateKey" | "mnemonic";
-    mnemonic?: string;
-    privateKey?: string;
-    accounts?: Array<{ index: number; name: string }>;
-    activeAccountIndex?: number;
-    activeNetworkId?: string;
-    networkPresets?: Array<{ id: string; name: string; chainId?: string; rpcUrl: string; dashboardUrl?: string }>;
-    watchedAssets?: Array<{ contract: string; name?: string; symbol?: string; icon?: string; decimals?: number }>;
-  };
+  backup: WalletBackup;
   password: string;
+}
+
+export interface WalletSaveShieldedSnapshotRuntimeMessage {
+  type: "wallet_save_shielded_snapshot";
+  stateSnapshot: string;
+  label?: string;
+}
+
+export interface WalletExportShieldedSnapshotRuntimeMessage {
+  type: "wallet_export_shielded_snapshot";
+  snapshotId: string;
+  password: string;
+}
+
+export interface WalletRemoveShieldedSnapshotRuntimeMessage {
+  type: "wallet_remove_shielded_snapshot";
+  snapshotId: string;
+}
+
+export interface WalletGetShieldedSnapshotHistoryRuntimeMessage {
+  type: "wallet_get_shielded_snapshot_history";
+  snapshotId: string;
+  limit?: number;
 }
 
 export interface WalletRevealMnemonicRuntimeMessage {
@@ -312,6 +327,10 @@ export type RuntimeMessage =
   | WalletRemoveAccountRuntimeMessage
   | WalletExportRuntimeMessage
   | WalletImportBackupRuntimeMessage
+  | WalletSaveShieldedSnapshotRuntimeMessage
+  | WalletExportShieldedSnapshotRuntimeMessage
+  | WalletRemoveShieldedSnapshotRuntimeMessage
+  | WalletGetShieldedSnapshotHistoryRuntimeMessage
   | WalletRevealMnemonicRuntimeMessage
   | WalletRevealPrivateKeyRuntimeMessage
   | WalletSetShellModeRuntimeMessage
@@ -333,6 +352,7 @@ export type PopupRuntimeState = PopupState & {
 export type WalletCreateRuntimeResult = Omit<WalletCreateResult, "popupState"> & {
   popupState: PopupRuntimeState;
 };
+export type ShieldedSnapshotHistoryRuntimeResult = ShieldedWalletHistoryStatus;
 
 export interface RuntimeFailure {
   ok: false;

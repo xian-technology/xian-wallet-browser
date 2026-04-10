@@ -19,6 +19,14 @@ import {
 
 const PRIVATE_KEY = "11".repeat(32);
 const ORIGIN = "https://app.example";
+const SHIELDED_STATE_SNAPSHOT = JSON.stringify({
+  asset_id: "con_private",
+  owner_secret: "0x" + "22".repeat(32),
+  viewing_private_key: "33".repeat(32),
+  notes: [],
+  commitments: [],
+  last_scanned_index: 0
+});
 
 interface MemoryStore extends WalletControllerStore {
   current(): StoredWalletState | null;
@@ -124,6 +132,12 @@ function createClient(): WalletNetworkClient {
       symbol: contract === "currency" ? "XIAN" : "EXP",
       logoUrl: null,
       logoSvg: null
+    })),
+    getShieldedWalletHistory: vi.fn(async () => ({
+      available: true,
+      items: [],
+      limit: 5,
+      afterNoteIndex: 0
     })),
     estimateStamps: vi.fn(async () => ({
       estimated: 12_000,
@@ -1162,6 +1176,166 @@ describe("@xian-tech/wallet-core controller", () => {
     expect(store.currentSession()).toMatchObject({
       privateKey: PRIVATE_KEY,
       expiresAt: relockNow + UNLOCKED_SESSION_TIMEOUT_MS
+    });
+  });
+
+  it("stores shielded snapshots, includes them in wallet backups, and restores them on import", async () => {
+    const store = createStore();
+    const createId = vi
+      .fn()
+      .mockReturnValueOnce("snapshot-1")
+      .mockReturnValueOnce("imported-snapshot-1");
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => createClient(),
+      onApprovalRequested: vi.fn(async () => undefined),
+      createId
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+
+    const saved = await controller.saveShieldedWalletSnapshot(
+      SHIELDED_STATE_SNAPSHOT,
+      "Treasury shielded"
+    );
+    expect(saved.shieldedWalletSnapshots).toEqual([
+      expect.objectContaining({
+        id: "snapshot-1",
+        label: "Treasury shielded",
+        assetId: "con_private",
+        noteCount: 0,
+        commitmentCount: 0
+      })
+    ]);
+
+    const backup = await controller.exportWallet("secret");
+    expect(backup.shieldedStateSnapshots).toEqual([
+      {
+        label: "Treasury shielded",
+        stateSnapshot: JSON.stringify(JSON.parse(SHIELDED_STATE_SNAPSHOT))
+      }
+    ]);
+
+    const importStore = createStore();
+    const importingController = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store: importStore,
+      createClient: () => createClient(),
+      onApprovalRequested: vi.fn(async () => undefined),
+      createId
+    });
+
+    const imported = await importingController.importWalletBackup(backup, "restored");
+    expect(imported.shieldedWalletSnapshots).toEqual([
+      expect.objectContaining({
+        id: "imported-snapshot-1",
+        label: "Treasury shielded",
+        assetId: "con_private"
+      })
+    ]);
+
+    const exportedSnapshot =
+      await importingController.exportShieldedWalletSnapshot(
+        "imported-snapshot-1",
+        "restored"
+      );
+    expect(exportedSnapshot).toEqual({
+      label: "Treasury shielded",
+      stateSnapshot: JSON.stringify(JSON.parse(SHIELDED_STATE_SNAPSHOT))
+    });
+
+    const afterRemoval =
+      await importingController.removeShieldedWalletSnapshot(
+        "imported-snapshot-1"
+      );
+    expect(afterRemoval.shieldedWalletSnapshots).toEqual([]);
+  });
+
+  it("surfaces whether indexed shielded history has advanced past a stored snapshot", async () => {
+    const store = createStore();
+    const client = createClient();
+    client.getShieldedWalletHistory = vi.fn(async () => ({
+      available: true,
+      items: [
+        {
+          eventId: 10,
+          txHash: "TX-1",
+          blockHeight: 12,
+          txIndex: 0,
+          contract: "con_private",
+          function: "transfer_shielded",
+          action: "transfer",
+          outputIndex: 0,
+          noteIndex: 1,
+          commitment: "0xabc",
+          newRoot: "0xroot",
+          payloadHash: "0xhash",
+          tagKind: "sync_hint",
+          tagValue: "0xtag",
+          outputPayload: "0xpayload",
+          createdAt: "2026-04-10T12:00:00Z",
+          raw: {}
+        }
+      ],
+      limit: 3,
+      afterNoteIndex: 0
+    }));
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined),
+      createId: vi.fn(() => "snapshot-1")
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+    await controller.saveShieldedWalletSnapshot(
+      SHIELDED_STATE_SNAPSHOT,
+      "Treasury shielded"
+    );
+
+    await expect(
+      controller.getShieldedWalletSnapshotHistory("snapshot-1", 3)
+    ).resolves.toEqual({
+      snapshotId: "snapshot-1",
+      label: "Treasury shielded",
+      available: true,
+      hasNewerIndexedHistory: true,
+      checkedAfterNoteIndex: 0,
+      newItems: [
+        {
+          txHash: "TX-1",
+          blockHeight: 12,
+          function: "transfer_shielded",
+          action: "transfer",
+          noteIndex: 1,
+          commitment: "0xabc",
+          hasPayload: true,
+          createdAt: "2026-04-10T12:00:00Z"
+        }
+      ]
     });
   });
 

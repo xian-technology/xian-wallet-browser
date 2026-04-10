@@ -1,4 +1,9 @@
-import { Ed25519Signer, XianClient } from "@xian-tech/client";
+import {
+  Ed25519Signer,
+  shieldedSyncHintFromViewingPrivateKey,
+  type XianShieldedWalletHistoryResult,
+  XianClient
+} from "@xian-tech/client";
 import {
   ProviderChainMismatchError,
   ProviderUnauthorizedError,
@@ -27,11 +32,13 @@ import {
 } from "./constants.js";
 import {
   createWalletSessionKey,
+  decryptSecretTextWithSessionKey,
   createWalletSecret,
   decryptMnemonicWithSessionKey,
   decryptPrivateKeyWithSessionKey,
   deriveWalletSessionKey,
   derivePrivateKeyFromMnemonic,
+  encryptSecretTextWithSessionKey,
   encryptMnemonicWithSessionKey,
   encryptPrivateKeyWithSessionKey,
   isUnsafeMessageToSign
@@ -43,7 +50,10 @@ import type {
   PopupState,
   ProviderRequestStartResult,
   ProviderRequestStatusResult,
+  ShieldedWalletHistoryStatus,
+  ShieldedWalletSnapshotSummary,
   StoredProviderRequest,
+  StoredShieldedWalletSnapshot,
   StoredUnlockedSession,
   StoredWalletState,
   WalletAccount,
@@ -69,6 +79,7 @@ const SAFE_CHAIN_ID_LOOKUP_TIMEOUT_MS = 2_000;
 
 export interface WalletNetworkClient {
   getChainId(): Promise<string>;
+  getStampRate?(): Promise<number | string | bigint | null>;
   getBalance(address: string, options?: { contract?: string }): Promise<unknown>;
   getTokenBalances(
     address: string,
@@ -94,6 +105,14 @@ export interface WalletNetworkClient {
     logoUrl: string | null;
     logoSvg: string | null;
   }>;
+  getShieldedWalletHistory?(
+    tagValue: string,
+    options?: {
+      kind?: string;
+      limit?: number;
+      afterNoteIndex?: number;
+    }
+  ): Promise<XianShieldedWalletHistoryResult>;
   estimateStamps(request: {
     sender: string;
     contract: string;
@@ -317,6 +336,92 @@ function normalizeStoredWalletNetworks(state: StoredWalletState): StoredWalletSt
     dashboardUrl: activePreset.dashboardUrl,
     activeNetworkId,
     networkPresets: [...presets.values()]
+  };
+}
+
+interface ParsedShieldedWalletSnapshot {
+  normalizedSnapshot: string;
+  assetId: string;
+  syncHint: string;
+  noteCount: number;
+  commitmentCount: number;
+  lastScannedIndex: number;
+}
+
+function parseShieldedWalletSnapshot(
+  stateSnapshot: string
+): ParsedShieldedWalletSnapshot {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(stateSnapshot);
+  } catch {
+    throw new Error("shielded wallet snapshot must be valid JSON");
+  }
+
+  if (typeof decoded !== "object" || decoded == null || Array.isArray(decoded)) {
+    throw new Error("shielded wallet snapshot must be a JSON object");
+  }
+
+  const record = decoded as Record<string, unknown>;
+  const assetId =
+    typeof record.asset_id === "string" ? trimOptionalString(record.asset_id) : undefined;
+  if (!assetId) {
+    throw new Error("shielded wallet snapshot must contain asset_id");
+  }
+  if (typeof record.owner_secret !== "string" || record.owner_secret.length === 0) {
+    throw new Error("shielded wallet snapshot must contain owner_secret");
+  }
+  if (
+    typeof record.viewing_private_key !== "string" ||
+    record.viewing_private_key.length === 0
+  ) {
+    throw new Error(
+      "shielded wallet snapshot must contain viewing_private_key"
+    );
+  }
+
+  const notes = record.notes ?? [];
+  if (!Array.isArray(notes)) {
+    throw new Error("shielded wallet snapshot notes must be an array");
+  }
+
+  const commitments = record.commitments ?? [];
+  if (!Array.isArray(commitments) || commitments.some((value) => typeof value !== "string")) {
+    throw new Error(
+      "shielded wallet snapshot commitments must be an array of strings"
+    );
+  }
+
+  const lastScannedValue = record.last_scanned_index;
+  const lastScannedIndex =
+    typeof lastScannedValue === "number" &&
+    Number.isInteger(lastScannedValue) &&
+    lastScannedValue >= 0
+      ? lastScannedValue
+      : commitments.length;
+
+  return {
+    normalizedSnapshot: JSON.stringify(record),
+    assetId,
+    syncHint: shieldedSyncHintFromViewingPrivateKey(record.viewing_private_key),
+    noteCount: notes.length,
+    commitmentCount: commitments.length,
+    lastScannedIndex,
+  };
+}
+
+function shieldedWalletSnapshotSummary(
+  record: StoredShieldedWalletSnapshot
+): ShieldedWalletSnapshotSummary {
+  return {
+    id: record.id,
+    label: record.label,
+    assetId: record.assetId,
+    syncHint: record.syncHint,
+    noteCount: record.noteCount,
+    commitmentCount: record.commitmentCount,
+    lastScannedIndex: record.lastScannedIndex,
+    updatedAt: record.updatedAt,
   };
 }
 
@@ -580,6 +685,82 @@ export class WalletController {
       state.encryptedMnemonic,
       await this.sessionKeyForState(state, password)
     );
+  }
+
+  private async requireUnlockedSessionKey(): Promise<string> {
+    if (!(await this.restoreUnlockedSession()) || !this.unlockedSessionKey) {
+      throw new ProviderUnauthorizedError("wallet is locked");
+    }
+    return this.unlockedSessionKey;
+  }
+
+  private storedShieldedWalletSnapshots(
+    state: StoredWalletState
+  ): StoredShieldedWalletSnapshot[] {
+    return [...(state.shieldedWalletSnapshots ?? [])].sort((left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt)
+    );
+  }
+
+  private shieldedWalletSnapshotSummaries(
+    state: StoredWalletState
+  ): ShieldedWalletSnapshotSummary[] {
+    return this.storedShieldedWalletSnapshots(state).map(
+      shieldedWalletSnapshotSummary
+    );
+  }
+
+  private async exportShieldedWalletSnapshots(
+    state: StoredWalletState,
+    sessionKey: string
+  ): Promise<NonNullable<WalletBackup["shieldedStateSnapshots"]>> {
+    const exported: NonNullable<WalletBackup["shieldedStateSnapshots"]> = [];
+    for (const record of this.storedShieldedWalletSnapshots(state)) {
+      exported.push({
+        label: record.label,
+        stateSnapshot: await decryptSecretTextWithSessionKey(
+          record.encryptedStateSnapshot,
+          sessionKey
+        ),
+      });
+    }
+    return exported;
+  }
+
+  private async importShieldedWalletSnapshots(
+    snapshots: WalletBackup["shieldedStateSnapshots"] | undefined,
+    sessionKey: string,
+    nowIso: string
+  ): Promise<StoredShieldedWalletSnapshot[]> {
+    const imported: StoredShieldedWalletSnapshot[] = [];
+    for (const item of snapshots ?? []) {
+      if (
+        typeof item !== "object" ||
+        item == null ||
+        typeof item.label !== "string" ||
+        typeof item.stateSnapshot !== "string"
+      ) {
+        throw new Error(
+          "backup shieldedStateSnapshots must contain label and stateSnapshot"
+        );
+      }
+      const parsed = parseShieldedWalletSnapshot(item.stateSnapshot);
+      imported.push({
+        id: this.createId(),
+        label: trimOptionalString(item.label) ?? parsed.assetId,
+        assetId: parsed.assetId,
+        syncHint: parsed.syncHint,
+        encryptedStateSnapshot: await encryptSecretTextWithSessionKey(
+          parsed.normalizedSnapshot,
+          sessionKey
+        ),
+        noteCount: parsed.noteCount,
+        commitmentCount: parsed.commitmentCount,
+        lastScannedIndex: parsed.lastScannedIndex,
+        updatedAt: nowIso,
+      });
+    }
+    return imported;
   }
 
   private activeNetworkPreset(state: StoredWalletState): WalletNetworkPreset {
@@ -1474,6 +1655,9 @@ export class WalletController {
       mnemonicWordCount: state?.mnemonicWordCount,
       accounts: state ? this.getAccountsList(state) : [],
       activeAccountIndex: state?.activeAccountIndex ?? 0,
+      shieldedWalletSnapshots: state
+        ? this.shieldedWalletSnapshotSummaries(state)
+        : [],
       version: this.options.version
     };
   }
@@ -1601,7 +1785,11 @@ export class WalletController {
     const state = await this.loadWalletState();
     if (!state) return null;
     try {
-      const rate = await this.currentClient(state).getStampRate();
+      const client = this.currentClient(state);
+      if (typeof client.getStampRate !== "function") {
+        return null;
+      }
+      const rate = await client.getStampRate();
       return rate != null ? Number(rate) : null;
     } catch {
       return null;
@@ -1806,6 +1994,7 @@ export class WalletController {
   async exportWallet(password: string): Promise<WalletBackup> {
     const state = this.requireStoredWallet(await this.loadWalletState());
     const accounts = this.requireAccounts(state);
+    const sessionKey = await this.sessionKeyForState(state, password);
 
     const backup: WalletBackup = {
       version: 1,
@@ -1818,9 +2007,23 @@ export class WalletController {
     };
 
     if (state.encryptedMnemonic) {
-      backup.mnemonic = await this.decryptMnemonicForState(state, password);
+      backup.mnemonic = await decryptMnemonicWithSessionKey(
+        state.encryptedMnemonic,
+        sessionKey
+      );
     } else {
-      backup.privateKey = await this.decryptPrivateKeyForState(state, password);
+      backup.privateKey = await decryptPrivateKeyWithSessionKey(
+        state.encryptedPrivateKey,
+        sessionKey
+      );
+    }
+
+    const shieldedStateSnapshots = await this.exportShieldedWalletSnapshots(
+      state,
+      sessionKey
+    );
+    if (shieldedStateSnapshots.length > 0) {
+      backup.shieldedStateSnapshots = shieldedStateSnapshots;
     }
 
     return backup;
@@ -1841,6 +2044,7 @@ export class WalletController {
     }
 
     const { walletEncryptionSalt, sessionKey } = await createWalletSessionKey(password);
+    const nowIso = new Date().toISOString();
     const encryptedMnemonic = mnemonic
       ? await encryptMnemonicWithSessionKey(mnemonic, sessionKey)
       : undefined;
@@ -1903,6 +2107,11 @@ export class WalletController {
     const watchedAssets = backup.watchedAssets?.length
       ? backup.watchedAssets
       : [{ contract: "currency", name: "Xian", symbol: "XIAN" }];
+    const shieldedWalletSnapshots = await this.importShieldedWalletSnapshots(
+      backup.shieldedStateSnapshots,
+      sessionKey,
+      nowIso
+    );
 
     await this.persistWalletState({
       publicKey: activeAccount.publicKey,
@@ -1918,11 +2127,133 @@ export class WalletController {
       activeNetworkId: activePreset.id,
       networkPresets: presets,
       watchedAssets,
+      shieldedWalletSnapshots,
       connectedOrigins: [],
-      createdAt: new Date().toISOString()
+      createdAt: nowIso
     });
 
     return this.getPopupState();
+  }
+
+  async saveShieldedWalletSnapshot(
+    stateSnapshot: string,
+    label?: string
+  ): Promise<PopupState> {
+    const state = this.requireStoredWallet(await this.loadWalletState());
+    const sessionKey = await this.requireUnlockedSessionKey();
+    const parsed = parseShieldedWalletSnapshot(stateSnapshot);
+    const resolvedLabel = trimOptionalString(label) ?? parsed.assetId;
+    const existing = this.storedShieldedWalletSnapshots(state).find(
+      (record) =>
+        record.assetId === parsed.assetId && record.label === resolvedLabel
+    );
+    const updatedAt = new Date().toISOString();
+    const nextRecord: StoredShieldedWalletSnapshot = {
+      id: existing?.id ?? this.createId(),
+      label: resolvedLabel,
+      assetId: parsed.assetId,
+      syncHint: parsed.syncHint,
+      encryptedStateSnapshot: await encryptSecretTextWithSessionKey(
+        parsed.normalizedSnapshot,
+        sessionKey
+      ),
+      noteCount: parsed.noteCount,
+      commitmentCount: parsed.commitmentCount,
+      lastScannedIndex: parsed.lastScannedIndex,
+      updatedAt,
+    };
+
+    state.shieldedWalletSnapshots = [
+      nextRecord,
+      ...this.storedShieldedWalletSnapshots(state).filter(
+        (record) => record.id !== nextRecord.id
+      ),
+    ];
+    await this.persistWalletState(state);
+    return this.getPopupState();
+  }
+
+  async exportShieldedWalletSnapshot(
+    snapshotId: string,
+    password: string
+  ): Promise<{ label: string; stateSnapshot: string }> {
+    const state = this.requireStoredWallet(await this.loadWalletState());
+    const record = this.storedShieldedWalletSnapshots(state).find(
+      (item) => item.id === snapshotId
+    );
+    if (!record) {
+      throw new Error("shielded wallet snapshot not found");
+    }
+    const sessionKey = await this.sessionKeyForState(state, password);
+    return {
+      label: record.label,
+      stateSnapshot: await decryptSecretTextWithSessionKey(
+        record.encryptedStateSnapshot,
+        sessionKey
+      ),
+    };
+  }
+
+  async removeShieldedWalletSnapshot(snapshotId: string): Promise<PopupState> {
+    const state = this.requireStoredWallet(await this.loadWalletState());
+    const nextSnapshots = this.storedShieldedWalletSnapshots(state).filter(
+      (record) => record.id !== snapshotId
+    );
+    if (nextSnapshots.length === this.storedShieldedWalletSnapshots(state).length) {
+      throw new Error("shielded wallet snapshot not found");
+    }
+    state.shieldedWalletSnapshots = nextSnapshots;
+    await this.persistWalletState(state);
+    return this.getPopupState();
+  }
+
+  async getShieldedWalletSnapshotHistory(
+    snapshotId: string,
+    limit: number = 5
+  ): Promise<ShieldedWalletHistoryStatus> {
+    const state = this.requireStoredWallet(await this.loadWalletState());
+    const record = this.storedShieldedWalletSnapshots(state).find(
+      (item) => item.id === snapshotId
+    );
+    if (!record) {
+      throw new Error("shielded wallet snapshot not found");
+    }
+
+    const client = this.currentClient(state);
+    if (typeof client.getShieldedWalletHistory !== "function") {
+      return {
+        snapshotId: record.id,
+        label: record.label,
+        available: false,
+        hasNewerIndexedHistory: false,
+        checkedAfterNoteIndex: record.lastScannedIndex,
+        newItems: [],
+      };
+    }
+
+    const history = await client.getShieldedWalletHistory(record.syncHint, {
+      kind: "sync_hint",
+      limit: Math.max(1, Math.min(Math.trunc(limit), 10)),
+      afterNoteIndex: record.lastScannedIndex,
+    });
+
+    return {
+      snapshotId: record.id,
+      label: record.label,
+      available: history.available,
+      hasNewerIndexedHistory: history.items.length > 0,
+      checkedAfterNoteIndex: record.lastScannedIndex,
+      newItems: history.items.map((item) => ({
+        txHash: item.txHash,
+        blockHeight: item.blockHeight,
+        function: item.function,
+        action: item.action,
+        noteIndex: item.noteIndex,
+        commitment: item.commitment,
+        hasPayload: item.outputPayload != null && item.outputPayload !== "",
+        createdAt: item.createdAt,
+      })),
+    };
   }
 
   async addAccount(): Promise<PopupState> {

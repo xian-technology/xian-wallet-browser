@@ -11,6 +11,7 @@ import {
   type PopupRuntimeState,
   popupStateBanner,
   sendRuntimeMessage,
+  type ShieldedSnapshotHistoryRuntimeResult,
   type WalletCreateRuntimeResult
 } from "../shared/messages";
 import {
@@ -111,6 +112,12 @@ let autoLockEnabled = DEFAULT_AUTO_LOCK;
 let balanceWatchClient: XianClient | null = null;
 let balanceWatchClientKey: string | null = null;
 const balanceSubscriptions = new Map<string, WatchSubscription>();
+const shieldedHistoryStatus = new Map<
+  string,
+  | { loading: true }
+  | { loading: false; status: ShieldedSnapshotHistoryRuntimeResult }
+  | { loading: false; error: string }
+>();
 
 /* ── Send tab state ────────────────────────────────────────── */
 
@@ -718,6 +725,14 @@ async function refresh(nextFlash?: FlashMessage | null): Promise<void> {
   currentState = await sendRuntimeMessage<PopupRuntimeState>({
     type: "wallet_get_popup_state"
   });
+  const activeSnapshotIds = new Set(
+    currentState.shieldedWalletSnapshots.map((snapshot) => snapshot.id)
+  );
+  for (const snapshotId of shieldedHistoryStatus.keys()) {
+    if (!activeSnapshotIds.has(snapshotId)) {
+      shieldedHistoryStatus.delete(snapshotId);
+    }
+  }
 
   if (currentState.unlocked && !contactsLoaded) {
     contacts = await sendRuntimeMessage<Contact[]>({ type: "contacts_get" });
@@ -2299,6 +2314,131 @@ function renderSendResult(state: PopupRuntimeState): string {
    SECURITY TAB
    ═══════════════════════════════════════════════════════════ */
 
+function renderShieldedSnapshotItem(
+  snapshot: PopupRuntimeState["shieldedWalletSnapshots"][number]
+): string {
+  const historyState = shieldedHistoryStatus.get(snapshot.id);
+  let historyHtml = `
+    <div class="muted text-sm" style="margin-top: 8px">
+      Seed-only recovery still depends on indexed shielded history being available somewhere.
+    </div>
+  `;
+  if (historyState?.loading) {
+    historyHtml = `
+      <div class="muted text-sm" style="margin-top: 8px">
+        Checking indexed history after note ${snapshot.lastScannedIndex}...
+      </div>
+    `;
+  } else if (historyState && "error" in historyState) {
+    historyHtml = `
+      <div class="banner banner-warning" style="margin-top: 8px">
+        ${escapeHtml(historyState.error)}
+      </div>
+    `;
+  } else if (historyState && "status" in historyState) {
+    if (!historyState.status.available) {
+      historyHtml = `
+        <div class="banner banner-warning" style="margin-top: 8px">
+          Indexed shielded history is not available from the current RPC/BDS path right now.
+        </div>
+      `;
+    } else if (!historyState.status.hasNewerIndexedHistory) {
+      historyHtml = `
+        <div class="banner banner-info" style="margin-top: 8px">
+          Indexed history is available and no newer notes were found after this snapshot.
+        </div>
+      `;
+    } else {
+      historyHtml = `
+        <div class="banner banner-warning" style="margin-top: 8px">
+          Indexed history shows newer notes after this snapshot. Refresh your shielded wallet state before spending.
+        </div>
+        <div class="stack" style="margin-top: 8px">
+          ${historyState.status.newItems
+            .map(
+              (item) => `
+                <div class="s-row" style="align-items: flex-start">
+                  <div style="flex: 1; min-width: 0">
+                    <div class="text-sm" style="font-weight: 600">
+                      ${escapeHtml(item.action ?? item.function ?? "shielded output")} · note ${escapeHtml(String(item.noteIndex ?? "?"))}
+                    </div>
+                    <div class="muted text-sm mono" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
+                      ${escapeHtml(item.commitment ?? item.txHash ?? "")}
+                    </div>
+                    <div class="muted text-sm">
+                      ${escapeHtml(item.createdAt ?? "timestamp unavailable")} · payload ${item.hasPayload ? "present" : "missing"}
+                    </div>
+                  </div>
+                </div>
+              `
+            )
+            .join("")}
+        </div>
+      `;
+    }
+  }
+
+  return `
+    <div class="s-row" style="align-items: flex-start; gap: 12px">
+      <div style="flex: 1; min-width: 0">
+        <div class="text-sm" style="font-weight: 600">${escapeHtml(snapshot.label)}</div>
+        <div class="muted text-sm mono" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">${escapeHtml(snapshot.assetId)}</div>
+        <div class="muted text-sm">
+          ${snapshot.noteCount} notes · ${snapshot.commitmentCount} commitments · scanned ${snapshot.lastScannedIndex}
+        </div>
+        ${historyHtml}
+      </div>
+      <div style="display: flex; gap: 8px; flex-shrink: 0">
+        <button class="ghost-sm" data-check-shielded-history="${escapeAttribute(snapshot.id)}">Check history</button>
+        <button class="ghost-sm" data-export-shielded-snapshot="${escapeAttribute(snapshot.id)}">Export</button>
+        <button class="ghost-sm" data-remove-shielded-snapshot="${escapeAttribute(snapshot.id)}">Remove</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderShieldedSnapshotsCard(state: PopupRuntimeState): string {
+  const snapshotRows =
+    state.shieldedWalletSnapshots.length === 0
+      ? `<p class="muted text-sm" style="margin: 0">No shielded wallet state snapshots stored yet.</p>`
+      : state.shieldedWalletSnapshots
+          .map((snapshot) => renderShieldedSnapshotItem(snapshot))
+          .join("");
+
+  return `
+    <div class="s-card">
+      <div class="s-card-head">
+        <div>
+          <h3 class="s-card-title">Shielded snapshots</h3>
+          <p class="s-card-desc">Store validated xian-zk \`state_snapshot\` payloads with the wallet.</p>
+        </div>
+      </div>
+      <div class="s-card-body stack">
+        <div class="banner banner-info">
+          Stored snapshots are encrypted at rest and included automatically in full wallet backups.
+        </div>
+        ${snapshotRows}
+        <form id="shielded-snapshot-form" class="stack">
+          <label>
+            Label
+            <input id="shielded-snapshot-label" placeholder="Defaults to asset_id" />
+          </label>
+          <label>
+            state_snapshot
+            <textarea
+              id="shielded-snapshot-json"
+              rows="6"
+              placeholder='Paste ShieldedWallet.to_json() output here'
+              style="resize: vertical"
+            ></textarea>
+          </label>
+          <button type="submit" class="secondary full-width">Store shielded snapshot</button>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
 function renderSecurityTab(state: PopupRuntimeState): string {
   const networkWarnings: string[] = [];
   if (state.networkStatus === "mismatch") {
@@ -2410,9 +2550,11 @@ function renderSecurityTab(state: PopupRuntimeState): string {
               <input type="file" accept=".json" id="import-wallet-file" style="display: none" />
             </div>
           </form>
-          <p class="muted text-sm">Export saves your ${escapeHtml(state.seedSource === "mnemonic" ? "seed and all accounts" : "private key")} to an encrypted file. Import restores from a previously exported file.</p>
+          <p class="muted text-sm">Export saves your ${escapeHtml(state.seedSource === "mnemonic" ? "seed and all accounts" : "private key")} to an encrypted file. Stored shielded snapshots are included automatically. Import restores from a previously exported file.</p>
         </div>
       </div>
+
+      ${renderShieldedSnapshotsCard(state)}
 
       <!-- Auto-lock -->
       <div class="s-card">
@@ -4064,15 +4206,10 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           type: "wallet_export",
           password
         });
-        const blob = new Blob([JSON.stringify(backup, null, 2)], {
-          type: "application/json"
-        });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `xian-wallet-backup-${new Date().toISOString().slice(0, 10)}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
+        downloadJsonText(
+          JSON.stringify(backup, null, 2),
+          `xian-wallet-backup-${new Date().toISOString().slice(0, 10)}.json`
+        );
         setFlash("Wallet exported.", "success");
         render(state);
       } catch (error) {
@@ -4124,9 +4261,144 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         render(state);
       }
     });
+
+  root
+    .querySelector<HTMLFormElement>("#shielded-snapshot-form")
+    ?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const stateSnapshot = value("#shielded-snapshot-json");
+      if (!stateSnapshot) {
+        setFlash("Paste a shielded state_snapshot first.", "warning");
+        render(state);
+        return;
+      }
+      try {
+        await sendRuntimeMessage<PopupState>({
+          type: "wallet_save_shielded_snapshot",
+          stateSnapshot,
+          label: value("#shielded-snapshot-label") || undefined,
+        });
+        await refresh({
+          tone: "success",
+          message: "Shielded snapshot stored.",
+        });
+      } catch (error) {
+        setFlash(formatError(error), "danger");
+        render(state);
+      }
+    });
+
+  for (const button of root.querySelectorAll<HTMLElement>("[data-export-shielded-snapshot]")) {
+    button.addEventListener("click", async () => {
+      const snapshotId = button.dataset.exportShieldedSnapshot;
+      const password = value("#backup-password");
+      if (!snapshotId) {
+        return;
+      }
+      if (!password) {
+        setFlash("Enter your backup password first to export a shielded snapshot.", "warning");
+        render(state);
+        return;
+      }
+      try {
+        const payload = await sendRuntimeMessage<{ label: string; stateSnapshot: string }>({
+          type: "wallet_export_shielded_snapshot",
+          snapshotId,
+          password,
+        });
+        const prettySnapshot = formatJsonText(payload.stateSnapshot);
+        downloadJsonText(
+          prettySnapshot,
+          `xian-shielded-state-${sanitizeFilename(payload.label)}-${new Date().toISOString().slice(0, 10)}.json`
+        );
+        setFlash("Shielded snapshot exported.", "success");
+        render(state);
+      } catch (error) {
+        setFlash(formatError(error), "danger");
+        render(state);
+      }
+    });
+  }
+
+  for (const button of root.querySelectorAll<HTMLElement>("[data-check-shielded-history]")) {
+    button.addEventListener("click", async () => {
+      const snapshotId = button.dataset.checkShieldedHistory;
+      if (!snapshotId) {
+        return;
+      }
+      shieldedHistoryStatus.set(snapshotId, { loading: true });
+      render(state);
+      try {
+        const status =
+          await sendRuntimeMessage<ShieldedSnapshotHistoryRuntimeResult>({
+            type: "wallet_get_shielded_snapshot_history",
+            snapshotId,
+            limit: 5,
+          });
+        shieldedHistoryStatus.set(snapshotId, {
+          loading: false,
+          status,
+        });
+      } catch (error) {
+        shieldedHistoryStatus.set(snapshotId, {
+          loading: false,
+          error: formatError(error),
+        });
+      }
+      render(state);
+    });
+  }
+
+  for (const button of root.querySelectorAll<HTMLElement>("[data-remove-shielded-snapshot]")) {
+    button.addEventListener("click", async () => {
+      const snapshotId = button.dataset.removeShieldedSnapshot;
+      if (!snapshotId) {
+        return;
+      }
+      try {
+        shieldedHistoryStatus.delete(snapshotId);
+        await sendRuntimeMessage<PopupState>({
+          type: "wallet_remove_shielded_snapshot",
+          snapshotId,
+        });
+        await refresh({
+          tone: "info",
+          message: "Shielded snapshot removed.",
+        });
+      } catch (error) {
+        setFlash(formatError(error), "danger");
+        render(state);
+      }
+    });
+  }
 }
 
 /* ── DOM helpers ───────────────────────────────────────────── */
+
+function formatJsonText(value: string): string {
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch {
+    return value;
+  }
+}
+
+function downloadJsonText(text: string, filename: string): void {
+  const blob = new Blob([text], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function sanitizeFilename(value: string): string {
+  const sanitized = value.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
+  return sanitized.length > 0 ? sanitized : "snapshot";
+}
 
 function value(selector: string): string {
   const element =
