@@ -79,7 +79,7 @@ const SAFE_CHAIN_ID_LOOKUP_TIMEOUT_MS = 2_000;
 
 export interface WalletNetworkClient {
   getChainId(): Promise<string>;
-  getStampRate?(): Promise<number | string | bigint | null>;
+  getChiRate?(): Promise<number | string | bigint | null>;
   getBalance(address: string, options?: { contract?: string }): Promise<unknown>;
   getTokenBalances(
     address: string,
@@ -113,7 +113,7 @@ export interface WalletNetworkClient {
       afterNoteIndex?: number;
     }
   ): Promise<XianShieldedWalletHistoryResult>;
-  estimateStamps(request: {
+  estimateChi(request: {
     sender: string;
     contract: string;
     function: string;
@@ -126,8 +126,8 @@ export interface WalletNetworkClient {
     function: string;
     kwargs: Record<string, unknown>;
     chainId?: string;
-    stamps?: number | bigint;
-    stampsSupplied?: number | bigint;
+    chi?: number | bigint;
+    chiSupplied?: number | bigint;
   }): Promise<XianUnsignedTransaction>;
   signTx(
     tx: XianUnsignedTransaction,
@@ -1203,8 +1203,8 @@ export class WalletController {
       function: intent.function,
       kwargs: intent.kwargs,
       chainId: activeChainId,
-      stamps: parseIntentNumber(intent.stamps, "stamps"),
-      stampsSupplied: parseIntentNumber(intent.stampsSupplied, "stampsSupplied")
+      chi: parseIntentNumber(intent.chi, "chi"),
+      chiSupplied: parseIntentNumber(intent.chiSupplied, "chiSupplied")
     });
   }
 
@@ -1766,14 +1766,14 @@ export class WalletController {
     return this.getPopupState();
   }
 
-  async estimateTransactionStamps(request: {
+  async estimateTransactionChi(request: {
     contract: string;
     function: string;
     kwargs: Record<string, unknown>;
   }): Promise<{ estimated: number; suggested: number }> {
     const state = this.requireStoredWallet(await this.loadWalletState());
     const client = this.currentClient(state);
-    return client.estimateStamps({
+    return client.estimateChi({
       sender: state.publicKey,
       contract: request.contract,
       function: request.function,
@@ -1781,15 +1781,15 @@ export class WalletController {
     });
   }
 
-  async getStampRate(): Promise<number | null> {
+  async getChiRate(): Promise<number | null> {
     const state = await this.loadWalletState();
     if (!state) return null;
     try {
       const client = this.currentClient(state);
-      if (typeof client.getStampRate !== "function") {
+      if (typeof client.getChiRate !== "function") {
         return null;
       }
-      const rate = await client.getStampRate();
+      const rate = await client.getChiRate();
       return rate != null ? Number(rate) : null;
     } catch {
       return null;
@@ -1800,7 +1800,7 @@ export class WalletController {
     contract: string;
     function: string;
     kwargs: Record<string, unknown>;
-    stamps?: number;
+    chi?: number;
   }): Promise<unknown> {
     const state = this.requireStoredWallet(await this.loadWalletState());
     await this.getUnlockedSigner();
@@ -1808,7 +1808,7 @@ export class WalletController {
       contract: intent.contract,
       function: intent.function,
       kwargs: intent.kwargs,
-      stamps: intent.stamps
+      chi: intent.chi
     });
     return this.sendPreparedTransaction(state, tx, { mode: "commit" });
   }

@@ -158,10 +158,10 @@ let sendContract = "";
 let sendFunction = "";
 let sendArgs: TxArg[] = [];
 let sendEstimateMode = true;
-let sendManualStamps = "";
+let sendManualChi = "";
 let sendParsedKwargs: Record<string, unknown> | null = null;
 let sendEstimate: { estimated: number; suggested: number } | null = null;
-let sendStampRate: number | null = null;
+let sendChiRate: number | null = null;
 let sendResult: {
   submitted: boolean;
   accepted: boolean | null;
@@ -190,10 +190,10 @@ function resetSendState(): void {
   sendFunction = "";
   sendArgs = [];
   sendEstimateMode = true;
-  sendManualStamps = "";
+  sendManualChi = "";
   sendParsedKwargs = null;
   sendEstimate = null;
-  sendStampRate = null;
+  sendChiRate = null;
   sendResult = null;
   contractMethods = [];
   contractMethodsLoading = false;
@@ -204,10 +204,10 @@ function resetSendState(): void {
 function captureSendFormState(): void {
   const c = root.querySelector<HTMLInputElement>("#send-contract");
   const f = root.querySelector<HTMLSelectElement>("#send-function");
-  const s = root.querySelector<HTMLInputElement>("#send-stamps");
+  const s = root.querySelector<HTMLInputElement>("#send-chi");
   if (c) sendContract = c.value.trim();
   if (f) sendFunction = f.value;
-  if (s) sendManualStamps = s.value.trim();
+  if (s) sendManualChi = s.value.trim();
   for (const arg of sendArgs) {
     const row = root.querySelector<HTMLElement>(
       `[data-arg-id="${arg.id}"]`
@@ -1631,7 +1631,7 @@ let activityTxs: Array<{
   function: string;
   sender: string;
   success: boolean;
-  stamps_used: number;
+  chi_used: number;
   created_at: string;
   block_height: number;
 }> = [];
@@ -1683,7 +1683,7 @@ function renderActivityTab(state: PopupRuntimeState): string {
             <div class="s-card-body">
               <div class="s-row"><span class="s-row-key">Hash</span><span class="s-row-val mono" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeAttribute(tx.hash)}">${explorerBase ? `<a href="${escapeAttribute(explorerBase + tx.hash)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${escapeHtml(truncateHash(tx.hash))}</a>` : escapeHtml(truncateHash(tx.hash))}</span></div>
               <div class="s-row"><span class="s-row-key">Block</span><span class="s-row-val">${tx.block_height}</span></div>
-              <div class="s-row"><span class="s-row-key">Stamps</span><span class="s-row-val">${tx.stamps_used.toLocaleString()}</span></div>
+              <div class="s-row"><span class="s-row-key">Chi</span><span class="s-row-val">${tx.chi_used.toLocaleString()}</span></div>
               <div class="s-row"><span class="s-row-key">Time</span><span class="s-row-val">${escapeHtml(tx.created_at)}</span></div>
             </div>
           </div>
@@ -2169,22 +2169,22 @@ function renderSendDraft(): string {
       <div class="s-card">
         <div class="s-card-head">
           <div>
-            <h3 class="s-card-title">Stamps</h3>
+            <h3 class="s-card-title">Chi</h3>
             <p class="s-card-desc">Transaction cost budget.</p>
           </div>
         </div>
         <div class="s-card-body stack">
           <label class="inline-check">
-            <input type="radio" name="stamp-mode" value="estimate" ${sendEstimateMode ? "checked" : ""} data-stamp-mode="estimate" />
+            <input type="radio" name="chi-mode" value="estimate" ${sendEstimateMode ? "checked" : ""} data-chi-mode="estimate" />
             <span>Estimate automatically</span>
           </label>
           <label class="inline-check">
-            <input type="radio" name="stamp-mode" value="manual" ${!sendEstimateMode ? "checked" : ""} data-stamp-mode="manual" />
+            <input type="radio" name="chi-mode" value="manual" ${!sendEstimateMode ? "checked" : ""} data-chi-mode="manual" />
             <span>Set manually</span>
           </label>
           ${
             !sendEstimateMode
-              ? `<label>Stamp limit<input id="send-stamps" type="number" min="1" value="${escapeAttribute(sendManualStamps)}" placeholder="e.g. 50000" /></label>`
+              ? `<label>Chi limit<input id="send-chi" type="number" min="1" value="${escapeAttribute(sendManualChi)}" placeholder="e.g. 50000" /></label>`
               : ""
           }
         </div>
@@ -2197,11 +2197,11 @@ function renderSendDraft(): string {
 
 function renderSendReview(): string {
   const entries = sendParsedKwargs ? Object.entries(sendParsedKwargs) : [];
-  const stampsNum = sendEstimate
+  const chiNum = sendEstimate
     ? sendEstimate.estimated
-    : Number(sendManualStamps);
-  const xianCost = sendStampRate ? stampsNum / sendStampRate : null;
-  const stampsLabel = stampsNum.toLocaleString()
+    : Number(sendManualChi);
+  const xianCost = sendChiRate ? chiNum / sendChiRate : null;
+  const chiLabel = chiNum.toLocaleString()
     + (xianCost != null ? ` (~${xianCost.toLocaleString(undefined, { maximumFractionDigits: 8 })} XIAN)` : "");
 
   return `
@@ -2222,8 +2222,8 @@ function renderSendReview(): string {
             <span class="s-row-val">${escapeHtml(sendFunction)}</span>
           </div>
           <div class="s-row">
-            <span class="s-row-key">Stamps</span>
-            <span class="s-row-val">${escapeHtml(stampsLabel)}</span>
+            <span class="s-row-key">Chi</span>
+            <span class="s-row-val">${escapeHtml(chiLabel)}</span>
           </div>
           ${entries
             .map(
@@ -3442,11 +3442,11 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
   }
 
   for (const radio of root.querySelectorAll<HTMLInputElement>(
-    "[data-stamp-mode]"
+    "[data-chi-mode]"
   )) {
     radio.addEventListener("change", () => {
       captureSendFormState();
-      sendEstimateMode = radio.dataset.stampMode === "estimate";
+      sendEstimateMode = radio.dataset.chiMode === "estimate";
       render(state);
     });
   }
@@ -3466,14 +3466,14 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
 
       if (sendEstimateMode) {
         try {
-          [sendEstimate, sendStampRate] = await Promise.all([
+          [sendEstimate, sendChiRate] = await Promise.all([
             sendRuntimeMessage<{ estimated: number; suggested: number }>({
               type: "wallet_estimate_transaction",
               contract: sendContract,
               function: sendFunction,
               kwargs: sendParsedKwargs
             }),
-            sendRuntimeMessage<number | null>({ type: "wallet_get_stamp_rate" }),
+            sendRuntimeMessage<number | null>({ type: "wallet_get_chi_rate" }),
           ]);
           sendStep = "review";
           clearFlash();
@@ -3484,10 +3484,10 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         }
       } else {
         if (
-          !sendManualStamps ||
-          parseInt(sendManualStamps, 10) <= 0
+          !sendManualChi ||
+          parseInt(sendManualChi, 10) <= 0
         ) {
-          setFlash("Enter a valid stamp limit.", "warning");
+          setFlash("Enter a valid chi limit.", "warning");
           render(state);
           return;
         }
@@ -3516,10 +3516,10 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       sendStep = "sending";
       render(state);
 
-      const stamps =
+      const chi =
         sendEstimateMode && sendEstimate
           ? sendEstimate.estimated
-          : parseInt(sendManualStamps, 10) || undefined;
+          : parseInt(sendManualChi, 10) || undefined;
 
       try {
         sendResult = await sendRuntimeMessage<
@@ -3529,7 +3529,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           contract: sendContract,
           function: sendFunction,
           kwargs: sendParsedKwargs,
-          stamps
+          chi
         });
         sendStep = "result";
         const ok =
@@ -3720,14 +3720,14 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       }, 15000);
 
       try {
-        [sendEstimate, sendStampRate] = await Promise.all([
+        [sendEstimate, sendChiRate] = await Promise.all([
           sendRuntimeMessage<{ estimated: number; suggested: number }>({
             type: "wallet_estimate_transaction",
             contract: sendContract,
             function: sendFunction,
             kwargs: sendParsedKwargs
           }),
-          sendRuntimeMessage<number | null>({ type: "wallet_get_stamp_rate" }),
+          sendRuntimeMessage<number | null>({ type: "wallet_get_chi_rate" }),
         ]);
         clearTimeout(timeout);
         sendStep = "review";

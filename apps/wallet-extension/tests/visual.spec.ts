@@ -90,7 +90,7 @@ test("captures popup and approval visuals for the wallet extension", async ({}, 
                 to: "bob",
                 amount: "5"
               },
-              stamps: 500
+              chi: 500
             }
           }
         ]

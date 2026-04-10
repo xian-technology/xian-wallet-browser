@@ -174,8 +174,8 @@ export interface WalletEstimateTransactionRuntimeMessage {
   kwargs: Record<string, unknown>;
 }
 
-export interface WalletGetStampRateRuntimeMessage {
-  type: "wallet_get_stamp_rate";
+export interface WalletGetChiRateRuntimeMessage {
+  type: "wallet_get_chi_rate";
 }
 
 export interface WalletSendDirectTransactionRuntimeMessage {
@@ -183,7 +183,7 @@ export interface WalletSendDirectTransactionRuntimeMessage {
   contract: string;
   function: string;
   kwargs: Record<string, unknown>;
-  stamps?: number;
+  chi?: number;
 }
 
 export interface WalletGetContractMethodsRuntimeMessage {
@@ -318,7 +318,7 @@ export type RuntimeMessage =
   | WalletUpdateAssetsRuntimeMessage
   | WalletUpdateAssetDecimalsRuntimeMessage
   | WalletEstimateTransactionRuntimeMessage
-  | WalletGetStampRateRuntimeMessage
+  | WalletGetChiRateRuntimeMessage
   | WalletSendDirectTransactionRuntimeMessage
   | WalletGetContractMethodsRuntimeMessage
   | WalletAddAccountRuntimeMessage

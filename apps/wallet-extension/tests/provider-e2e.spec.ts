@@ -213,7 +213,7 @@ test("approves connect and send-call requests through the injected provider brid
               to: "bob",
               amount: "5"
             },
-            stamps: 500
+            chi: 500
           }
         }
       ]
@@ -230,7 +230,7 @@ test("approves connect and send-call requests through the injected provider brid
         accepted: true,
         txHash: "ABC123",
         nonce: 12,
-        stampsSupplied: 500
+        chiSupplied: 500
       })
     });
 

@@ -210,7 +210,7 @@ export function buildApprovalView(
           kind: approval.kind,
           title: "Sign prepared transaction",
           description:
-            "The site already prepared a full transaction payload. Verify the sender, target contract, function, and stamp budget before signing.",
+            "The site already prepared a full transaction payload. Verify the sender, target contract, function, and chi budget before signing.",
           approveLabel: "Sign transaction",
           details: compactDetails([
             compactDetail("Sender", txPayload.sender, { monospace: true }),
@@ -218,7 +218,7 @@ export function buildApprovalView(
             compactDetail("Function", txPayload.function),
             compactDetail("Network", txPayload.chain_id ?? options?.chainId),
             compactDetail("Nonce", txPayload.nonce),
-            compactDetail("Stamps", txPayload.stamps_supplied)
+            compactDetail("Chi", txPayload.chi_supplied)
           ]),
           highlights: [
             `${stringifyValue(txPayload.contract ?? "unknown")}.${stringifyValue(
@@ -252,7 +252,7 @@ export function buildApprovalView(
             compactDetail("Function", txPayload.function),
             compactDetail("Network", txPayload.chain_id ?? options?.chainId),
             compactDetail("Nonce", txPayload.nonce),
-            compactDetail("Stamps", txPayload.stamps_supplied, {
+            compactDetail("Chi", txPayload.chi_supplied, {
               tone: "warning"
             })
           ]),
@@ -289,8 +289,8 @@ export function buildApprovalView(
             compactDetail("Function", intent.function),
             compactDetail("Network", intent.chainId ?? options?.chainId),
             compactDetail(
-              "Stamps",
-              intent.stampsSupplied ?? intent.stamps,
+              "Chi",
+              intent.chiSupplied ?? intent.chi,
               { tone: "warning" }
             ),
             compactDetail(

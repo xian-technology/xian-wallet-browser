@@ -33,7 +33,7 @@ screen.
 
 - Trigger a `xian_sendCall` or transaction approval against a mock/devnet RPC.
 - Confirm the summary highlights contract, function, destination, amount, and
-  stamp budget before the raw payload.
+  chi budget before the raw payload.
 - Confirm the approve and reject buttons are unambiguous.
 
 ### 4. Permission management

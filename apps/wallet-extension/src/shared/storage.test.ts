@@ -141,7 +141,7 @@ describe("wallet-extension storage", () => {
               contract: "currency",
               function: "transfer",
               kwargs: { amount: 5n },
-              stamps: 500n
+              chi: 500n
             }
           }
         ]
@@ -152,7 +152,7 @@ describe("wallet-extension storage", () => {
       result: {
         payload: {
           nonce: 7n,
-          stamps_supplied: 500n
+          chi_supplied: 500n
         }
       }
     });
@@ -190,14 +190,14 @@ describe("wallet-extension storage", () => {
           contract: "currency",
           function: "transfer",
           kwargs: { amount: 5n },
-          stamps: 500n
+          chi: 500n
         }
       }
     ]);
     expect(request?.result).toEqual({
       payload: {
         nonce: 7n,
-        stamps_supplied: 500n
+        chi_supplied: 500n
       }
     });
     expect(approval?.windowId).toBe(42);

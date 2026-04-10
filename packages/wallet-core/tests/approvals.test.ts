@@ -53,7 +53,7 @@ describe("@xian-tech/wallet-core approvals", () => {
                 to: "bob",
                 amount: "5"
               },
-              stamps: 500
+              chi: 500
             }
           }
         ]

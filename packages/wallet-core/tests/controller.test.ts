@@ -139,7 +139,7 @@ function createClient(): WalletNetworkClient {
       limit: 5,
       afterNoteIndex: 0
     })),
-    estimateStamps: vi.fn(async () => ({
+    estimateChi: vi.fn(async () => ({
       estimated: 12_000,
       suggested: 14_400
     })),
@@ -152,7 +152,7 @@ function createClient(): WalletNetworkClient {
         kwargs: intent.kwargs,
         nonce: 7,
         sender: intent.sender,
-        stamps_supplied: intent.stampsSupplied ?? intent.stamps ?? 50_000
+        chi_supplied: intent.chiSupplied ?? intent.chi ?? 50_000
       }
     })),
     signTx: vi.fn(async (tx) => ({
@@ -169,7 +169,7 @@ function createClient(): WalletNetworkClient {
         txHash: "ABC123",
         mode: "checktx",
         nonce: tx.payload.nonce,
-        stampsSupplied: tx.payload.stamps_supplied,
+        chiSupplied: tx.payload.chi_supplied,
         response: {}
       })
     )
@@ -293,7 +293,7 @@ describe("@xian-tech/wallet-core controller", () => {
             contract: "currency",
             function: "transfer",
             kwargs: { to: "bob", amount: "5" },
-            stamps: 500
+            chi: 500
           }
         }
       ]
@@ -333,7 +333,7 @@ describe("@xian-tech/wallet-core controller", () => {
         function: "transfer",
         kwargs: { to: "bob", amount: "5" },
         chainId: "xian-local",
-        stamps: 500
+        chi: 500
       })
     );
     expect(client.signTx).toHaveBeenCalledWith(
@@ -621,7 +621,7 @@ describe("@xian-tech/wallet-core controller", () => {
           logoUrl: null,
           logoSvg: null
         })),
-        estimateStamps: vi.fn(async () => ({
+        estimateChi: vi.fn(async () => ({
           estimated: 12_000,
           suggested: 14_400
         })),
@@ -634,7 +634,7 @@ describe("@xian-tech/wallet-core controller", () => {
             kwargs: intent.kwargs,
             nonce: 7,
             sender: intent.sender,
-            stamps_supplied: intent.stampsSupplied ?? intent.stamps ?? 50_000
+            chi_supplied: intent.chiSupplied ?? intent.chi ?? 50_000
           }
         })),
         signTx: vi.fn(async (tx) => ({
@@ -648,7 +648,7 @@ describe("@xian-tech/wallet-core controller", () => {
           txHash: "ABC123",
           mode: "checktx",
           nonce: tx.payload.nonce,
-          stampsSupplied: tx.payload.stamps_supplied,
+          chiSupplied: tx.payload.chi_supplied,
           response: {}
         }))
       }),

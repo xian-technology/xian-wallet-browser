@@ -279,21 +279,21 @@ chrome.runtime.onMessage.addListener(
             sendResponse(ok(await controller.updateWatchedAssetDecimals(message.contract, message.decimals)));
             return;
           case "wallet_estimate_transaction":
-            sendResponse(ok(await controller.estimateTransactionStamps({
+            sendResponse(ok(await controller.estimateTransactionChi({
               contract: message.contract,
               function: message.function,
               kwargs: message.kwargs
             })));
             return;
-          case "wallet_get_stamp_rate":
-            sendResponse(ok(await controller.getStampRate()));
+          case "wallet_get_chi_rate":
+            sendResponse(ok(await controller.getChiRate()));
             return;
           case "wallet_send_direct_transaction":
             sendResponse(ok(await controller.sendDirectTransaction({
               contract: message.contract,
               function: message.function,
               kwargs: message.kwargs,
-              stamps: message.stamps
+              chi: message.chi
             })));
             return;
           case "wallet_get_contract_methods":
