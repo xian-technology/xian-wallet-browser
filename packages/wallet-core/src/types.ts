@@ -26,6 +26,7 @@ export interface StoredShieldedWalletSnapshot {
   id: string;
   label: string;
   assetId: string;
+  syncHint: string;
   encryptedStateSnapshot: string;
   noteCount: number;
   commitmentCount: number;
@@ -37,10 +38,31 @@ export interface ShieldedWalletSnapshotSummary {
   id: string;
   label: string;
   assetId: string;
+  syncHint: string;
   noteCount: number;
   commitmentCount: number;
   lastScannedIndex: number;
   updatedAt: string;
+}
+
+export interface ShieldedWalletHistoryEntry {
+  txHash: string | null;
+  blockHeight: number | bigint | null;
+  function: string | null;
+  action: string | null;
+  noteIndex: number | bigint | null;
+  commitment: string | null;
+  hasPayload: boolean;
+  createdAt: string | null;
+}
+
+export interface ShieldedWalletHistoryStatus {
+  snapshotId: string;
+  label: string;
+  available: boolean;
+  hasNewerIndexedHistory: boolean;
+  checkedAfterNoteIndex: number;
+  newItems: ShieldedWalletHistoryEntry[];
 }
 
 export interface StoredWalletState {

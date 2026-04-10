@@ -1,4 +1,9 @@
-import { Ed25519Signer, XianClient } from "@xian-tech/client";
+import {
+  Ed25519Signer,
+  shieldedSyncHintFromViewingPrivateKey,
+  type XianShieldedWalletHistoryResult,
+  XianClient
+} from "@xian-tech/client";
 import {
   ProviderChainMismatchError,
   ProviderUnauthorizedError,
@@ -45,6 +50,7 @@ import type {
   PopupState,
   ProviderRequestStartResult,
   ProviderRequestStatusResult,
+  ShieldedWalletHistoryStatus,
   ShieldedWalletSnapshotSummary,
   StoredProviderRequest,
   StoredShieldedWalletSnapshot,
@@ -98,6 +104,14 @@ export interface WalletNetworkClient {
     symbol: string | null;
     logoUrl: string | null;
   }>;
+  getShieldedWalletHistory?(
+    tagValue: string,
+    options?: {
+      kind?: string;
+      limit?: number;
+      afterNoteIndex?: number;
+    }
+  ): Promise<XianShieldedWalletHistoryResult>;
   estimateStamps(request: {
     sender: string;
     contract: string;
@@ -319,6 +333,7 @@ function normalizeStoredWalletNetworks(state: StoredWalletState): StoredWalletSt
 interface ParsedShieldedWalletSnapshot {
   normalizedSnapshot: string;
   assetId: string;
+  syncHint: string;
   noteCount: number;
   commitmentCount: number;
   lastScannedIndex: number;
@@ -379,6 +394,7 @@ function parseShieldedWalletSnapshot(
   return {
     normalizedSnapshot: JSON.stringify(record),
     assetId,
+    syncHint: shieldedSyncHintFromViewingPrivateKey(record.viewing_private_key),
     noteCount: notes.length,
     commitmentCount: commitments.length,
     lastScannedIndex,
@@ -392,6 +408,7 @@ function shieldedWalletSnapshotSummary(
     id: record.id,
     label: record.label,
     assetId: record.assetId,
+    syncHint: record.syncHint,
     noteCount: record.noteCount,
     commitmentCount: record.commitmentCount,
     lastScannedIndex: record.lastScannedIndex,
@@ -652,6 +669,7 @@ export class WalletController {
         id: this.createId(),
         label: trimOptionalString(item.label) ?? parsed.assetId,
         assetId: parsed.assetId,
+        syncHint: parsed.syncHint,
         encryptedStateSnapshot: await encryptSecretTextWithSessionKey(
           parsed.normalizedSnapshot,
           sessionKey
@@ -2046,6 +2064,7 @@ export class WalletController {
       id: existing?.id ?? this.createId(),
       label: resolvedLabel,
       assetId: parsed.assetId,
+      syncHint: parsed.syncHint,
       encryptedStateSnapshot: await encryptSecretTextWithSessionKey(
         parsed.normalizedSnapshot,
         sessionKey
@@ -2098,6 +2117,55 @@ export class WalletController {
     state.shieldedWalletSnapshots = nextSnapshots;
     await this.persistWalletState(state);
     return this.getPopupState();
+  }
+
+  async getShieldedWalletSnapshotHistory(
+    snapshotId: string,
+    limit: number = 5
+  ): Promise<ShieldedWalletHistoryStatus> {
+    const state = this.requireStoredWallet(await this.loadWalletState());
+    const record = this.storedShieldedWalletSnapshots(state).find(
+      (item) => item.id === snapshotId
+    );
+    if (!record) {
+      throw new Error("shielded wallet snapshot not found");
+    }
+
+    const client = this.currentClient(state);
+    if (typeof client.getShieldedWalletHistory !== "function") {
+      return {
+        snapshotId: record.id,
+        label: record.label,
+        available: false,
+        hasNewerIndexedHistory: false,
+        checkedAfterNoteIndex: record.lastScannedIndex,
+        newItems: [],
+      };
+    }
+
+    const history = await client.getShieldedWalletHistory(record.syncHint, {
+      kind: "sync_hint",
+      limit: Math.max(1, Math.min(Math.trunc(limit), 10)),
+      afterNoteIndex: record.lastScannedIndex,
+    });
+
+    return {
+      snapshotId: record.id,
+      label: record.label,
+      available: history.available,
+      hasNewerIndexedHistory: history.items.length > 0,
+      checkedAfterNoteIndex: record.lastScannedIndex,
+      newItems: history.items.map((item) => ({
+        txHash: item.txHash,
+        blockHeight: item.blockHeight,
+        function: item.function,
+        action: item.action,
+        noteIndex: item.noteIndex,
+        commitment: item.commitment,
+        hasPayload: item.outputPayload != null && item.outputPayload !== "",
+        createdAt: item.createdAt,
+      })),
+    };
   }
 
   async addAccount(): Promise<PopupState> {

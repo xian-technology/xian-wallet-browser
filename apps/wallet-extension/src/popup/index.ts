@@ -11,6 +11,7 @@ import {
   type PopupRuntimeState,
   popupStateBanner,
   sendRuntimeMessage,
+  type ShieldedSnapshotHistoryRuntimeResult,
   type WalletCreateRuntimeResult
 } from "../shared/messages";
 import {
@@ -106,6 +107,12 @@ let autoLockEnabled = DEFAULT_AUTO_LOCK;
 let balanceWatchClient: XianClient | null = null;
 let balanceWatchClientKey: string | null = null;
 const balanceSubscriptions = new Map<string, WatchSubscription>();
+const shieldedHistoryStatus = new Map<
+  string,
+  | { loading: true }
+  | { loading: false; status: ShieldedSnapshotHistoryRuntimeResult }
+  | { loading: false; error: string }
+>();
 
 /* ── Send tab state ────────────────────────────────────────── */
 
@@ -661,6 +668,14 @@ async function refresh(nextFlash?: FlashMessage | null): Promise<void> {
   currentState = await sendRuntimeMessage<PopupRuntimeState>({
     type: "wallet_get_popup_state"
   });
+  const activeSnapshotIds = new Set(
+    currentState.shieldedWalletSnapshots.map((snapshot) => snapshot.id)
+  );
+  for (const snapshotId of shieldedHistoryStatus.keys()) {
+    if (!activeSnapshotIds.has(snapshotId)) {
+      shieldedHistoryStatus.delete(snapshotId);
+    }
+  }
 
   if (currentState.unlocked && !contactsLoaded) {
     contacts = await sendRuntimeMessage<Contact[]>({ type: "contacts_get" });
@@ -2198,6 +2213,67 @@ function renderSendResult(state: PopupRuntimeState): string {
 function renderShieldedSnapshotItem(
   snapshot: PopupRuntimeState["shieldedWalletSnapshots"][number]
 ): string {
+  const historyState = shieldedHistoryStatus.get(snapshot.id);
+  let historyHtml = `
+    <div class="muted text-sm" style="margin-top: 8px">
+      Seed-only recovery still depends on indexed shielded history being available somewhere.
+    </div>
+  `;
+  if (historyState?.loading) {
+    historyHtml = `
+      <div class="muted text-sm" style="margin-top: 8px">
+        Checking indexed history after note ${snapshot.lastScannedIndex}...
+      </div>
+    `;
+  } else if (historyState && "error" in historyState) {
+    historyHtml = `
+      <div class="banner banner-warning" style="margin-top: 8px">
+        ${escapeHtml(historyState.error)}
+      </div>
+    `;
+  } else if (historyState && "status" in historyState) {
+    if (!historyState.status.available) {
+      historyHtml = `
+        <div class="banner banner-warning" style="margin-top: 8px">
+          Indexed shielded history is not available from the current RPC/BDS path right now.
+        </div>
+      `;
+    } else if (!historyState.status.hasNewerIndexedHistory) {
+      historyHtml = `
+        <div class="banner banner-info" style="margin-top: 8px">
+          Indexed history is available and no newer notes were found after this snapshot.
+        </div>
+      `;
+    } else {
+      historyHtml = `
+        <div class="banner banner-warning" style="margin-top: 8px">
+          Indexed history shows newer notes after this snapshot. Refresh your shielded wallet state before spending.
+        </div>
+        <div class="stack" style="margin-top: 8px">
+          ${historyState.status.newItems
+            .map(
+              (item) => `
+                <div class="s-row" style="align-items: flex-start">
+                  <div style="flex: 1; min-width: 0">
+                    <div class="text-sm" style="font-weight: 600">
+                      ${escapeHtml(item.action ?? item.function ?? "shielded output")} · note ${escapeHtml(String(item.noteIndex ?? "?"))}
+                    </div>
+                    <div class="muted text-sm mono" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
+                      ${escapeHtml(item.commitment ?? item.txHash ?? "")}
+                    </div>
+                    <div class="muted text-sm">
+                      ${escapeHtml(item.createdAt ?? "timestamp unavailable")} · payload ${item.hasPayload ? "present" : "missing"}
+                    </div>
+                  </div>
+                </div>
+              `
+            )
+            .join("")}
+        </div>
+      `;
+    }
+  }
+
   return `
     <div class="s-row" style="align-items: flex-start; gap: 12px">
       <div style="flex: 1; min-width: 0">
@@ -2206,8 +2282,10 @@ function renderShieldedSnapshotItem(
         <div class="muted text-sm">
           ${snapshot.noteCount} notes · ${snapshot.commitmentCount} commitments · scanned ${snapshot.lastScannedIndex}
         </div>
+        ${historyHtml}
       </div>
       <div style="display: flex; gap: 8px; flex-shrink: 0">
+        <button class="ghost-sm" data-check-shielded-history="${escapeAttribute(snapshot.id)}">Check history</button>
         <button class="ghost-sm" data-export-shielded-snapshot="${escapeAttribute(snapshot.id)}">Export</button>
         <button class="ghost-sm" data-remove-shielded-snapshot="${escapeAttribute(snapshot.id)}">Remove</button>
       </div>
@@ -4138,6 +4216,35 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     });
   }
 
+  for (const button of root.querySelectorAll<HTMLElement>("[data-check-shielded-history]")) {
+    button.addEventListener("click", async () => {
+      const snapshotId = button.dataset.checkShieldedHistory;
+      if (!snapshotId) {
+        return;
+      }
+      shieldedHistoryStatus.set(snapshotId, { loading: true });
+      render(state);
+      try {
+        const status =
+          await sendRuntimeMessage<ShieldedSnapshotHistoryRuntimeResult>({
+            type: "wallet_get_shielded_snapshot_history",
+            snapshotId,
+            limit: 5,
+          });
+        shieldedHistoryStatus.set(snapshotId, {
+          loading: false,
+          status,
+        });
+      } catch (error) {
+        shieldedHistoryStatus.set(snapshotId, {
+          loading: false,
+          error: formatError(error),
+        });
+      }
+      render(state);
+    });
+  }
+
   for (const button of root.querySelectorAll<HTMLElement>("[data-remove-shielded-snapshot]")) {
     button.addEventListener("click", async () => {
       const snapshotId = button.dataset.removeShieldedSnapshot;
@@ -4145,6 +4252,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         return;
       }
       try {
+        shieldedHistoryStatus.delete(snapshotId);
         await sendRuntimeMessage<PopupState>({
           type: "wallet_remove_shielded_snapshot",
           snapshotId,

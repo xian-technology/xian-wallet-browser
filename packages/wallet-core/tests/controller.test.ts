@@ -132,6 +132,12 @@ function createClient(): WalletNetworkClient {
       symbol: contract === "currency" ? "XIAN" : "EXP",
       logoUrl: null
     })),
+    getShieldedWalletHistory: vi.fn(async () => ({
+      available: true,
+      items: [],
+      limit: 5,
+      afterNoteIndex: 0
+    })),
     estimateStamps: vi.fn(async () => ({
       estimated: 12_000,
       suggested: 14_400
@@ -1204,6 +1210,80 @@ describe("@xian-tech/wallet-core controller", () => {
         "imported-snapshot-1"
       );
     expect(afterRemoval.shieldedWalletSnapshots).toEqual([]);
+  });
+
+  it("surfaces whether indexed shielded history has advanced past a stored snapshot", async () => {
+    const store = createStore();
+    const client = createClient();
+    client.getShieldedWalletHistory = vi.fn(async () => ({
+      available: true,
+      items: [
+        {
+          eventId: 10,
+          txHash: "TX-1",
+          blockHeight: 12,
+          txIndex: 0,
+          contract: "con_private",
+          function: "transfer_shielded",
+          action: "transfer",
+          outputIndex: 0,
+          noteIndex: 1,
+          commitment: "0xabc",
+          newRoot: "0xroot",
+          payloadHash: "0xhash",
+          tagKind: "sync_hint",
+          tagValue: "0xtag",
+          outputPayload: "0xpayload",
+          createdAt: "2026-04-10T12:00:00Z",
+          raw: {}
+        }
+      ],
+      limit: 3,
+      afterNoteIndex: 0
+    }));
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined),
+      createId: vi.fn(() => "snapshot-1")
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+    await controller.saveShieldedWalletSnapshot(
+      SHIELDED_STATE_SNAPSHOT,
+      "Treasury shielded"
+    );
+
+    await expect(
+      controller.getShieldedWalletSnapshotHistory("snapshot-1", 3)
+    ).resolves.toEqual({
+      snapshotId: "snapshot-1",
+      label: "Treasury shielded",
+      available: true,
+      hasNewerIndexedHistory: true,
+      checkedAfterNoteIndex: 0,
+      newItems: [
+        {
+          txHash: "TX-1",
+          blockHeight: 12,
+          function: "transfer_shielded",
+          action: "transfer",
+          noteIndex: 1,
+          commitment: "0xabc",
+          hasPayload: true,
+          createdAt: "2026-04-10T12:00:00Z"
+        }
+      ]
+    });
   });
 
   it("re-syncs the unlocked signer when the active account is removed", async () => {

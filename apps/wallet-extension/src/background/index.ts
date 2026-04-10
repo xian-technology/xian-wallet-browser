@@ -387,6 +387,16 @@ chrome.runtime.onMessage.addListener(
               )
             );
             return;
+          case "wallet_get_shielded_snapshot_history":
+            sendResponse(
+              ok(
+                await controller.getShieldedWalletSnapshotHistory(
+                  message.snapshotId,
+                  message.limit
+                )
+              )
+            );
+            return;
           case "wallet_reveal_mnemonic":
             sendResponse(ok(await controller.revealMnemonic(message.password)));
             return;
