@@ -92,7 +92,12 @@ let networkDraft: NetworkDraft | null = null;
 let balancesLoading = false;
 let balanceGeneration = 0;
 let selectedAsset: string | null = null;
-let tokenMeta: { name: string | null; symbol: string | null; logoUrl: string | null } | null = null;
+let tokenMeta: {
+  name: string | null;
+  symbol: string | null;
+  logoUrl: string | null;
+  logoSvg: string | null;
+} | null = null;
 let tokenMetaLoading = false;
 let tokenMetaGeneration = 0;
 let showReceive = false;
@@ -358,6 +363,58 @@ function assetColor(key: string): string {
   }
   const hue = Math.abs(hash) % 360;
   return `hsl(${hue}, 45%, 35%)`;
+}
+
+function tokenIconSource(icon: string | null | undefined): string | null {
+  const trimmed = typeof icon === "string" ? icon.trim() : "";
+  if (!trimmed) {
+    return null;
+  }
+  if (/^<svg[\s>]/i.test(trimmed) || /^<\?xml/i.test(trimmed)) {
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(trimmed)}`;
+  }
+  return trimmed;
+}
+
+function renderTokenIcon(options: {
+  contract: string;
+  symbol: string;
+  icon?: string | null;
+  className?: string;
+  size?: number;
+  fontSize?: number;
+  background?: string;
+  style?: string;
+}): string {
+  const symbol = options.symbol || options.contract.slice(0, 6);
+  const letter = symbol.charAt(0).toUpperCase();
+  const size = options.size ?? 36;
+  const fontSize = options.fontSize ?? 14;
+  const className = options.className ?? "token-icon";
+  const src = tokenIconSource(options.icon);
+  const styleParts = [`width: ${size}px`, `height: ${size}px`, `font-size: ${fontSize}px`];
+
+  if (!src) {
+    styleParts.push(`background: ${options.background ?? assetColor(options.contract)}`);
+  }
+  if (options.style) {
+    styleParts.push(options.style);
+  }
+
+  const style = escapeAttribute(styleParts.join("; "));
+  if (src) {
+    return `
+      <div class="${className}" style="${style}">
+        <img src="${escapeAttribute(src)}" alt="" width="${size}" height="${size}" />
+      </div>
+    `;
+  }
+
+  return `
+    <div class="${className}" style="${style}">
+      ${escapeHtml(letter)}
+    </div>
+  `;
 }
 
 function isValidXianAddress(addr: string): boolean {
@@ -775,6 +832,7 @@ async function fetchTokenMeta(contract: string): Promise<void> {
       name: string | null;
       symbol: string | null;
       logoUrl: string | null;
+      logoSvg: string | null;
     }>({
       type: "wallet_get_token_metadata",
       contract
@@ -1307,7 +1365,6 @@ function formatBalance(
 
 function renderAssetItem(asset: DisplayedAsset, state: PopupRuntimeState): string {
   const symbol = asset.symbol ?? asset.contract.slice(0, 6);
-  const letter = symbol.charAt(0).toUpperCase();
   const color =
     asset.contract === "currency"
       ? "var(--accent-dim)"
@@ -1325,7 +1382,12 @@ function renderAssetItem(asset: DisplayedAsset, state: PopupRuntimeState): strin
 
   return `
     <div class="token-item" data-select-token="${escapeAttribute(asset.contract)}">
-      <div class="token-icon" style="background: ${color}">${escapeHtml(letter)}</div>
+      ${renderTokenIcon({
+        contract: asset.contract,
+        symbol,
+        icon: asset.icon ?? null,
+        background: color
+      })}
       <div class="token-body">
         <div class="token-name">${escapeHtml(symbol)}</div>
         <div class="token-sub">${escapeHtml(asset.name ?? asset.contract)}</div>
@@ -1342,16 +1404,31 @@ function renderAssetItem(asset: DisplayedAsset, state: PopupRuntimeState): strin
   `;
 }
 
-function renderManageAssetRow(asset: { contract: string; name?: string; symbol?: string; hidden?: boolean }, index: number): string {
+function renderManageAssetRow(
+  asset: {
+    contract: string;
+    name?: string;
+    symbol?: string;
+    icon?: string;
+    hidden?: boolean;
+  },
+  index: number
+): string {
   const symbol = asset.symbol ?? asset.contract.slice(0, 6);
-  const letter = symbol.charAt(0).toUpperCase();
   const color = asset.contract === "currency" ? "var(--accent-dim)" : assetColor(asset.contract);
   const isHidden = asset.hidden === true;
 
   return `
     <div class="manage-asset-row ${isHidden ? "is-hidden" : ""}" draggable="true" data-drag-contract="${escapeAttribute(asset.contract)}" data-drag-index="${index}">
       <span class="drag-handle">${ICONS.grip}</span>
-      <div class="token-icon" style="background: ${color}; width: 28px; height: 28px; font-size: 12px">${escapeHtml(letter)}</div>
+      ${renderTokenIcon({
+        contract: asset.contract,
+        symbol,
+        icon: asset.icon ?? null,
+        background: color,
+        size: 28,
+        fontSize: 12
+      })}
       <div class="token-body" style="flex: 1; min-width: 0">
         <div class="token-name">${escapeHtml(symbol)}</div>
         <div class="token-sub">${escapeHtml(asset.name ?? asset.contract)}</div>
@@ -1371,11 +1448,15 @@ function renderTokenDetail(state: PopupRuntimeState): string {
   }
 
   const symbol = asset.symbol ?? asset.contract.slice(0, 6);
-  const letter = symbol.charAt(0).toUpperCase();
   const color =
     asset.contract === "currency"
       ? "var(--accent-dim)"
       : assetColor(asset.contract);
+  const detailIcon =
+    asset.icon ??
+    tokenMeta?.logoUrl ??
+    tokenMeta?.logoSvg ??
+    null;
   const isPinned = asset.contract === "currency";
   const tracked = selectedAssetIsTracked(state);
   const rawBalance = assetRawBalance(asset, state);
@@ -1393,18 +1474,21 @@ function renderTokenDetail(state: PopupRuntimeState): string {
     ? `
         <div class="s-row"><span class="s-row-key">Token name</span><span class="s-row-val"><span class="skeleton">Loading</span></span></div>
         <div class="s-row"><span class="s-row-key">Symbol</span><span class="s-row-val"><span class="skeleton">Loading</span></span></div>
-        <div class="s-row"><span class="s-row-key">Logo</span><span class="s-row-val"><span class="skeleton">Loading</span></span></div>
+        <div class="s-row"><span class="s-row-key">Logo URL</span><span class="s-row-val"><span class="skeleton">Loading</span></span></div>
+        <div class="s-row"><span class="s-row-key">On-chain SVG</span><span class="s-row-val"><span class="skeleton">Loading</span></span></div>
       `
     : tokenMeta
       ? `
           <div class="s-row"><span class="s-row-key">Token name</span><span class="s-row-val">${escapeHtml(tokenMeta.name ?? "—")}</span></div>
           <div class="s-row"><span class="s-row-key">Symbol</span><span class="s-row-val">${escapeHtml(tokenMeta.symbol ?? "—")}</span></div>
-          <div class="s-row"><span class="s-row-key">Logo</span><span class="s-row-val mono">${escapeHtml(tokenMeta.logoUrl ?? "—")}</span></div>
+          <div class="s-row"><span class="s-row-key">Logo URL</span><span class="s-row-val mono">${escapeHtml(tokenMeta.logoUrl ?? "—")}</span></div>
+          <div class="s-row"><span class="s-row-key">On-chain SVG</span><span class="s-row-val">${tokenMeta.logoSvg ? "Available" : "—"}</span></div>
         `
       : `
           <div class="s-row"><span class="s-row-key">Token name</span><span class="s-row-val muted">Unavailable</span></div>
           <div class="s-row"><span class="s-row-key">Symbol</span><span class="s-row-val muted">Unavailable</span></div>
-          <div class="s-row"><span class="s-row-key">Logo</span><span class="s-row-val muted">Unavailable</span></div>
+          <div class="s-row"><span class="s-row-key">Logo URL</span><span class="s-row-val muted">Unavailable</span></div>
+          <div class="s-row"><span class="s-row-key">On-chain SVG</span><span class="s-row-val muted">Unavailable</span></div>
         `;
 
   return `
@@ -1414,9 +1498,15 @@ function renderTokenDetail(state: PopupRuntimeState): string {
       </button>
 
       <div class="token-detail-hero">
-        <div class="token-icon" style="width: 48px; height: 48px; font-size: 20px; background: ${color}; margin: 0 auto">
-          ${escapeHtml(letter)}
-        </div>
+        ${renderTokenIcon({
+          contract: asset.contract,
+          symbol,
+          icon: detailIcon,
+          background: color,
+          size: 48,
+          fontSize: 20,
+          style: "margin: 0 auto"
+        })}
         <div class="token-detail-symbol">${escapeHtml(symbol)}</div>
         <div class="token-detail-name">${escapeHtml(asset.name ?? asset.contract)}</div>
         <div class="token-detail-balance">${balanceHtml}</div>
@@ -1769,7 +1859,6 @@ function renderSimpleSend(state: PopupRuntimeState): string {
 
   const selectedAssetObj = state.watchedAssets.find((a) => a.contract === simpleToken);
   const tokenSymbol = selectedAssetObj?.symbol ?? simpleToken.slice(0, 6).toUpperCase();
-  const tokenLetter = tokenSymbol.charAt(0).toUpperCase();
   const tokenBalance = state.assetBalances[simpleToken] ?? "0";
   const displayBalance = formatSimpleBalance(tokenBalance);
   const tokenColor = simpleToken === "currency" ? "var(--accent-dim)" : assetColor(simpleToken);
@@ -1788,7 +1877,15 @@ function renderSimpleSend(state: PopupRuntimeState): string {
           <label>
             Token
             <button type="button" class="token-chooser" data-toggle-token-picker>
-              <span class="token-chooser-icon" style="background: ${tokenColor}">${escapeHtml(tokenLetter)}</span>
+              ${renderTokenIcon({
+                contract: simpleToken,
+                symbol: tokenSymbol,
+                icon: selectedAssetObj?.icon ?? null,
+                className: "token-chooser-icon",
+                background: tokenColor,
+                size: 28,
+                fontSize: 13
+              })}
               <span class="token-chooser-info">
                 <span class="token-chooser-sym">${escapeHtml(tokenSymbol)}</span>
                 <span class="token-chooser-name">${escapeHtml(selectedAssetObj?.name ?? simpleToken)}</span>
@@ -1801,12 +1898,19 @@ function renderSimpleSend(state: PopupRuntimeState): string {
             <div class="token-picker-list">
               ${visibleTokens.map((a) => {
                 const s = a.symbol ?? a.contract.slice(0, 6);
-                const l = s.charAt(0).toUpperCase();
                 const c = a.contract === "currency" ? "var(--accent-dim)" : assetColor(a.contract);
                 const active = a.contract === simpleToken;
                 return `
                   <button type="button" class="token-picker-item ${active ? "is-active" : ""}" data-pick-token="${escapeAttribute(a.contract)}">
-                    <span class="token-chooser-icon" style="background: ${c}">${escapeHtml(l)}</span>
+                    ${renderTokenIcon({
+                      contract: a.contract,
+                      symbol: s,
+                      icon: a.icon ?? null,
+                      className: "token-chooser-icon",
+                      background: c,
+                      size: 28,
+                      fontSize: 13
+                    })}
                     <span class="token-chooser-info">
                       <span class="token-chooser-sym">${escapeHtml(s)}</span>
                       <span class="token-chooser-name">${escapeHtml(a.name ?? a.contract)}</span>

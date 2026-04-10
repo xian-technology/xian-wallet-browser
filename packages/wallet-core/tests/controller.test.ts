@@ -130,7 +130,8 @@ function createClient(): WalletNetworkClient {
       contract,
       name: contract === "currency" ? "Xian" : "Example",
       symbol: contract === "currency" ? "XIAN" : "EXP",
-      logoUrl: null
+      logoUrl: null,
+      logoSvg: null
     })),
     getShieldedWalletHistory: vi.fn(async () => ({
       available: true,
@@ -538,6 +539,57 @@ describe("@xian-tech/wallet-core controller", () => {
     );
   });
 
+  it("falls back to on-chain SVG metadata when no logo URL exists", async () => {
+    const store = createStore();
+    const client = createClient();
+    client.getTokenMetadata = vi.fn(async (contract: string) => ({
+      contract,
+      name: "Example",
+      symbol: "EXP",
+      logoUrl: null,
+      logoSvg: "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'></svg>"
+    }));
+
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+
+    await expect(controller.getTokenMetadata("con_token")).resolves.toEqual({
+      contract: "con_token",
+      name: "Example",
+      symbol: "EXP",
+      logoUrl: null,
+      logoSvg: "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'></svg>"
+    });
+
+    const popupState = await controller.trackAsset({
+      contract: "con_token",
+      name: "Example",
+      symbol: "EXP"
+    });
+
+    expect(popupState.watchedAssets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          contract: "con_token",
+          icon: "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'></svg>"
+        })
+      ])
+    );
+  });
+
   it("saves network presets and switches chains through configured presets", async () => {
     const store = createStore();
     const onProviderEvent = vi.fn(async () => undefined);
@@ -566,7 +618,8 @@ describe("@xian-tech/wallet-core controller", () => {
           contract,
           name: contract,
           symbol: contract.toUpperCase(),
-          logoUrl: null
+          logoUrl: null,
+          logoSvg: null
         })),
         estimateStamps: vi.fn(async () => ({
           estimated: 12_000,
