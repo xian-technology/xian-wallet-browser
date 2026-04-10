@@ -799,6 +799,15 @@ main {
   flex-shrink: 0;
 }
 
+.token-icon img,
+.token-chooser-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 50%;
+  display: block;
+}
+
 .token-body {
   flex: 1;
   min-width: 0;

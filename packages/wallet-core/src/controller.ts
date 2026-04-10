@@ -92,6 +92,7 @@ export interface WalletNetworkClient {
     name: string | null;
     symbol: string | null;
     logoUrl: string | null;
+    logoSvg: string | null;
   }>;
   estimateStamps(request: {
     sender: string;
@@ -181,6 +182,14 @@ function parseIntentNumber(
 function trimOptionalString(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function trimNullableString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 function normalizeTrackedAsset(
@@ -463,6 +472,77 @@ export class WalletController {
       throw new ProviderUnauthorizedError("wallet is not configured");
     }
     return normalizeStoredWalletNetworks(state);
+  }
+
+  private async resolveTokenMetadataForState(
+    state: StoredWalletState,
+    contract: string
+  ): Promise<{
+    contract: string;
+    name: string | null;
+    symbol: string | null;
+    logoUrl: string | null;
+    logoSvg: string | null;
+  }> {
+    const normalizedContract = contract.trim();
+    const client = this.currentClient(state);
+    const metadata = await client.getTokenMetadata(normalizedContract);
+
+    return {
+      contract: normalizedContract,
+      name: trimNullableString(metadata.name),
+      symbol: trimNullableString(metadata.symbol),
+      logoUrl: trimNullableString(metadata.logoUrl),
+      logoSvg: trimNullableString(metadata.logoSvg)
+    };
+  }
+
+  private async hydrateWatchedAssetIcons(
+    state: StoredWalletState
+  ): Promise<StoredWalletState> {
+    const assetsMissingIcons = state.watchedAssets.some(
+      (asset) => !trimOptionalString(asset.icon)
+    );
+    if (!assetsMissingIcons) {
+      return state;
+    }
+
+    let changed = false;
+    const watchedAssets = await Promise.all(
+      state.watchedAssets.map(async (asset) => {
+        if (trimOptionalString(asset.icon)) {
+          return asset;
+        }
+        try {
+          const metadata = await this.resolveTokenMetadataForState(
+            state,
+            asset.contract
+          );
+          const icon = metadata.logoUrl ?? metadata.logoSvg ?? undefined;
+          if (!icon) {
+            return asset;
+          }
+          changed = true;
+          return {
+            ...asset,
+            icon
+          };
+        } catch {
+          return asset;
+        }
+      })
+    );
+
+    if (!changed) {
+      return state;
+    }
+
+    const nextState = {
+      ...state,
+      watchedAssets
+    };
+    await this.store.saveState(nextState);
+    return nextState;
   }
 
   private requireAccounts(state: StoredWalletState): WalletAccount[] {
@@ -1351,7 +1431,10 @@ export class WalletController {
   }
 
   async getPopupState(): Promise<PopupState> {
-    const state = await this.loadWalletState();
+    const loadedState = await this.loadWalletState();
+    const state = loadedState
+      ? await this.hydrateWatchedAssetIcons(loadedState)
+      : null;
     const approvals = await this.store.listApprovalStates();
     const pendingApprovals = approvals
       .map((approval) => approval.view)
@@ -1408,9 +1491,10 @@ export class WalletController {
     name: string | null;
     symbol: string | null;
     logoUrl: string | null;
+    logoSvg: string | null;
   }> {
     const state = this.requireStoredWallet(await this.loadWalletState());
-    return this.currentClient(state).getTokenMetadata(contract);
+    return this.resolveTokenMetadataForState(state, contract);
   }
 
   async getDetectedAssets(): Promise<WalletDetectedAsset[]> {
@@ -1433,14 +1517,18 @@ export class WalletController {
       throw new TypeError("asset contract is required");
     }
 
-    // Auto-fetch metadata if name/symbol not provided
-    if (!normalized.name || !normalized.symbol) {
+    // Auto-fetch metadata if any display metadata is missing.
+    if (!normalized.name || !normalized.symbol || !normalized.icon) {
       try {
         const state = this.requireStoredWallet(await this.loadWalletState());
-        const meta = await this.currentClient(state).getTokenMetadata(normalized.contract);
+        const meta = await this.resolveTokenMetadataForState(
+          state,
+          normalized.contract
+        );
         if (meta.name && !normalized.name) normalized.name = meta.name;
         if (meta.symbol && !normalized.symbol) normalized.symbol = meta.symbol;
         if (meta.logoUrl && !normalized.icon) normalized.icon = meta.logoUrl;
+        if (meta.logoSvg && !normalized.icon) normalized.icon = meta.logoSvg;
       } catch {
         // Metadata fetch failed — use contract name as fallback
       }
