@@ -16,6 +16,10 @@
     "@xian-tech/client": "file:../xian-js/packages/client",
     "@xian-tech/provider": "file:../xian-js/packages/provider"
   },
+  "overrides": {
+    "@xian-tech/client": "file:../xian-js/packages/client",
+    "@xian-tech/provider": "file:../xian-js/packages/provider"
+  },
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
