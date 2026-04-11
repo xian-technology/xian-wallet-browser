@@ -1,6 +1,6 @@
 {
   "name": "xian-wallet-extension",
-  "version": "0.3.0",
+  "version": "0.3.2",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,8 +10,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@xian-tech/provider": "0.1.5",
-    "@xian-tech/wallet-core": "0.3.0",
+    "@xian-tech/provider": "0.1.6",
+    "@xian-tech/wallet-core": "0.3.2",
     "uqr": "^0.1.2"
   },
   "devDependencies": {
