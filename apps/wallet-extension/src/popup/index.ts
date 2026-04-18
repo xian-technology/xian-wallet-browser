@@ -76,7 +76,13 @@ const ICONS = {
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
   grip: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg>',
   eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
-  eyeOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>'
+  eyeOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>',
+  trendingDown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg>',
+  sparkles: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/><path d="M19 14l.7 1.7 1.8.6-1.8.6L19 18.6l-.7-1.7-1.8-.6 1.8-.6z"/></svg>',
+  dropletPlus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5C12 2.5 5 10 5 14.5A7 7 0 0 0 19 14.5C19 10 12 2.5 12 2.5z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>',
+  dropletMinus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5C12 2.5 5 10 5 14.5A7 7 0 0 0 19 14.5C19 10 12 2.5 12 2.5z"/><line x1="9" y1="14" x2="15" y2="14"/></svg>',
+  shieldCheck: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>',
+  zap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>'
 };
 
 /* ── State ─────────────────────────────────────────────────── */
@@ -1625,17 +1631,180 @@ function renderOriginItem(origin: string): string {
    ACTIVITY TAB
    ═══════════════════════════════════════════════════════════ */
 
-let activityTxs: Array<{
+interface ActivityTx {
   hash: string;
   contract: string;
   function: string;
   sender: string;
   success: boolean;
-  chi_used: number;
-  created_at: string;
-  block_height: number;
-}> = [];
+  chi_used?: number | null;
+  created_at?: string | null;
+  block_height?: number | null;
+  block_hash?: string | null;
+  block_time?: string | number | null;
+  tx_index?: number | null;
+  nonce?: number | null;
+  status_code?: number | null;
+  result?: unknown;
+  payload?: {
+    sender?: string;
+    nonce?: number;
+    contract?: string;
+    function?: string;
+    kwargs?: Record<string, unknown>;
+    stamps_supplied?: number;
+    [key: string]: unknown;
+  } | null;
+  envelope?: unknown;
+}
+
+let activityTxs: ActivityTx[] = [];
 let activityLoading = false;
+
+type TxCategory =
+  | "send"
+  | "receive"
+  | "buy"
+  | "sell"
+  | "swap"
+  | "add_liquidity"
+  | "remove_liquidity"
+  | "create_token"
+  | "approve"
+  | "contract";
+
+interface TxClassification {
+  category: TxCategory;
+  label: string;
+  icon: string;
+  accent: "success" | "danger" | "info" | "warning" | "accent" | "neutral";
+}
+
+const TX_ACCENT_BG: Record<TxClassification["accent"], string> = {
+  success: "var(--success-soft, rgba(173,255,47,0.12))",
+  danger: "var(--danger-soft, rgba(255,77,79,0.12))",
+  info: "var(--accent-soft, rgba(173,255,47,0.08))",
+  warning: "var(--warning-soft, rgba(250,173,20,0.12))",
+  accent: "var(--accent-soft, rgba(173,255,47,0.08))",
+  neutral: "var(--bg-3, rgba(255,255,255,0.06))"
+};
+
+const TX_ACCENT_FG: Record<TxClassification["accent"], string> = {
+  success: "var(--success, #adff2f)",
+  danger: "var(--danger, #ff4d4f)",
+  info: "var(--accent, #adff2f)",
+  warning: "var(--warning, #faad14)",
+  accent: "var(--accent, #adff2f)",
+  neutral: "var(--muted, #888)"
+};
+
+const DEX_CONTRACT = "con_dex";
+const TOKEN_FACTORY_CONTRACT = "token_factory";
+
+function classifyTx(tx: ActivityTx): TxClassification {
+  const contract = tx.contract ?? "";
+  const fn = tx.function ?? "";
+  const kwargs = (tx.payload?.kwargs ?? {}) as Record<string, unknown>;
+
+  if (contract === TOKEN_FACTORY_CONTRACT && fn === "create_token") {
+    return { category: "create_token", label: "Create token", icon: ICONS.sparkles, accent: "accent" };
+  }
+
+  if (contract === DEX_CONTRACT) {
+    if (fn === "addLiquidity") {
+      return { category: "add_liquidity", label: "Add liquidity", icon: ICONS.dropletPlus, accent: "info" };
+    }
+    if (fn === "removeLiquidity") {
+      return { category: "remove_liquidity", label: "Remove liquidity", icon: ICONS.dropletMinus, accent: "warning" };
+    }
+    if (fn.startsWith("swap")) {
+      const src = typeof kwargs.src === "string" ? (kwargs.src as string) : null;
+      const path = Array.isArray(kwargs.path) ? (kwargs.path as unknown[]) : null;
+      const last = path && path.length > 0 ? path[path.length - 1] : null;
+      if (src === "currency") {
+        return { category: "buy", label: "Buy", icon: ICONS.trendingUp, accent: "success" };
+      }
+      if (typeof last === "string" && last === "currency") {
+        return { category: "sell", label: "Sell", icon: ICONS.trendingDown, accent: "danger" };
+      }
+      return { category: "swap", label: "Swap", icon: ICONS.repeat, accent: "info" };
+    }
+  }
+
+  if (fn === "transfer") {
+    return { category: "send", label: "Send", icon: ICONS.arrowUp, accent: "danger" };
+  }
+  if (fn === "transfer_from") {
+    return { category: "send", label: "Transfer from", icon: ICONS.arrowUp, accent: "danger" };
+  }
+  if (fn === "approve") {
+    return { category: "approve", label: "Approve", icon: ICONS.shieldCheck, accent: "warning" };
+  }
+
+  return { category: "contract", label: "Contract call", icon: ICONS.zap, accent: "neutral" };
+}
+
+function formatTxAmount(value: unknown): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value.toLocaleString(undefined, { maximumFractionDigits: 8 });
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed === "") return null;
+    const num = Number(trimmed);
+    if (Number.isFinite(num)) {
+      return num.toLocaleString(undefined, { maximumFractionDigits: 8 });
+    }
+    return trimmed;
+  }
+  if (typeof value === "object" && value && "__fixed__" in (value as Record<string, unknown>)) {
+    const fixed = (value as Record<string, unknown>).__fixed__;
+    if (typeof fixed === "string" || typeof fixed === "number") {
+      return formatTxAmount(fixed);
+    }
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return null;
+  }
+}
+
+function formatTxArgValue(value: unknown): string {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "object" && "__fixed__" in (value as Record<string, unknown>)) {
+    const fixed = (value as Record<string, unknown>).__fixed__;
+    if (typeof fixed === "string" || typeof fixed === "number") return String(fixed);
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function formatTxTimestamp(raw: unknown): string | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    const parsed = Date.parse(trimmed);
+    if (!Number.isNaN(parsed)) {
+      return new Date(parsed).toLocaleString();
+    }
+    return trimmed;
+  }
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    const asMillis = raw > 1e12 ? raw : raw * 1000;
+    return new Date(asMillis).toLocaleString();
+  }
+  return null;
+}
 
 async function fetchActivityTxs(address: string): Promise<void> {
   activityLoading = true;
@@ -1663,32 +1832,220 @@ async function fetchActivityTxs(address: string): Promise<void> {
 }
 let selectedTxHash: string | null = null;
 
+function renderTxDetail(tx: ActivityTx, state: PopupRuntimeState): string {
+  const cls = classifyTx(tx);
+  const kwargs = (tx.payload?.kwargs ?? {}) as Record<string, unknown>;
+  const explorerBase = state.dashboardUrl
+    ? state.dashboardUrl.replace(/\/+$/, "") + "/explorer/tx/"
+    : null;
+
+  const rows: string[] = [];
+  const addRow = (key: string, val: string, mono = false) => {
+    rows.push(
+      `<div class="s-row"><span class="s-row-key">${escapeHtml(key)}</span><span class="s-row-val${mono ? " mono" : ""}" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeAttribute(val.replace(/<[^>]+>/g, ""))}">${val}</span></div>`
+    );
+  };
+
+  const addressLink = (addr: string): string => {
+    const short = truncateHash(addr, 8, 6);
+    if (state.dashboardUrl) {
+      const base = state.dashboardUrl.replace(/\/+$/, "") + "/explorer/address/";
+      return `<a href="${escapeAttribute(base + addr)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${escapeHtml(short)}</a>`;
+    }
+    return escapeHtml(short);
+  };
+
+  const tokenLabel = (contractName: string | null | undefined): string => {
+    if (!contractName) return "—";
+    return escapeHtml(contractName);
+  };
+
+  switch (cls.category) {
+    case "send":
+    case "receive": {
+      const amount = formatTxAmount(kwargs.amount);
+      const to = typeof kwargs.to === "string" ? (kwargs.to as string) : null;
+      const mainAccount =
+        typeof kwargs.main_account === "string"
+          ? (kwargs.main_account as string)
+          : null;
+      if (amount) {
+        addRow("Amount", `${escapeHtml(amount)} ${tokenLabel(tx.contract)}`);
+      }
+      addRow("From", addressLink(tx.sender));
+      if (to) addRow("To", addressLink(to));
+      if (mainAccount) addRow("On behalf of", addressLink(mainAccount));
+      break;
+    }
+    case "approve": {
+      const amount = formatTxAmount(kwargs.amount);
+      const to = typeof kwargs.to === "string" ? (kwargs.to as string) : null;
+      if (amount) {
+        addRow("Amount", `${escapeHtml(amount)} ${tokenLabel(tx.contract)}`);
+      }
+      if (to) addRow("Spender", addressLink(to));
+      addRow("Owner", addressLink(tx.sender));
+      break;
+    }
+    case "buy":
+    case "sell":
+    case "swap": {
+      const amountIn = formatTxAmount(kwargs.amountIn);
+      const amountOutMin = formatTxAmount(kwargs.amountOutMin);
+      const src = typeof kwargs.src === "string" ? (kwargs.src as string) : null;
+      const path = Array.isArray(kwargs.path)
+        ? (kwargs.path as unknown[])
+            .filter((p): p is string => typeof p === "string")
+        : null;
+      const to = typeof kwargs.to === "string" ? (kwargs.to as string) : null;
+      if (amountIn) addRow("Amount in", `${escapeHtml(amountIn)}${src ? ` ${escapeHtml(src)}` : ""}`);
+      if (amountOutMin) addRow("Min out", escapeHtml(amountOutMin));
+      if (path && path.length > 0) {
+        const full = src ? [src, ...path] : path;
+        addRow("Route", escapeHtml(full.join(" → ")));
+      }
+      if (to) addRow("Recipient", addressLink(to));
+      break;
+    }
+    case "add_liquidity":
+    case "remove_liquidity": {
+      const tokenA = typeof kwargs.tokenA === "string" ? (kwargs.tokenA as string) : null;
+      const tokenB = typeof kwargs.tokenB === "string" ? (kwargs.tokenB as string) : null;
+      if (tokenA && tokenB) {
+        addRow("Pair", `${escapeHtml(tokenA)} / ${escapeHtml(tokenB)}`);
+      }
+      const amountA = formatTxAmount(kwargs.amountADesired ?? kwargs.amountA);
+      const amountB = formatTxAmount(kwargs.amountBDesired ?? kwargs.amountB);
+      const liquidity = formatTxAmount(kwargs.liquidity);
+      if (amountA) addRow("Amount A", escapeHtml(amountA));
+      if (amountB) addRow("Amount B", escapeHtml(amountB));
+      if (liquidity) addRow("Liquidity", escapeHtml(liquidity));
+      break;
+    }
+    case "create_token": {
+      const tokenContract =
+        typeof kwargs.token_contract === "string"
+          ? (kwargs.token_contract as string)
+          : null;
+      const tokenName =
+        typeof kwargs.token_name === "string" ? (kwargs.token_name as string) : null;
+      const tokenSymbol =
+        typeof kwargs.token_symbol === "string"
+          ? (kwargs.token_symbol as string)
+          : null;
+      const supply = formatTxAmount(kwargs.initial_supply);
+      if (tokenName) addRow("Name", escapeHtml(tokenName));
+      if (tokenSymbol) addRow("Symbol", escapeHtml(tokenSymbol));
+      if (tokenContract) addRow("Contract", escapeHtml(tokenContract));
+      if (supply) addRow("Initial supply", escapeHtml(supply));
+      break;
+    }
+    case "contract":
+    default:
+      break;
+  }
+
+  // Generic footer rows
+  const hashDisplay = explorerBase
+    ? `<a href="${escapeAttribute(explorerBase + tx.hash)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${escapeHtml(truncateHash(tx.hash))}</a>`
+    : escapeHtml(truncateHash(tx.hash));
+  addRow("Hash", hashDisplay, true);
+  addRow("Contract", `${escapeHtml(tx.contract)}.${escapeHtml(tx.function)}`);
+  if (tx.block_height !== null && tx.block_height !== undefined) {
+    addRow("Block", String(tx.block_height));
+  }
+  if (tx.chi_used !== null && tx.chi_used !== undefined) {
+    const chi = Number(tx.chi_used);
+    addRow("Chi used", Number.isFinite(chi) ? chi.toLocaleString() : String(tx.chi_used));
+  }
+  const when = formatTxTimestamp(tx.created_at ?? tx.block_time);
+  if (when) addRow("Time", escapeHtml(when));
+
+  // Extra kwargs not covered above (best-effort dump for transparency)
+  const knownKeys: Record<TxCategory, string[]> = {
+    send: ["amount", "to", "main_account"],
+    receive: ["amount", "to", "main_account"],
+    approve: ["amount", "to"],
+    buy: ["amountIn", "amountOutMin", "src", "path", "to"],
+    sell: ["amountIn", "amountOutMin", "src", "path", "to"],
+    swap: ["amountIn", "amountOutMin", "src", "path", "to"],
+    add_liquidity: ["tokenA", "tokenB", "amountADesired", "amountBDesired", "amountA", "amountB", "amountAMin", "amountBMin", "to", "deadline", "feeBps"],
+    remove_liquidity: ["tokenA", "tokenB", "liquidity", "amountAMin", "amountBMin", "to", "deadline"],
+    create_token: ["token_contract", "token_name", "token_symbol", "initial_supply", "token_logo_url", "token_logo_svg", "token_website", "initial_holder", "operator_address"],
+    contract: []
+  };
+  const extraKwargRows: string[] = [];
+  const known = new Set(knownKeys[cls.category]);
+  for (const [k, v] of Object.entries(kwargs)) {
+    if (known.has(k)) continue;
+    const label = k;
+    const formatted = formatTxArgValue(v);
+    if (formatted.length > 60) {
+      extraKwargRows.push(
+        `<div class="s-row" style="align-items:flex-start"><span class="s-row-key">${escapeHtml(label)}</span><span class="s-row-val mono" style="text-align:right;word-break:break-all;white-space:normal;max-width:180px">${escapeHtml(formatted)}</span></div>`
+      );
+    } else {
+      extraKwargRows.push(
+        `<div class="s-row"><span class="s-row-key">${escapeHtml(label)}</span><span class="s-row-val mono" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeAttribute(formatted)}">${escapeHtml(formatted)}</span></div>`
+      );
+    }
+  }
+
+  const resultMessage = (() => {
+    if (tx.success) return null;
+    const res = tx.result as unknown;
+    if (!res) return null;
+    if (typeof res === "string") return res;
+    if (typeof res === "object") {
+      const obj = res as Record<string, unknown>;
+      const msg = obj.error ?? obj.message ?? obj.result ?? null;
+      if (typeof msg === "string") return msg;
+      try {
+        return JSON.stringify(res);
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  })();
+
+  return `
+    <div class="settings-wrap">
+      <button class="detail-back" data-close-tx-detail>${ICONS.chevronLeft} Back</button>
+      <div class="s-card">
+        <div class="s-card-head">
+          <div style="display:flex;align-items:center;gap:12px;min-width:0">
+            <div class="token-icon" style="background:${TX_ACCENT_BG[cls.accent]};color:${TX_ACCENT_FG[cls.accent]};width:40px;height:40px">${cls.icon}</div>
+            <div style="min-width:0">
+              <h3 class="s-card-title">${escapeHtml(cls.label)}</h3>
+              <p class="s-card-desc">${escapeHtml(tx.contract)}.${escapeHtml(tx.function)}</p>
+            </div>
+          </div>
+          <span class="pill ${tx.success ? "pill-info" : "pill-danger"}">${tx.success ? "Success" : "Failed"}</span>
+        </div>
+        <div class="s-card-body">
+          ${rows.join("")}
+        </div>
+      </div>
+      ${
+        resultMessage
+          ? `<div class="s-card"><div class="s-card-head"><div><h3 class="s-card-title">Error</h3></div></div><div class="s-card-body"><div class="s-row" style="align-items:flex-start"><span class="s-row-val mono" style="text-align:left;word-break:break-all;white-space:normal">${escapeHtml(resultMessage)}</span></div></div></div>`
+          : ""
+      }
+      ${
+        extraKwargRows.length > 0
+          ? `<div class="s-card"><div class="s-card-head"><div><h3 class="s-card-title">Arguments</h3></div></div><div class="s-card-body">${extraKwargRows.join("")}</div></div>`
+          : ""
+      }
+    </div>
+  `;
+}
+
 function renderActivityTab(state: PopupRuntimeState): string {
   if (selectedTxHash) {
     const tx = activityTxs.find((t) => t.hash === selectedTxHash);
     if (tx) {
-      const isOut = tx.sender === state.publicKey;
-      const explorerBase = state.dashboardUrl ? state.dashboardUrl.replace(/\/+$/, "") + "/explorer/tx/" : null;
-      return `
-        <div class="settings-wrap">
-          <button class="detail-back" data-close-tx-detail>${ICONS.chevronLeft} Back</button>
-          <div class="s-card">
-            <div class="s-card-head">
-              <div>
-                <h3 class="s-card-title">${escapeHtml(tx.contract)}.${escapeHtml(tx.function)}</h3>
-                <p class="s-card-desc">${isOut ? "Sent" : "Received"} · ${tx.success ? "Success" : "Failed"}</p>
-              </div>
-              <span class="pill ${tx.success ? "pill-info" : "pill-warning"}">${tx.success ? "✓" : "✗"}</span>
-            </div>
-            <div class="s-card-body">
-              <div class="s-row"><span class="s-row-key">Hash</span><span class="s-row-val mono" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeAttribute(tx.hash)}">${explorerBase ? `<a href="${escapeAttribute(explorerBase + tx.hash)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${escapeHtml(truncateHash(tx.hash))}</a>` : escapeHtml(truncateHash(tx.hash))}</span></div>
-              <div class="s-row"><span class="s-row-key">Block</span><span class="s-row-val">${tx.block_height}</span></div>
-              <div class="s-row"><span class="s-row-key">Chi</span><span class="s-row-val">${tx.chi_used.toLocaleString()}</span></div>
-              <div class="s-row"><span class="s-row-key">Time</span><span class="s-row-val">${escapeHtml(tx.created_at)}</span></div>
-            </div>
-          </div>
-        </div>
-      `;
+      return renderTxDetail(tx, state);
     }
     selectedTxHash = null;
   }
@@ -1709,18 +2066,40 @@ function renderActivityTab(state: PopupRuntimeState): string {
   return `
     <div class="token-list">
       ${activityTxs.map((tx) => {
-        const isOut = tx.sender === state.publicKey;
+        const cls = classifyTx(tx);
+        const kwargs = (tx.payload?.kwargs ?? {}) as Record<string, unknown>;
+        let subtitle = "";
+        if (cls.category === "send" || cls.category === "receive" || cls.category === "approve") {
+          const amount = formatTxAmount(kwargs.amount);
+          if (amount) subtitle = `${amount} ${tx.contract}`;
+        } else if (cls.category === "buy" || cls.category === "sell" || cls.category === "swap") {
+          const amountIn = formatTxAmount(kwargs.amountIn);
+          const src = typeof kwargs.src === "string" ? (kwargs.src as string) : "";
+          if (amountIn) subtitle = `${amountIn}${src ? ` ${src}` : ""}`;
+        } else if (cls.category === "add_liquidity" || cls.category === "remove_liquidity") {
+          const a = typeof kwargs.tokenA === "string" ? (kwargs.tokenA as string) : "";
+          const b = typeof kwargs.tokenB === "string" ? (kwargs.tokenB as string) : "";
+          if (a && b) subtitle = `${a} / ${b}`;
+        } else if (cls.category === "create_token") {
+          const sym = typeof kwargs.token_symbol === "string" ? (kwargs.token_symbol as string) : "";
+          const name = typeof kwargs.token_name === "string" ? (kwargs.token_name as string) : "";
+          subtitle = sym || name || "";
+        }
+        if (!subtitle) {
+          subtitle = `${tx.contract}.${tx.function}`;
+        }
+        const when = formatTxTimestamp(tx.created_at ?? tx.block_time) ?? "";
         return `
           <div class="token-item" data-select-tx="${escapeAttribute(tx.hash)}" style="cursor:pointer">
-            <div class="token-icon" style="background: ${isOut ? "var(--danger-soft, rgba(255,77,79,0.12))" : "var(--success-soft, rgba(34,197,94,0.12))"}">
-              ${isOut ? ICONS.arrowUp : ICONS.arrowDown}
+            <div class="token-icon" style="background:${TX_ACCENT_BG[cls.accent]};color:${TX_ACCENT_FG[cls.accent]}">
+              ${cls.icon}
             </div>
             <div class="token-body">
-              <div class="token-name">${escapeHtml(tx.contract)}.${escapeHtml(tx.function)}</div>
-              <div class="token-sub">${escapeHtml(tx.created_at)}</div>
+              <div class="token-name">${escapeHtml(cls.label)}${tx.success ? "" : ` <span style="color:var(--danger);font-weight:500;font-size:11px">· Failed</span>`}</div>
+              <div class="token-sub">${escapeHtml(subtitle)}</div>
             </div>
             <div class="token-end">
-              <span class="pill ${tx.success ? "pill-info" : "pill-warning"}" style="font-size:11px">${tx.success ? "✓" : "✗"}</span>
+              <div class="token-fiat" style="font-size:10px">${escapeHtml(when)}</div>
             </div>
           </div>
         `;
