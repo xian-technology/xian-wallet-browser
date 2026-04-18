@@ -112,6 +112,8 @@ let activeApprovalId: string | null = null;
 let showAccountMenu = false;
 let renamingAccountIndex: number | null = null;
 let confirmDeleteAccountIndex: number | null = null;
+let confirmDeleteContactId: string | null = null;
+let confirmRemoveSelectedAsset = false;
 let confirmWalletRemoval = false;
 let showSaveRecipient = false;
 let autoLockEnabled = DEFAULT_AUTO_LOCK;
@@ -674,6 +676,8 @@ function setActiveTab(tab: PopupTab): void {
   activeApprovalId = null;
   revealedPrivateKey = null;
   selectedTxHash = null;
+  confirmDeleteContactId = null;
+  confirmRemoveSelectedAsset = false;
   if (tab === "activity" && currentState?.publicKey) {
     void fetchActivityTxs(currentState.publicKey);
   }
@@ -752,6 +756,9 @@ async function refresh(nextFlash?: FlashMessage | null): Promise<void> {
   if (!currentState.unlocked) {
     generatedMnemonic = null;
     resetSendState();
+    contactsLoaded = false;
+    contacts = [];
+    confirmDeleteContactId = null;
   }
 
   balancesLoading =
@@ -1557,7 +1564,12 @@ function renderTokenDetail(state: PopupRuntimeState): string {
 
       ${
         tracked && !isPinned
-          ? `<button class="secondary full-width" data-remove-selected-asset>Remove from wallet</button>`
+          ? confirmRemoveSelectedAsset
+            ? `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px">
+                 <button class="secondary" data-cancel-remove-selected-asset>Cancel</button>
+                 <button class="danger" data-confirm-remove-selected-asset>Remove</button>
+               </div>`
+            : `<button class="secondary full-width" data-remove-selected-asset>Remove from wallet</button>`
           : ""
       }
     </div>
@@ -1806,26 +1818,32 @@ function formatTxTimestamp(raw: unknown): string | null {
   return null;
 }
 
+let activityError: string | null = null;
+
 async function fetchActivityTxs(address: string): Promise<void> {
   activityLoading = true;
+  activityError = null;
   if (currentState) render(currentState);
   try {
     const rpcUrl = currentState?.rpcUrl ?? "http://127.0.0.1:26657";
     const resp = await fetch(
       `${rpcUrl}/abci_query?path=%22/txs_by_sender/${address}/limit=50/offset=0%22`
     );
-    if (resp.ok) {
-      const data = await resp.json();
-      const val = data?.result?.response?.value;
-      if (val) {
-        const decoded = JSON.parse(atob(val));
-        activityTxs = Array.isArray(decoded) ? decoded : decoded?.items ?? [];
-      } else {
-        activityTxs = [];
-      }
+    if (!resp.ok) {
+      throw new Error(`RPC responded ${resp.status}`);
     }
-  } catch {
+    const data = await resp.json();
+    const val = data?.result?.response?.value;
+    if (val) {
+      const decoded = JSON.parse(atob(val));
+      activityTxs = Array.isArray(decoded) ? decoded : decoded?.items ?? [];
+    } else {
+      activityTxs = [];
+    }
+  } catch (err) {
     activityTxs = [];
+    activityError =
+      err instanceof Error ? err.message : "Failed to load transactions";
   }
   activityLoading = false;
   if (currentState) render(currentState);
@@ -2055,6 +2073,15 @@ function renderActivityTab(state: PopupRuntimeState): string {
   }
 
   if (activityTxs.length === 0) {
+    if (activityError) {
+      return `
+        <div class="send-centered" style="padding: 48px 0; gap: 12px">
+          <p class="muted text-sm" style="color: var(--danger)">Couldn't load transactions.</p>
+          <p class="muted text-sm" style="opacity: 0.6">${escapeHtml(activityError)}</p>
+          <button class="detail-back" data-retry-activity>${ICONS.repeat} Retry</button>
+        </div>
+      `;
+    }
     return `
       <div class="send-centered" style="padding: 48px 0">
         <p class="muted text-sm">No transactions yet.</p>
@@ -2378,7 +2405,12 @@ function renderContactsEditor(): string {
                           <div class="text-sm">${escapeHtml(c.name)}</div>
                           <div class="muted text-sm mono" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">${escapeHtml(c.address)}</div>
                         </div>
-                        <button class="ghost-sm" data-delete-contact="${escapeAttribute(c.id)}">×</button>
+                        ${
+                          confirmDeleteContactId === c.id
+                            ? `<button class="ghost-sm" data-confirm-delete-contact="${escapeAttribute(c.id)}" style="color: var(--danger); font-weight: 600">Remove?</button>
+                               <button class="ghost-sm" data-cancel-delete-contact>Cancel</button>`
+                            : `<button class="ghost-sm" data-delete-contact="${escapeAttribute(c.id)}" title="Remove contact">×</button>`
+                        }
                       </div>
                     `
                   )
@@ -3606,6 +3638,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       selectedAsset = null;
       tokenMeta = null;
       tokenMetaLoading = false;
+      confirmRemoveSelectedAsset = false;
       clearFlash();
       render(state);
     });
@@ -3638,8 +3671,21 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
 
   root
     .querySelector<HTMLElement>("[data-remove-selected-asset]")
+    ?.addEventListener("click", () => {
+      confirmRemoveSelectedAsset = true;
+      render(state);
+    });
+  root
+    .querySelector<HTMLElement>("[data-cancel-remove-selected-asset]")
+    ?.addEventListener("click", () => {
+      confirmRemoveSelectedAsset = false;
+      render(state);
+    });
+  root
+    .querySelector<HTMLElement>("[data-confirm-remove-selected-asset]")
     ?.addEventListener("click", async () => {
       const contract = selectedAsset;
+      confirmRemoveSelectedAsset = false;
       if (!contract) {
         return;
       }
@@ -4069,6 +4115,19 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         render(state);
         return;
       }
+      if (!isValidXianAddress(simpleTo)) {
+        setFlash(
+          "Recipient must be a 64-character hex Xian address.",
+          "warning"
+        );
+        render(state);
+        return;
+      }
+      if (simpleTo === state.publicKey) {
+        setFlash("You can't send tokens to your own address.", "warning");
+        render(state);
+        return;
+      }
       const amount = parseRuntimeNumberInput(simpleAmount);
       if (
         amount == null ||
@@ -4180,14 +4239,27 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     });
 
   for (const btn of root.querySelectorAll<HTMLElement>("[data-delete-contact]")) {
+    btn.addEventListener("click", () => {
+      confirmDeleteContactId = btn.dataset.deleteContact ?? null;
+      render(state);
+    });
+  }
+  for (const btn of root.querySelectorAll<HTMLElement>("[data-confirm-delete-contact]")) {
     btn.addEventListener("click", async () => {
-      const id = btn.dataset.deleteContact;
+      const id = btn.dataset.confirmDeleteContact;
+      confirmDeleteContactId = null;
       contacts = contacts.filter((c) => c.id !== id);
       await sendRuntimeMessage<null>({ type: "contacts_save", contacts });
       setFlash("Contact removed.", "info");
       render(state);
     });
   }
+  root
+    .querySelector<HTMLElement>("[data-cancel-delete-contact]")
+    ?.addEventListener("click", () => {
+      confirmDeleteContactId = null;
+      render(state);
+    });
 
   /* ── Activity tab ──────────────────────────────────────────── */
   for (const el of root.querySelectorAll<HTMLElement>("[data-select-tx]")) {
@@ -4201,6 +4273,13 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     ?.addEventListener("click", () => {
       selectedTxHash = null;
       render(state);
+    });
+  root
+    .querySelector<HTMLElement>("[data-retry-activity]")
+    ?.addEventListener("click", () => {
+      if (state.publicKey) {
+        void fetchActivityTxs(state.publicKey);
+      }
     });
 
   for (const button of root.querySelectorAll<HTMLButtonElement>(
