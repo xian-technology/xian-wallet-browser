@@ -54,36 +54,18 @@ type DisplayedAsset = PopupState["watchedAssets"][number] | WalletDetectedAsset;
 
 /* ── Icons (Feather-style SVGs) ────────────────────────────── */
 
-const ICONS = {
-  home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>',
-  grid: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>',
-  settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
-  copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
-  globe: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10A15.3 15.3 0 0 1 12 2z"/></svg>',
-  lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
-  wallet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><circle cx="18" cy="16" r="1"/></svg>',
-  chevronLeft: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>',
-  send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>',
-  arrowUp: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>',
-  arrowDown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>',
-  trendingUp: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>',
-  repeat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>',
-  contacts: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
-  clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
-  chevronDown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>',
-  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
-  pencil: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>',
-  trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
-  grip: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg>',
-  eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
-  eyeOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>',
-  trendingDown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg>',
-  sparkles: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/><path d="M19 14l.7 1.7 1.8.6-1.8.6L19 18.6l-.7-1.7-1.8-.6 1.8-.6z"/></svg>',
-  dropletPlus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5C12 2.5 5 10 5 14.5A7 7 0 0 0 19 14.5C19 10 12 2.5 12 2.5z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>',
-  dropletMinus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5C12 2.5 5 10 5 14.5A7 7 0 0 0 19 14.5C19 10 12 2.5 12 2.5z"/><line x1="9" y1="14" x2="15" y2="14"/></svg>',
-  shieldCheck: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>',
-  zap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>'
-};
+import { ICONS } from "./icons";
+import {
+  type ActivityTx,
+  type TxCategory,
+  type TxClassification,
+  TX_ACCENT_BG,
+  TX_ACCENT_FG,
+  classifyTx,
+  formatTxAmount,
+  formatTxArgValue,
+  formatTxTimestamp,
+} from "./tx-classify";
 
 /* ── State ─────────────────────────────────────────────────── */
 
@@ -665,6 +647,20 @@ function clearFlash(): void {
   }
 }
 
+/**
+ * Run an async action and surface any failure as a danger flash toast,
+ * then re-render. Collapses the repeated try/catch pattern at call sites.
+ */
+async function withErrorFlash<T>(action: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await action();
+  } catch (error) {
+    setFlash(formatError(error), "danger");
+    if (currentState) render(currentState);
+    return undefined;
+  }
+}
+
 /* ── State setters ─────────────────────────────────────────── */
 
 function setActiveTab(tab: PopupTab): void {
@@ -1116,16 +1112,13 @@ function renderLocked(state: PopupRuntimeState): void {
 
   root
     .querySelector<HTMLElement>("[data-lock-confirm-remove]")
-    ?.addEventListener("click", async () => {
-      try {
+    ?.addEventListener("click", () => {
+      void withErrorFlash(async () => {
         confirmWalletRemoval = false;
         await sendRuntimeMessage<PopupState>({ type: "wallet_remove" });
         resetSendState();
         await refresh({ tone: "info", message: "Wallet removed." });
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(currentState);
-      }
+      });
     });
 }
 
@@ -1643,181 +1636,8 @@ function renderOriginItem(origin: string): string {
    ACTIVITY TAB
    ═══════════════════════════════════════════════════════════ */
 
-interface ActivityTx {
-  hash: string;
-  contract: string;
-  function: string;
-  sender: string;
-  success: boolean;
-  chi_used?: number | null;
-  created_at?: string | null;
-  block_height?: number | null;
-  block_hash?: string | null;
-  block_time?: string | number | null;
-  tx_index?: number | null;
-  nonce?: number | null;
-  status_code?: number | null;
-  result?: unknown;
-  payload?: {
-    sender?: string;
-    nonce?: number;
-    contract?: string;
-    function?: string;
-    kwargs?: Record<string, unknown>;
-    stamps_supplied?: number;
-    [key: string]: unknown;
-  } | null;
-  envelope?: unknown;
-}
-
 let activityTxs: ActivityTx[] = [];
 let activityLoading = false;
-
-type TxCategory =
-  | "send"
-  | "receive"
-  | "buy"
-  | "sell"
-  | "swap"
-  | "add_liquidity"
-  | "remove_liquidity"
-  | "create_token"
-  | "approve"
-  | "contract";
-
-interface TxClassification {
-  category: TxCategory;
-  label: string;
-  icon: string;
-  accent: "success" | "danger" | "info" | "warning" | "accent" | "neutral";
-}
-
-const TX_ACCENT_BG: Record<TxClassification["accent"], string> = {
-  success: "var(--success-soft, rgba(173,255,47,0.12))",
-  danger: "var(--danger-soft, rgba(255,77,79,0.12))",
-  info: "var(--accent-soft, rgba(173,255,47,0.08))",
-  warning: "var(--warning-soft, rgba(250,173,20,0.12))",
-  accent: "var(--accent-soft, rgba(173,255,47,0.08))",
-  neutral: "var(--bg-3, rgba(255,255,255,0.06))"
-};
-
-const TX_ACCENT_FG: Record<TxClassification["accent"], string> = {
-  success: "var(--success, #adff2f)",
-  danger: "var(--danger, #ff4d4f)",
-  info: "var(--accent, #adff2f)",
-  warning: "var(--warning, #faad14)",
-  accent: "var(--accent, #adff2f)",
-  neutral: "var(--muted, #888)"
-};
-
-const DEX_CONTRACT = "con_dex";
-const TOKEN_FACTORY_CONTRACT = "token_factory";
-
-function classifyTx(tx: ActivityTx): TxClassification {
-  const contract = tx.contract ?? "";
-  const fn = tx.function ?? "";
-  const kwargs = (tx.payload?.kwargs ?? {}) as Record<string, unknown>;
-
-  if (contract === TOKEN_FACTORY_CONTRACT && fn === "create_token") {
-    return { category: "create_token", label: "Create token", icon: ICONS.sparkles, accent: "accent" };
-  }
-
-  if (contract === DEX_CONTRACT) {
-    if (fn === "addLiquidity") {
-      return { category: "add_liquidity", label: "Add liquidity", icon: ICONS.dropletPlus, accent: "info" };
-    }
-    if (fn === "removeLiquidity") {
-      return { category: "remove_liquidity", label: "Remove liquidity", icon: ICONS.dropletMinus, accent: "warning" };
-    }
-    if (fn.startsWith("swap")) {
-      const src = typeof kwargs.src === "string" ? (kwargs.src as string) : null;
-      const path = Array.isArray(kwargs.path) ? (kwargs.path as unknown[]) : null;
-      const last = path && path.length > 0 ? path[path.length - 1] : null;
-      if (src === "currency") {
-        return { category: "buy", label: "Buy", icon: ICONS.trendingUp, accent: "success" };
-      }
-      if (typeof last === "string" && last === "currency") {
-        return { category: "sell", label: "Sell", icon: ICONS.trendingDown, accent: "danger" };
-      }
-      return { category: "swap", label: "Swap", icon: ICONS.repeat, accent: "info" };
-    }
-  }
-
-  if (fn === "transfer") {
-    return { category: "send", label: "Send", icon: ICONS.arrowUp, accent: "danger" };
-  }
-  if (fn === "transfer_from") {
-    return { category: "send", label: "Transfer from", icon: ICONS.arrowUp, accent: "danger" };
-  }
-  if (fn === "approve") {
-    return { category: "approve", label: "Approve", icon: ICONS.shieldCheck, accent: "warning" };
-  }
-
-  return { category: "contract", label: "Contract call", icon: ICONS.zap, accent: "neutral" };
-}
-
-function formatTxAmount(value: unknown): string | null {
-  if (value === null || value === undefined) {
-    return null;
-  }
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value.toLocaleString(undefined, { maximumFractionDigits: 8 });
-  }
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (trimmed === "") return null;
-    const num = Number(trimmed);
-    if (Number.isFinite(num)) {
-      return num.toLocaleString(undefined, { maximumFractionDigits: 8 });
-    }
-    return trimmed;
-  }
-  if (typeof value === "object" && value && "__fixed__" in (value as Record<string, unknown>)) {
-    const fixed = (value as Record<string, unknown>).__fixed__;
-    if (typeof fixed === "string" || typeof fixed === "number") {
-      return formatTxAmount(fixed);
-    }
-  }
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return null;
-  }
-}
-
-function formatTxArgValue(value: unknown): string {
-  if (value === null || value === undefined) return "—";
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  if (typeof value === "object" && "__fixed__" in (value as Record<string, unknown>)) {
-    const fixed = (value as Record<string, unknown>).__fixed__;
-    if (typeof fixed === "string" || typeof fixed === "number") return String(fixed);
-  }
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
-function formatTxTimestamp(raw: unknown): string | null {
-  if (raw === null || raw === undefined) return null;
-  if (typeof raw === "string") {
-    const trimmed = raw.trim();
-    if (!trimmed) return null;
-    const parsed = Date.parse(trimmed);
-    if (!Number.isNaN(parsed)) {
-      return new Date(parsed).toLocaleString();
-    }
-    return trimmed;
-  }
-  if (typeof raw === "number" && Number.isFinite(raw)) {
-    const asMillis = raw > 1e12 ? raw : raw * 1000;
-    return new Date(asMillis).toLocaleString();
-  }
-  return null;
-}
-
 let activityError: string | null = null;
 
 async function fetchActivityTxs(address: string): Promise<void> {
@@ -3232,10 +3052,9 @@ function bindSetupEvents(): void {
 
   root
     .querySelector<HTMLFormElement>("#setup-form")
-    ?.addEventListener("submit", async (event) => {
+    ?.addEventListener("submit", (event) => {
       event.preventDefault();
-
-      try {
+      void withErrorFlash(async () => {
         const result = await sendRuntimeMessage<WalletCreateRuntimeResult>({
           type: "wallet_create",
           password: value("#setup-password"),
@@ -3272,10 +3091,7 @@ function bindSetupEvents(): void {
         void syncBalanceSubscriptions();
         void refreshDetectedAssets();
         void refreshBalances();
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(currentState);
-      }
+      });
     });
 }
 
@@ -3292,15 +3108,12 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
   for (const el of root.querySelectorAll<HTMLElement>(
     "[data-copy-address]"
   )) {
-    el.addEventListener("click", async () => {
-      try {
+    el.addEventListener("click", () => {
+      void withErrorFlash(async () => {
         await navigator.clipboard.writeText(state.publicKey ?? "");
         setFlash("Address copied.", "success");
         render(state);
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
   }
 
@@ -3344,11 +3157,11 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
 
   root
     .querySelector<HTMLElement>("[data-add-token]")
-    ?.addEventListener("click", async () => {
+    ?.addEventListener("click", () => {
       const input = root.querySelector<HTMLInputElement>("#add-token-input");
       const contract = input?.value.trim();
       if (!contract) return;
-      try {
+      void withErrorFlash(async () => {
         await sendRuntimeMessage<PopupState>({
           type: "wallet_track_asset",
           asset: { contract }
@@ -3357,18 +3170,15 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         await refresh(null);
         managingAssets = true;
         render(currentState);
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
 
   for (const btn of root.querySelectorAll<HTMLElement>("[data-toggle-hide]")) {
-    btn.addEventListener("click", async () => {
+    btn.addEventListener("click", () => {
       const contract = btn.dataset.toggleHide!;
       const asset = state.watchedAssets.find((a) => a.contract === contract);
       if (!asset) return;
-      try {
+      void withErrorFlash(async () => {
         await sendRuntimeMessage<PopupState>({
           type: "wallet_update_assets",
           assets: [{ contract, hidden: !asset.hidden }]
@@ -3376,10 +3186,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         await refresh(null);
         managingAssets = true;
         render(currentState);
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
   }
 
@@ -3416,7 +3223,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
             );
           }
         });
-        row.addEventListener("drop", async (e) => {
+        row.addEventListener("drop", (e) => {
           e.preventDefault();
           // Read new order from DOM
           const rows = list.querySelectorAll<HTMLElement>("[data-drag-contract]");
@@ -3424,7 +3231,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           rows.forEach((r, i) => {
             updates.push({ contract: r.dataset.dragContract!, order: i });
           });
-          try {
+          void withErrorFlash(async () => {
             await sendRuntimeMessage<PopupState>({
               type: "wallet_update_assets",
               assets: updates
@@ -3432,10 +3239,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
             await refresh(null);
             managingAssets = true;
             render(currentState);
-          } catch (error) {
-            setFlash(formatError(error), "danger");
-            render(state);
-          }
+          });
         });
       }
     }
@@ -3443,26 +3247,22 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
 
   root
     .querySelector<HTMLElement>("[data-open-dashboard]")
-    ?.addEventListener("click", async () => {
+    ?.addEventListener("click", () => {
       if (!state.dashboardUrl) {
         setFlash("No dashboard URL configured.", "warning");
         render(state);
         return;
       }
-
-      try {
-        const explorerUrl = state.dashboardUrl.replace(/\/+$/, "") + "/explorer";
+      void withErrorFlash(async () => {
+        const explorerUrl = state.dashboardUrl!.replace(/\/+$/, "") + "/explorer";
         await chrome.tabs.create({ url: explorerUrl });
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
 
   root
     .querySelector<HTMLElement>("[data-lock]")
-    ?.addEventListener("click", async () => {
-      try {
+    ?.addEventListener("click", () => {
+      void withErrorFlash(async () => {
         generatedMnemonic = null;
         revealedMnemonic = null;
         await sendRuntimeMessage<PopupState>({
@@ -3472,10 +3272,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           tone: "info",
           message: "Wallet locked."
         });
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
 
   /* ── Account switching ──────────────────────────────────── */
@@ -3489,21 +3286,18 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     });
 
   for (const btn of root.querySelectorAll<HTMLElement>("[data-switch-account]")) {
-    btn.addEventListener("click", async () => {
+    btn.addEventListener("click", () => {
       const index = Number(btn.dataset.switchAccount);
       showAccountMenu = false;
       renamingAccountIndex = null;
-      try {
+      void withErrorFlash(async () => {
         await sendRuntimeMessage<PopupState>({
           type: "wallet_switch_account",
           index
         });
         resetSendState();
         await refresh(null);
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
   }
 
@@ -3530,7 +3324,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     const input = root.querySelector<HTMLInputElement>(`[data-rename-input="${index}"]`);
     const name = input?.value.trim();
     if (!name) return;
-    try {
+    await withErrorFlash(async () => {
       await sendRuntimeMessage<PopupState>({
         type: "wallet_rename_account",
         index,
@@ -3539,10 +3333,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       renamingAccountIndex = null;
       showAccountMenu = false;
       await refresh(null);
-    } catch (error) {
-      setFlash(formatError(error), "danger");
-      render(state);
-    }
+    });
   }
 
   for (const btn of root.querySelectorAll<HTMLElement>("[data-save-rename]")) {
@@ -3562,25 +3353,22 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
 
   root
     .querySelector<HTMLElement>("[data-add-account-prompt]")
-    ?.addEventListener("click", async () => {
+    ?.addEventListener("click", () => {
       showAccountMenu = false;
       renamingAccountIndex = null;
-      try {
+      void withErrorFlash(async () => {
         await sendRuntimeMessage<PopupState>({
           type: "wallet_add_account"
         });
         setFlash("Account added.", "success");
         await refresh(null);
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
 
   root
     .querySelector<HTMLButtonElement>("[data-disconnect-all]")
-    ?.addEventListener("click", async () => {
-      try {
+    ?.addEventListener("click", () => {
+      void withErrorFlash(async () => {
         await sendRuntimeMessage<PopupState>({
           type: "wallet_disconnect_all_origins"
         });
@@ -3588,18 +3376,15 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           tone: "success",
           message: "Disconnected all sites."
         });
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
 
   for (const button of root.querySelectorAll<HTMLButtonElement>(
     "[data-disconnect-origin]"
   )) {
-    button.addEventListener("click", async () => {
+    button.addEventListener("click", () => {
       const origin = button.dataset.disconnectOrigin ?? "";
-      try {
+      void withErrorFlash(async () => {
         await sendRuntimeMessage<PopupState>({
           type: "wallet_disconnect_origin",
           origin
@@ -3608,10 +3393,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           tone: "success",
           message: `Disconnected ${safeOriginLabel(origin)}.`
         });
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
   }
 
@@ -3645,7 +3427,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
 
   root
     .querySelector<HTMLFormElement>("#decimals-form")
-    ?.addEventListener("submit", async (event) => {
+    ?.addEventListener("submit", (event) => {
       event.preventDefault();
       const decimals = parseInt(value("#decimals-input"), 10);
       if (!Number.isFinite(decimals) || decimals < 0 || decimals > 18) {
@@ -3653,7 +3435,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         render(state);
         return;
       }
-      try {
+      void withErrorFlash(async () => {
         await sendRuntimeMessage<PopupState>({
           type: "wallet_update_asset_decimals",
           contract: selectedAsset!,
@@ -3663,10 +3445,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           tone: "success",
           message: "Decimal places updated."
         });
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
 
   root
@@ -3683,13 +3462,13 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     });
   root
     .querySelector<HTMLElement>("[data-confirm-remove-selected-asset]")
-    ?.addEventListener("click", async () => {
+    ?.addEventListener("click", () => {
       const contract = selectedAsset;
       confirmRemoveSelectedAsset = false;
       if (!contract) {
         return;
       }
-      try {
+      void withErrorFlash(async () => {
         selectedAsset = null;
         tokenMeta = null;
         await sendRuntimeMessage<PopupState>({
@@ -3700,14 +3479,11 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           tone: "success",
           message: "Asset removed."
         });
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
 
   for (const button of root.querySelectorAll<HTMLElement>("[data-track-asset]")) {
-    button.addEventListener("click", async (event) => {
+    button.addEventListener("click", (event) => {
       event.stopPropagation();
       const contract = button.dataset.trackAsset ?? "";
       const asset =
@@ -3715,7 +3491,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       if (!asset) {
         return;
       }
-      try {
+      void withErrorFlash(async () => {
         await sendRuntimeMessage<PopupState>({
           type: "wallet_track_asset",
           asset: {
@@ -3730,24 +3506,17 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           tone: "success",
           message: `${asset.symbol ?? asset.contract} added to wallet.`
         });
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
   }
 
   root
     .querySelector<HTMLElement>("[data-track-selected-asset]")
-    ?.addEventListener("click", async () => {
-      if (!currentState || !selectedAsset) {
-        return;
-      }
+    ?.addEventListener("click", () => {
+      if (!currentState || !selectedAsset) return;
       const asset = findDisplayedAsset(currentState, selectedAsset);
-      if (!asset) {
-        return;
-      }
-      try {
+      if (!asset) return;
+      void withErrorFlash(async () => {
         await sendRuntimeMessage<PopupState>({
           type: "wallet_track_asset",
           asset: {
@@ -3762,10 +3531,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           tone: "success",
           message: `${asset.symbol ?? asset.contract} added to wallet.`
         });
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
 
   /* ── Send tab handlers ──────────────────────────────────── */
@@ -4305,14 +4071,12 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
 
   root
     .querySelector<HTMLElement>("[data-approve-inline]")
-    ?.addEventListener("click", async () => {
+    ?.addEventListener("click", () => {
       const id =
         root.querySelector<HTMLElement>("[data-approve-inline]")?.dataset
           .approveInline;
-      if (!id) {
-        return;
-      }
-      try {
+      if (!id) return;
+      void withErrorFlash(async () => {
         await sendRuntimeMessage<null>({
           type: "approval_resolve",
           approvalId: id,
@@ -4320,22 +4084,17 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         });
         activeApprovalId = null;
         await refresh({ tone: "success", message: "Approved." });
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
 
   root
     .querySelector<HTMLElement>("[data-reject-inline]")
-    ?.addEventListener("click", async () => {
+    ?.addEventListener("click", () => {
       const id =
         root.querySelector<HTMLElement>("[data-reject-inline]")?.dataset
           .rejectInline;
-      if (!id) {
-        return;
-      }
-      try {
+      if (!id) return;
+      void withErrorFlash(async () => {
         await sendRuntimeMessage<null>({
           type: "approval_resolve",
           approvalId: id,
@@ -4343,10 +4102,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         });
         activeApprovalId = null;
         await refresh({ tone: "info", message: "Rejected." });
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
 
   root
@@ -4369,7 +4125,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
 
       button.disabled = true;
 
-      try {
+      void withErrorFlash(async () => {
         currentState = await sendRuntimeMessage<PopupRuntimeState>({
           type: "wallet_set_shell_mode",
           shellMode
@@ -4399,10 +4155,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           "success"
         );
         render(currentState);
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
   }
 
@@ -4434,8 +4187,8 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
 
   root
     .querySelector<HTMLElement>("[data-confirm-remove]")
-    ?.addEventListener("click", async () => {
-      try {
+    ?.addEventListener("click", () => {
+      void withErrorFlash(async () => {
         await sendRuntimeMessage<PopupState>({
           type: "wallet_remove"
         });
@@ -4445,18 +4198,15 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           tone: "info",
           message: "Wallet removed."
         });
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
 
   for (const button of root.querySelectorAll<HTMLButtonElement>(
     "[data-switch-network]"
   )) {
-    button.addEventListener("click", async () => {
+    button.addEventListener("click", () => {
       const presetId = button.dataset.switchNetwork ?? "";
-      try {
+      void withErrorFlash(async () => {
         resetNetworkDraft();
         await sendRuntimeMessage<PopupState>({
           type: "wallet_switch_network",
@@ -4466,10 +4216,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           tone: "success",
           message: "Switched active network preset."
         });
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
   }
 
@@ -4494,7 +4241,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
   )) {
     button.addEventListener("click", async () => {
       const presetId = button.dataset.deleteNetwork ?? "";
-      try {
+      void withErrorFlash(async () => {
         resetNetworkDraft();
         await sendRuntimeMessage<PopupState>({
           type: "wallet_remove_network_preset",
@@ -4504,10 +4251,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           tone: "success",
           message: "Network preset deleted."
         });
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
   }
 
@@ -4520,9 +4264,9 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
 
   root
     .querySelector<HTMLFormElement>("#network-form")
-    ?.addEventListener("submit", async (event) => {
+    ?.addEventListener("submit", (event) => {
       event.preventDefault();
-      try {
+      void withErrorFlash(async () => {
         const editingExistingPreset = Boolean(networkDraft?.id);
         await sendRuntimeMessage<PopupState>({
           type: "wallet_save_network_preset",
@@ -4540,44 +4284,35 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
             ? "Network preset updated."
             : "Network preset created."
         });
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
 
   root
     .querySelector<HTMLElement>("[data-export-mnemonic]")
-    ?.addEventListener("click", async (event) => {
+    ?.addEventListener("click", (event) => {
       event.preventDefault();
-      try {
+      void withErrorFlash(async () => {
         revealedMnemonic = await sendRuntimeMessage<string>({
           type: "wallet_reveal_mnemonic",
           password: value("#export-password")
         });
         setFlash("Recovery seed revealed. Store it offline.", "warning");
         render(state);
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
 
   root
     .querySelector<HTMLElement>("[data-export-private-key]")
-    ?.addEventListener("click", async (event) => {
+    ?.addEventListener("click", (event) => {
       event.preventDefault();
-      try {
+      void withErrorFlash(async () => {
         revealedPrivateKey = await sendRuntimeMessage<string>({
           type: "wallet_reveal_private_key",
           password: value("#export-password")
         });
         setFlash("Private key revealed. Store it offline.", "warning");
         render(state);
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
 
   for (const el of root.querySelectorAll<HTMLElement>("[data-copy-secret]")) {
@@ -4633,33 +4368,30 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
 
   root
     .querySelector<HTMLElement>("[data-confirm-delete-account]")
-    ?.addEventListener("click", async () => {
+    ?.addEventListener("click", () => {
       const index = Number(
         root.querySelector<HTMLElement>("[data-confirm-delete-account]")?.dataset.confirmDeleteAccount
       );
       confirmDeleteAccountIndex = null;
-      try {
+      void withErrorFlash(async () => {
         await sendRuntimeMessage<PopupState>({
           type: "wallet_remove_account",
           index
         });
         setFlash("Account removed.", "info");
         await refresh(null);
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
 
   /* ── Export / Import ──────────────────────────────────────── */
 
   root
     .querySelector<HTMLFormElement>("#export-wallet-form")
-    ?.addEventListener("submit", async (event) => {
+    ?.addEventListener("submit", (event) => {
       event.preventDefault();
       const password = value("#backup-password");
       if (!password) return;
-      try {
+      void withErrorFlash(async () => {
         const backup = await sendRuntimeMessage<Record<string, unknown>>({
           type: "wallet_export",
           password
@@ -4670,10 +4402,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         );
         setFlash("Wallet exported.", "success");
         render(state);
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
 
   root
@@ -4696,7 +4425,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         return;
       }
 
-      try {
+      void withErrorFlash(async () => {
         const text = await file.text();
         const backup = JSON.parse(text);
         if (!backup || backup.version !== 1 || !backup.type) {
@@ -4714,15 +4443,12 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           tone: "success",
           message: "Wallet imported."
         });
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
 
   root
     .querySelector<HTMLFormElement>("#shielded-snapshot-form")
-    ?.addEventListener("submit", async (event) => {
+    ?.addEventListener("submit", (event) => {
       event.preventDefault();
       const stateSnapshot = value("#shielded-snapshot-json");
       if (!stateSnapshot) {
@@ -4730,7 +4456,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         render(state);
         return;
       }
-      try {
+      void withErrorFlash(async () => {
         await sendRuntimeMessage<PopupState>({
           type: "wallet_save_shielded_snapshot",
           stateSnapshot,
@@ -4740,25 +4466,20 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           tone: "success",
           message: "Shielded snapshot stored.",
         });
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
 
   for (const button of root.querySelectorAll<HTMLElement>("[data-export-shielded-snapshot]")) {
-    button.addEventListener("click", async () => {
+    button.addEventListener("click", () => {
       const snapshotId = button.dataset.exportShieldedSnapshot;
       const password = value("#backup-password");
-      if (!snapshotId) {
-        return;
-      }
+      if (!snapshotId) return;
       if (!password) {
         setFlash("Enter your backup password first to export a shielded snapshot.", "warning");
         render(state);
         return;
       }
-      try {
+      void withErrorFlash(async () => {
         const payload = await sendRuntimeMessage<{ label: string; stateSnapshot: string }>({
           type: "wallet_export_shielded_snapshot",
           snapshotId,
@@ -4771,10 +4492,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         );
         setFlash("Shielded snapshot exported.", "success");
         render(state);
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
   }
 
@@ -4808,12 +4526,10 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
   }
 
   for (const button of root.querySelectorAll<HTMLElement>("[data-remove-shielded-snapshot]")) {
-    button.addEventListener("click", async () => {
+    button.addEventListener("click", () => {
       const snapshotId = button.dataset.removeShieldedSnapshot;
-      if (!snapshotId) {
-        return;
-      }
-      try {
+      if (!snapshotId) return;
+      void withErrorFlash(async () => {
         shieldedHistoryStatus.delete(snapshotId);
         await sendRuntimeMessage<PopupState>({
           type: "wallet_remove_shielded_snapshot",
@@ -4823,10 +4539,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           tone: "info",
           message: "Shielded snapshot removed.",
         });
-      } catch (error) {
-        setFlash(formatError(error), "danger");
-        render(state);
-      }
+      });
     });
   }
 }
