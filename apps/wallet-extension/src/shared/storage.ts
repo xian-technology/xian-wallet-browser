@@ -5,6 +5,7 @@ import {
   LOCAL_NETWORK_PRESET_ID,
   LOCAL_NETWORK_PRESET_NAME,
   type PersistedApproval,
+  type StoredShieldedWalletSnapshot,
   type StoredProviderRequest,
   type StoredUnlockedSession,
   type StoredWalletState,
@@ -157,6 +158,45 @@ function normalizeShellMode(value: unknown): WalletShellMode {
   return value === "sidePanel" ? "sidePanel" : DEFAULT_WALLET_SHELL_MODE;
 }
 
+function normalizeShieldedWalletSnapshots(
+  value: unknown
+): StoredShieldedWalletSnapshot[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((entry): StoredShieldedWalletSnapshot[] => {
+    if (
+      !isRecord(entry) ||
+      typeof entry.id !== "string" ||
+      typeof entry.label !== "string" ||
+      typeof entry.assetId !== "string" ||
+      typeof entry.syncHint !== "string" ||
+      typeof entry.encryptedStateSnapshot !== "string" ||
+      typeof entry.noteCount !== "number" ||
+      typeof entry.commitmentCount !== "number" ||
+      typeof entry.lastScannedIndex !== "number" ||
+      typeof entry.updatedAt !== "string"
+    ) {
+      return [];
+    }
+
+    return [
+      {
+        id: entry.id,
+        label: entry.label,
+        assetId: entry.assetId,
+        syncHint: entry.syncHint,
+        encryptedStateSnapshot: entry.encryptedStateSnapshot,
+        noteCount: entry.noteCount,
+        commitmentCount: entry.commitmentCount,
+        lastScannedIndex: entry.lastScannedIndex,
+        updatedAt: entry.updatedAt
+      }
+    ];
+  });
+}
+
 function normalizeWalletState(value: unknown): StoredWalletState | null {
   if (!isRecord(value)) {
     return null;
@@ -235,6 +275,9 @@ function normalizeWalletState(value: unknown): StoredWalletState | null {
     activeNetworkId,
     networkPresets,
     watchedAssets: Array.isArray(value.watchedAssets) ? value.watchedAssets : [],
+    shieldedWalletSnapshots: normalizeShieldedWalletSnapshots(
+      value.shieldedWalletSnapshots
+    ),
     connectedOrigins: Array.isArray(value.connectedOrigins)
       ? value.connectedOrigins.filter((entry): entry is string => typeof entry === "string")
       : [],

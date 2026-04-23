@@ -97,6 +97,23 @@ describe("wallet-extension storage", () => {
           }
         ],
         watchedAssets: [],
+        shieldedWalletSnapshots: [
+          {
+            id: "snapshot-1",
+            label: "Treasury shielded",
+            assetId: "con_private",
+            syncHint: "0xsync",
+            encryptedStateSnapshot: "encrypted-json",
+            noteCount: 2,
+            commitmentCount: 3,
+            lastScannedIndex: 4,
+            updatedAt: "2026-01-02T00:00:00.000Z"
+          },
+          {
+            id: "invalid-snapshot",
+            label: "Missing encrypted payload"
+          }
+        ],
         connectedOrigins: ["https://app.example"],
         createdAt: "2026-01-01T00:00:00.000Z"
       },
@@ -110,6 +127,19 @@ describe("wallet-extension storage", () => {
       publicKey: "a".repeat(64),
       seedSource: "privateKey",
       connectedOrigins: ["https://app.example"],
+      shieldedWalletSnapshots: [
+        {
+          id: "snapshot-1",
+          label: "Treasury shielded",
+          assetId: "con_private",
+          syncHint: "0xsync",
+          encryptedStateSnapshot: "encrypted-json",
+          noteCount: 2,
+          commitmentCount: 3,
+          lastScannedIndex: 4,
+          updatedAt: "2026-01-02T00:00:00.000Z"
+        }
+      ],
       activeNetworkId: "custom-network",
       networkPresets: [
         expect.objectContaining({
