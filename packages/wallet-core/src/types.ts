@@ -146,6 +146,7 @@ export interface WalletControllerStore extends WalletStateStore {
 export interface PopupState {
   hasWallet: boolean;
   unlocked: boolean;
+  sessionExpiresAt?: number;
   publicKey?: string;
   rpcUrl: string;
   dashboardUrl?: string;

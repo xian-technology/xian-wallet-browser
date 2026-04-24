@@ -248,6 +248,72 @@ test("approves connect and send-call requests through the injected provider brid
   }
 });
 
+test("switches an open popup to the locked screen when the unlocked session expires", async () => {
+  const { context, extensionId, userDataDir } = await launchExtension();
+
+  try {
+    const popup = await openExtensionPage(context, extensionId, "popup.html");
+    await createWalletInPopup(popup, "correct horse battery");
+    await expect(popup.getByRole("button", { name: "Settings" })).toBeVisible();
+
+    await popup.evaluate(() => {
+      const sessionKey = "xianWalletShellSession";
+      return new Promise<void>((resolve, reject) => {
+        chrome.storage.session.get([sessionKey], (result) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          const session = result[sessionKey] as { expiresAt?: number } | undefined;
+          if (!session) {
+            reject(new Error("missing unlocked session"));
+            return;
+          }
+          chrome.storage.session.set(
+            {
+              [sessionKey]: {
+                ...session,
+                expiresAt: Date.now() + 250
+              }
+            },
+            () => {
+              if (chrome.runtime.lastError) {
+                reject(new Error(chrome.runtime.lastError.message));
+                return;
+              }
+              resolve();
+            }
+          );
+        });
+      });
+    });
+
+    await popup.reload();
+
+    await expect(
+      popup.getByRole("button", { name: "Unlock" })
+    ).toBeVisible({ timeout: 3_000 });
+    await expect(
+      popup.getByText("Wallet is locked.")
+    ).toBeVisible();
+    await expect(
+      popup.getByRole("button", { name: "Settings" })
+    ).toHaveCount(0);
+    await expect
+      .poll(() =>
+        sendRuntimeMessage<{ hasWallet: boolean; unlocked: boolean }>(popup, {
+          type: "wallet_get_popup_state"
+        })
+      )
+      .toMatchObject({
+        hasWallet: true,
+        unlocked: false
+      });
+  } finally {
+    await cleanupExtension(context, userDataDir);
+  }
+});
+
 test("rejects or dismisses pending approvals and returns provider errors to the page", async () => {
   const dapp = await startDappServer();
   const { context, extensionId, userDataDir } = await launchExtension();

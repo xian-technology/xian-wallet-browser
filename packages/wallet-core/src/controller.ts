@@ -443,6 +443,7 @@ export class WalletController {
   private unlockedSigner: Ed25519Signer | null = null;
   private unlockedSessionKey: string | null = null;
   private unlockedMnemonic: string | null = null;
+  private unlockedSessionExpiresAt: number | null = null;
 
   constructor(private readonly options: WalletControllerOptions) {}
 
@@ -487,26 +488,26 @@ export class WalletController {
   }
 
   private async restoreUnlockedSession(): Promise<boolean> {
-    if (this.unlockedPrivateKey) {
-      return true;
-    }
-
     const session = await this.store.loadUnlockedSession();
     if (!session) {
+      this.unlockedPrivateKey = null;
+      this.unlockedSigner = null;
+      this.unlockedMnemonic = null;
+      this.unlockedSessionKey = null;
+      this.unlockedSessionExpiresAt = null;
       return false;
     }
 
     if (session.expiresAt <= this.now()) {
-      await this.store.clearUnlockedSession();
+      await this.expireUnlockedSession();
       return false;
     }
 
     this.unlockedPrivateKey = session.privateKey;
     this.unlockedSigner = new Ed25519Signer(session.privateKey);
-    if (session.mnemonic) {
-      this.unlockedMnemonic = session.mnemonic;
-    }
+    this.unlockedMnemonic = session.mnemonic ?? null;
     this.unlockedSessionKey = session.sessionKey;
+    this.unlockedSessionExpiresAt = session.expiresAt;
     return true;
   }
 
@@ -538,6 +539,7 @@ export class WalletController {
       expiresAt: nextExpiresAt
     };
     await this.store.saveUnlockedSession(session);
+    this.unlockedSessionExpiresAt = nextExpiresAt;
   }
 
   private async clearUnlockedSession(): Promise<void> {
@@ -545,7 +547,22 @@ export class WalletController {
     this.unlockedSigner = null;
     this.unlockedMnemonic = null;
     this.unlockedSessionKey = null;
+    this.unlockedSessionExpiresAt = null;
     await this.store.clearUnlockedSession();
+  }
+
+  private async expireUnlockedSession(): Promise<void> {
+    await this.clearUnlockedSession();
+    const state = await this.loadWalletState();
+    if (!state) {
+      return;
+    }
+
+    await Promise.allSettled(
+      state.connectedOrigins.map((origin) =>
+        this.emitDisconnectLifecycle(origin)
+      )
+    );
   }
 
   private async getUnlockedSigner(): Promise<Ed25519Signer> {
@@ -1629,6 +1646,9 @@ export class WalletController {
     return {
       hasWallet: state != null,
       unlocked,
+      sessionExpiresAt: unlocked
+        ? this.unlockedSessionExpiresAt ?? undefined
+        : undefined,
       publicKey: state?.publicKey,
       rpcUrl: state?.rpcUrl ?? DEFAULT_RPC_URL,
       dashboardUrl: state?.dashboardUrl ?? DEFAULT_DASHBOARD_URL,

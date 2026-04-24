@@ -1092,6 +1092,76 @@ describe("@xian-tech/wallet-core controller", () => {
     expect(store.currentSession()).toBeNull();
   });
 
+  it("expires the active in-memory session and reports locked popup state", async () => {
+    const store = createStore();
+    const client = createClient();
+    const baseNow = 1_000_000;
+    let now = baseNow;
+    const onProviderEvent = vi.fn(async () => undefined);
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined),
+      onProviderEvent,
+      createId: vi.fn(() => "approval-connect"),
+      now: vi.fn(() => now)
+    });
+
+    const created = await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+
+    expect(created.popupState).toMatchObject({
+      unlocked: true,
+      sessionExpiresAt: baseNow + UNLOCKED_SESSION_TIMEOUT_MS
+    });
+
+    await controller.startProviderRequest("request-connect", ORIGIN, {
+      method: "xian_requestAccounts"
+    });
+    await controller.resolveApproval("approval-connect", true);
+
+    now = baseNow + UNLOCKED_SESSION_TIMEOUT_MS + 1;
+
+    const popupAfterExpiry = await controller.getPopupState();
+    expect(popupAfterExpiry.unlocked).toBe(false);
+    expect(popupAfterExpiry.sessionExpiresAt).toBeUndefined();
+    expect(store.currentSession()).toBeNull();
+    expect(onProviderEvent).toHaveBeenNthCalledWith(
+      4,
+      "accountsChanged",
+      [[]],
+      ORIGIN
+    );
+    expect(onProviderEvent).toHaveBeenNthCalledWith(
+      5,
+      "disconnect",
+      [{ code: 4100, message: "wallet disconnected" }],
+      ORIGIN
+    );
+
+    await expect(
+      controller.startProviderRequest("request-sign-expired", ORIGIN, {
+        method: "xian_signMessage",
+        params: [{ message: "sign me" }]
+      })
+    ).resolves.toEqual({
+      status: "rejected",
+      error: expect.objectContaining({
+        code: 4100,
+        message: "wallet is locked",
+        name: "ProviderUnauthorizedError"
+      })
+    });
+  });
+
   it("keeps the current session unlocked when auto-lock is disabled and restores five-minute expiry on the next unlock", async () => {
     const store = createStore();
     const client = createClient();

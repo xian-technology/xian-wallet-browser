@@ -99,6 +99,7 @@ let confirmRemoveSelectedAsset = false;
 let confirmWalletRemoval = false;
 let showSaveRecipient = false;
 let autoLockEnabled = DEFAULT_AUTO_LOCK;
+let autoLockRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let balanceWatchClient: XianClient | null = null;
 let balanceWatchClientKey: string | null = null;
 const balanceSubscriptions = new Map<string, WatchSubscription>();
@@ -767,6 +768,34 @@ async function refresh(nextFlash?: FlashMessage | null): Promise<void> {
   void refreshBalances();
 }
 
+const MAX_AUTO_LOCK_REFRESH_DELAY_MS = 2_147_483_647;
+
+function scheduleAutoLockRefresh(state: PopupRuntimeState | null): void {
+  if (autoLockRefreshTimer) {
+    clearTimeout(autoLockRefreshTimer);
+    autoLockRefreshTimer = null;
+  }
+
+  const expiresAt = state?.unlocked ? state.sessionExpiresAt : undefined;
+  if (
+    typeof expiresAt !== "number" ||
+    !Number.isFinite(expiresAt) ||
+    expiresAt >= Number.MAX_SAFE_INTEGER
+  ) {
+    return;
+  }
+
+  const delay = expiresAt - Date.now();
+  if (delay > MAX_AUTO_LOCK_REFRESH_DELAY_MS) {
+    return;
+  }
+
+  autoLockRefreshTimer = setTimeout(() => {
+    autoLockRefreshTimer = null;
+    void refresh(null);
+  }, Math.max(0, delay + 50));
+}
+
 async function refreshDetectedAssets(): Promise<void> {
   if (!currentState?.unlocked) {
     if (currentState) {
@@ -873,6 +902,7 @@ function render(state: PopupRuntimeState | null): void {
     renderUnlocked(state);
   }
   renderToast();
+  scheduleAutoLockRefresh(state);
 }
 
 function renderLoading(): void {
@@ -4614,6 +4644,10 @@ chrome.runtime.onMessage.addListener(
 );
 
 window.addEventListener("beforeunload", () => {
+  if (autoLockRefreshTimer) {
+    clearTimeout(autoLockRefreshTimer);
+    autoLockRefreshTimer = null;
+  }
   void clearBalanceSubscriptions();
 });
 
