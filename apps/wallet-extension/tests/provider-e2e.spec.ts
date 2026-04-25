@@ -314,6 +314,32 @@ test("switches an open popup to the locked screen when the unlocked session expi
   }
 });
 
+test("locks the wallet when the header lock button is clicked", async () => {
+  const { context, extensionId, userDataDir } = await launchExtension();
+
+  try {
+    const popup = await openExtensionPage(context, extensionId, "popup.html");
+    await createWalletInPopup(popup, "correct horse battery");
+
+    await popup.getByRole("button", { name: "Lock wallet" }).click();
+
+    await expect(popup.getByRole("button", { name: "Unlock" })).toBeVisible();
+    await expect(popup.getByText("Wallet is locked.")).toBeVisible();
+    await expect
+      .poll(() =>
+        sendRuntimeMessage<{ hasWallet: boolean; unlocked: boolean }>(popup, {
+          type: "wallet_get_popup_state"
+        })
+      )
+      .toMatchObject({
+        hasWallet: true,
+        unlocked: false
+      });
+  } finally {
+    await cleanupExtension(context, userDataDir);
+  }
+});
+
 test("rejects or dismisses pending approvals and returns provider errors to the page", async () => {
   const dapp = await startDappServer();
   const { context, extensionId, userDataDir } = await launchExtension();

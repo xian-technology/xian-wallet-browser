@@ -729,11 +729,16 @@ async function refresh(nextFlash?: FlashMessage | null): Promise<void> {
   if (nextFlash !== undefined) {
     flash = nextFlash;
   }
-  currentState = await sendRuntimeMessage<PopupRuntimeState>({
+  const state = await sendRuntimeMessage<PopupRuntimeState>({
     type: "wallet_get_popup_state"
   });
+  await applyPopupState(state);
+}
+
+async function applyPopupState(state: PopupRuntimeState): Promise<void> {
+  currentState = state;
   const activeSnapshotIds = new Set(
-    currentState.shieldedWalletSnapshots.map((snapshot) => snapshot.id)
+    state.shieldedWalletSnapshots.map((snapshot) => snapshot.id)
   );
   for (const snapshotId of shieldedHistoryStatus.keys()) {
     if (!activeSnapshotIds.has(snapshotId)) {
@@ -741,16 +746,16 @@ async function refresh(nextFlash?: FlashMessage | null): Promise<void> {
     }
   }
 
-  if (currentState.unlocked && !contactsLoaded) {
+  if (state.unlocked && !contactsLoaded) {
     contacts = await sendRuntimeMessage<Contact[]>({ type: "contacts_get" });
     contactsLoaded = true;
   }
 
-  if (!currentState.hasWallet || !currentState.unlocked) {
+  if (!state.hasWallet || !state.unlocked) {
     revealedMnemonic = null;
     networkDraft = null;
   }
-  if (!currentState.unlocked) {
+  if (!state.unlocked) {
     generatedMnemonic = null;
     resetSendState();
     contactsLoaded = false;
@@ -759,10 +764,10 @@ async function refresh(nextFlash?: FlashMessage | null): Promise<void> {
   }
 
   balancesLoading =
-    currentState.unlocked &&
-    (currentState.watchedAssets.length > 0 ||
-      visibleDetectedAssets(currentState).length > 0);
-  render(currentState);
+    state.unlocked &&
+    (state.watchedAssets.length > 0 ||
+      visibleDetectedAssets(state).length > 0);
+  render(state);
   void syncBalanceSubscriptions();
   void refreshDetectedAssets();
   void refreshBalances();
@@ -3295,12 +3300,16 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       void withErrorFlash(async () => {
         generatedMnemonic = null;
         revealedMnemonic = null;
-        await sendRuntimeMessage<PopupState>({
+        const lockedState = await sendRuntimeMessage<PopupState>({
           type: "wallet_lock"
         });
-        await refresh({
+        flash = {
           tone: "info",
           message: "Wallet locked."
+        };
+        await applyPopupState({
+          ...lockedState,
+          shellMode: state.shellMode
         });
       });
     });
