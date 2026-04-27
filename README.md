@@ -6,6 +6,21 @@ concrete browser-extension wallet that consumes it. The official JS / TS
 SDK lives in the sibling [`xian-js`](../xian-js) repo; this repo is the
 *product* on top of those primitives.
 
+## Product Shape
+
+```mermaid
+flowchart LR
+  Core["@xian-tech/wallet-core"] --> Extension["MV3 wallet extension"]
+  SDK["xian-js client and provider"] --> Core
+  Extension --> Popup["Popup and approval UI"]
+  Extension --> Background["Background service worker"]
+  Extension --> Content["Content and inpage bridge"]
+  Dapp["Dapp"] --> Content
+  Content --> Provider["Injected provider"]
+  Provider --> Background
+  Background --> Node["Xian node"]
+```
+
 ## Quick Start
 
 This repo consumes `@xian-tech/client` and `@xian-tech/provider` from the

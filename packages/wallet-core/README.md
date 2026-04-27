@@ -15,3 +15,14 @@ It is intentionally UI-agnostic. It owns:
 
 It does not own browser-extension transport, popup rendering, or injected-page
 bridges. Those stay in app-level code such as `apps/wallet-extension/`.
+
+```mermaid
+flowchart LR
+  Extension["Wallet extension app"] --> Core["wallet-core"]
+  Core --> Custody["Key encryption and recovery"]
+  Core --> Approvals["Approval policy"]
+  Core --> Requests["Durable request lifecycle"]
+  Core --> Networks["Network presets"]
+  Core --> Provider["Provider enforcement"]
+  Provider --> Client["@xian-tech/client"]
+```

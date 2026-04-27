@@ -20,6 +20,18 @@ It includes:
 - durable request and approval tracking so approval flows survive MV3
   service-worker suspension
 
+```mermaid
+flowchart LR
+  Page["Web page"] --> Inpage["Injected provider"]
+  Inpage --> Content["Content script"]
+  Content --> Background["Background worker"]
+  Background --> Core["@xian-tech/wallet-core"]
+  Core --> Storage["chrome.storage"]
+  Background --> Approval["Approval window"]
+  Popup["Popup UI"] --> Background
+  Background --> Node["Xian node"]
+```
+
 ## Build
 
 From the repo root:
