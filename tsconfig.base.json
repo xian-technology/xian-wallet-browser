@@ -16,6 +16,7 @@
     "isolatedModules": true,
     "forceConsistentCasingInFileNames": true,
     "baseUrl": ".",
+    "ignoreDeprecations": "6.0",
     "paths": {
       "@xian-tech/client": ["../xian-js/packages/client/dist/index.d.ts"],
       "@xian-tech/provider": ["../xian-js/packages/provider/dist/index.d.ts"],
