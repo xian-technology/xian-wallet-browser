@@ -37,6 +37,53 @@ npm run test:browser --workspace xian-wallet-extension
 npm run test:visual  --workspace xian-wallet-extension
 ```
 
+## Product Workflows
+
+The browser wallet has two layers:
+
+- `@xian-tech/wallet-core` owns key material, account state, approval policy,
+  durable request state, and transaction classification.
+- `xian-wallet-extension` owns MV3 background / content / inpage transport,
+  popup UI, approval UI, and browser storage.
+
+Typical user-facing flows covered by this repo:
+
+| Flow | Owned by | Notes |
+| --- | --- | --- |
+| Create / restore wallet | `wallet-core`, popup UI | mnemonic and private-key handling stays inside the wallet |
+| Lock / unlock | `wallet-core`, extension storage | UI transport must not expose secrets while locked |
+| Connect dapp | content / inpage bridge, approval UI | exposes `window.xian` / provider methods from `xian-js` |
+| Sign message | provider bridge, approval UI | dapps receive only the signature |
+| Prepare / sign / send tx | provider bridge, `@xian-tech/client` | dapps can send an intent without seeing private keys |
+| Watch asset | provider bridge, token registry UI | lets dapps request token tracking |
+| Network switching | popup UI, provider events | emits provider chain changes for connected dapps |
+
+Load the extension locally after building:
+
+```bash
+npm run build --workspace xian-wallet-extension
+```
+
+Then open the browser extension management page, enable developer mode, and
+load `apps/wallet-extension/dist` as an unpacked extension. Use a local node
+from `xian-stack` or a reachable public RPC in the wallet network settings.
+
+For dapp testing, pair it with the `xian-js` browser example:
+
+```bash
+cd ../xian-js
+npm run dev --workspace example-browser-dapp
+```
+
+The extension injects the provider into pages through the same public
+contract that dapps consume:
+
+```ts
+const wallet = await window.xian?.provider?.request({
+  method: "xian_requestAccounts",
+});
+```
+
 ## Principles
 
 - **Browser wallets are product code.** They are not SDK examples. UX,
@@ -95,4 +142,3 @@ npm run test:visual  --workspace xian-wallet-extension
 - [docs/QA_CHECKLIST.md](docs/QA_CHECKLIST.md) — pre-release QA checklist
 - [docs/UX_REVIEW.md](docs/UX_REVIEW.md) — UX review notes
 - [`../xian-js/README.md`](../xian-js/README.md) — official JS / TS SDK consumed by this repo
-- [`../xian-meta/docs/XIAN_JS_SDK_MVP.md`](../xian-meta/docs/XIAN_JS_SDK_MVP.md) — original JS SDK and wallet split note
