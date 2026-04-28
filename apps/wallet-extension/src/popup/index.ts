@@ -18,6 +18,11 @@ import {
   DEFAULT_AUTO_LOCK,
   type WalletShellMode
 } from "../shared/preferences";
+import {
+  isPositiveRuntimeAmount,
+  parseArgValue,
+  parseRuntimeNumberInput
+} from "../runtime-input";
 
 const appRoot = document.querySelector<HTMLElement>("#app");
 if (!appRoot) {
@@ -235,76 +240,6 @@ function mapContractType(annotation: string): TxArgType {
       return "Any";
     default:
       return "str";
-  }
-}
-
-function parseIntegerInput(value: string): number | bigint | null {
-  const trimmed = value.trim();
-  if (!/^-?\d+$/.test(trimmed)) {
-    return null;
-  }
-  const parsed = BigInt(trimmed);
-  const maxSafe = BigInt(Number.MAX_SAFE_INTEGER);
-  const minSafe = BigInt(Number.MIN_SAFE_INTEGER);
-  return parsed >= minSafe && parsed <= maxSafe ? Number(parsed) : parsed;
-}
-
-function parseRuntimeNumberInput(value: string): number | bigint | null {
-  const trimmed = value.trim();
-  if (/^-?\d+$/.test(trimmed)) {
-    return parseIntegerInput(trimmed);
-  }
-  if (!/^-?(?:\d+\.?\d*|\.\d+)$/.test(trimmed)) {
-    return null;
-  }
-  const parsed = Number(trimmed);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function parseArgValue(val: string, type: TxArgType): unknown {
-  switch (type) {
-    case "str":
-    case "Any":
-      return val;
-    case "int": {
-      return parseIntegerInput(val) ?? val;
-    }
-    case "float": {
-      const n = parseFloat(val);
-      return Number.isFinite(n) ? n : val;
-    }
-    case "bool":
-      return val.toLowerCase() === "true" || val === "1";
-    case "dict":
-    case "list":
-      try {
-        return JSON.parse(val);
-      } catch {
-        return val;
-      }
-    case "datetime": {
-      const d = new Date(val);
-      if (Number.isNaN(d.getTime())) {
-        return val;
-      }
-      return {
-        __time__: [
-          d.getFullYear(),
-          d.getMonth() + 1,
-          d.getDate(),
-          d.getHours(),
-          d.getMinutes(),
-          d.getSeconds()
-        ]
-      };
-    }
-    case "timedelta": {
-      const secs = parseInt(val, 10);
-      if (!Number.isFinite(secs)) {
-        return val;
-      }
-      return { __delta__: [Math.floor(secs / 86400), secs % 86400] };
-    }
   }
 }
 
@@ -3934,10 +3869,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         return;
       }
       const amount = parseRuntimeNumberInput(simpleAmount);
-      if (
-        amount == null ||
-        (typeof amount === "bigint" ? amount <= 0n : amount <= 0)
-      ) {
+      if (amount == null || !isPositiveRuntimeAmount(amount)) {
         setFlash("Enter a valid amount.", "warning");
         render(state);
         return;
