@@ -1213,6 +1213,17 @@ button.secondary:hover {
   transform: none;
 }
 
+button.danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border: 1px solid rgba(255, 77, 79, 0.22);
+}
+
+button.danger:hover {
+  background: rgba(255, 77, 79, 0.16);
+  transform: none;
+}
+
 button.ghost {
   background: transparent;
   color: var(--text-secondary);
@@ -1398,6 +1409,77 @@ textarea {
 .surface-quiet {
   background: var(--card-quiet);
   border-color: transparent;
+}
+
+/* ── App dialogs ── */
+
+.app-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.app-dialog {
+  width: 100%;
+  max-width: 344px;
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.5);
+}
+
+.app-dialog-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.app-dialog-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.app-dialog-title {
+  margin: 12px 0 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.app-dialog-copy {
+  margin: 8px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.app-dialog-value {
+  margin-top: 12px;
+  padding: 10px;
+  border-radius: 10px;
+  background: var(--bg-2);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.app-dialog-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 14px;
 }
 
 /* ── Detail Grid ── */

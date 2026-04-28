@@ -118,7 +118,7 @@ export interface WalletNetworkClient {
     contract: string;
     function: string;
     kwargs: Record<string, unknown>;
-  }): Promise<{ estimated: number; suggested: number }>;
+  }): Promise<{ estimated: number }>;
   getContractMethods(contract: string): Promise<{ name: string; arguments: { name: string; type: string }[] }[]>;
   buildTx(intent: {
     sender: string;
@@ -1790,7 +1790,7 @@ export class WalletController {
     contract: string;
     function: string;
     kwargs: Record<string, unknown>;
-  }): Promise<{ estimated: number; suggested: number }> {
+  }): Promise<{ estimated: number }> {
     const state = this.requireStoredWallet(await this.loadWalletState());
     const client = this.currentClient(state);
     return client.estimateChi({

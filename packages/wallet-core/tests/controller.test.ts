@@ -140,8 +140,7 @@ function createClient(): WalletNetworkClient {
       afterNoteIndex: 0
     })),
     estimateChi: vi.fn(async () => ({
-      estimated: 12_000,
-      suggested: 14_400
+      estimated: 12_000
     })),
     getContractMethods: vi.fn(async () => []),
     buildTx: vi.fn(async (intent) => ({
@@ -622,8 +621,7 @@ describe("@xian-tech/wallet-core controller", () => {
           logoSvg: null
         })),
         estimateChi: vi.fn(async () => ({
-          estimated: 12_000,
-          suggested: 14_400
+          estimated: 12_000
         })),
         getContractMethods: vi.fn(async () => []),
         buildTx: vi.fn(async (intent) => ({

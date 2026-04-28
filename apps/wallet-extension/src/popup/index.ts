@@ -20,6 +20,7 @@ import {
 } from "../shared/preferences";
 import {
   isPositiveRuntimeAmount,
+  isRecognizedXianRecipient,
   parseArgValue,
   parseRuntimeNumberInput
 } from "../runtime-input";
@@ -138,6 +139,9 @@ let simpleToken = "currency";
 let showTokenPicker = false;
 let simpleTo = "";
 let simpleAmount = "";
+let pendingUnrecognizedRecipient: string | null = null;
+let simpleReviewLoading = false;
+let simpleReviewRequestId = 0;
 
 // Contacts
 interface Contact {
@@ -156,7 +160,7 @@ let sendArgs: TxArg[] = [];
 let sendEstimateMode = true;
 let sendManualChi = "";
 let sendParsedKwargs: Record<string, unknown> | null = null;
-let sendEstimate: { estimated: number; suggested: number } | null = null;
+let sendEstimate: { estimated: number } | null = null;
 let sendChiRate: number | null = null;
 let sendResult: {
   submitted: boolean;
@@ -178,6 +182,9 @@ function resetSendState(): void {
   showTokenPicker = false;
   simpleTo = "";
   simpleAmount = "";
+  pendingUnrecognizedRecipient = null;
+  simpleReviewLoading = false;
+  simpleReviewRequestId++;
   showSaveRecipient = false;
   showContactPicker = false;
   editingContacts = false;
@@ -216,6 +223,15 @@ function captureSendFormState(): void {
     if (v) arg.value = v.value;
     if (t) arg.type = t.value as TxArgType;
   }
+}
+
+function captureSimpleSendFormState(): void {
+  const tokenSelect = root.querySelector<HTMLSelectElement>("#simple-token");
+  const toInput = root.querySelector<HTMLInputElement>("#simple-to");
+  const amtInput = root.querySelector<HTMLInputElement>("#simple-amount");
+  if (tokenSelect) simpleToken = tokenSelect.value;
+  if (toInput) simpleTo = toInput.value.trim();
+  if (amtInput) simpleAmount = amtInput.value.trim();
 }
 
 function mapContractType(annotation: string): TxArgType {
@@ -608,6 +624,7 @@ function setActiveTab(tab: PopupTab): void {
   activeApprovalId = null;
   revealedPrivateKey = null;
   selectedTxHash = null;
+  pendingUnrecognizedRecipient = null;
   confirmDeleteContactId = null;
   confirmRemoveSelectedAsset = false;
   if (tab === "activity" && currentState?.publicKey) {
@@ -887,6 +904,23 @@ function renderAccountMenu(state: PopupRuntimeState): string {
   `;
 }
 
+function renderUnrecognizedRecipientDialog(recipient: string): string {
+  return `
+    <div class="app-dialog-backdrop" role="presentation">
+      <div class="app-dialog" role="dialog" aria-modal="true" aria-labelledby="recipient-confirm-title">
+        <div class="app-dialog-icon">${ICONS.alertTriangle}</div>
+        <h3 id="recipient-confirm-title" class="app-dialog-title">Confirm recipient</h3>
+        <p class="app-dialog-copy">This recipient is not a standard Xian address or contract name. Send funds to it anyway?</p>
+        <div class="app-dialog-value mono">${escapeHtml(recipient)}</div>
+        <div class="app-dialog-actions">
+          <button class="secondary full-width" data-cancel-unrecognized-recipient>Cancel</button>
+          <button class="danger full-width" data-confirm-unrecognized-recipient>Send Anyway</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 /* ═══════════════════════════════════════════════════════════
    SETUP SCREEN
    ═══════════════════════════════════════════════════════════ */
@@ -1158,6 +1192,7 @@ function renderUnlocked(state: PopupRuntimeState): void {
           Settings
         </button>
       </nav>
+      ${pendingUnrecognizedRecipient ? renderUnrecognizedRecipientDialog(pendingUnrecognizedRecipient) : ""}
     </div>
   `;
 
@@ -2135,13 +2170,96 @@ function renderSimpleSend(state: PopupRuntimeState): string {
         </div>
       </div>
 
-      <button class="full-width" data-review-simple>Review</button>
+      <button class="full-width" data-review-simple ${simpleReviewLoading ? "disabled" : ""}>
+        ${simpleReviewLoading ? `<span class="btn-spinner"></span> Estimating...` : "Review"}
+      </button>
       <div class="send-footer-links">
         <button class="send-footer-link" data-switch-advanced>Advanced transaction</button>
         <button class="send-footer-link" data-edit-contacts>${contacts.length > 0 ? "Manage contacts" : "Add contacts"}</button>
       </div>
     </div>
   `;
+}
+
+async function reviewSimpleSend(
+  state: PopupRuntimeState,
+  options: { confirmedUnrecognized?: boolean } = {}
+): Promise<void> {
+  if (simpleReviewLoading) {
+    return;
+  }
+  if (!simpleTo) {
+    setFlash("Recipient address is required.", "warning");
+    render(state);
+    return;
+  }
+  if (simpleTo === state.publicKey) {
+    setFlash("You can't send tokens to your own address.", "warning");
+    render(state);
+    return;
+  }
+  if (
+    !options.confirmedUnrecognized &&
+    !isRecognizedXianRecipient(simpleTo)
+  ) {
+    pendingUnrecognizedRecipient = simpleTo;
+    render(state);
+    return;
+  }
+
+  const amount = parseRuntimeNumberInput(simpleAmount);
+  if (amount == null || !isPositiveRuntimeAmount(amount)) {
+    setFlash("Enter a valid amount.", "warning");
+    render(state);
+    return;
+  }
+
+  pendingUnrecognizedRecipient = null;
+  sendContract = simpleToken;
+  sendFunction = "transfer";
+  sendParsedKwargs = { to: simpleTo, amount };
+  sendEstimateMode = true;
+  simpleReviewLoading = true;
+  const requestId = ++simpleReviewRequestId;
+  clearFlash();
+  render(state);
+
+  const timeout = setTimeout(() => {
+    if (requestId !== simpleReviewRequestId) {
+      return;
+    }
+    simpleReviewRequestId++;
+    simpleReviewLoading = false;
+    setFlash("Estimation timed out. Try again.", "warning");
+    render(state);
+  }, 15000);
+
+  try {
+    [sendEstimate, sendChiRate] = await Promise.all([
+      sendRuntimeMessage<{ estimated: number }>({
+        type: "wallet_estimate_transaction",
+        contract: sendContract,
+        function: sendFunction,
+        kwargs: sendParsedKwargs
+      }),
+      sendRuntimeMessage<number | null>({ type: "wallet_get_chi_rate" }),
+    ]);
+    if (requestId !== simpleReviewRequestId) {
+      return;
+    }
+    clearTimeout(timeout);
+    simpleReviewLoading = false;
+    sendStep = "review";
+    render(state);
+  } catch (error) {
+    if (requestId !== simpleReviewRequestId) {
+      return;
+    }
+    clearTimeout(timeout);
+    simpleReviewLoading = false;
+    setFlash(formatError(error), "danger");
+    render(state);
+  }
 }
 
 function formatSimpleBalance(raw: string): string {
@@ -3511,6 +3629,24 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
   /* ── Send tab handlers ──────────────────────────────────── */
 
   root
+    .querySelector<HTMLElement>("[data-cancel-unrecognized-recipient]")
+    ?.addEventListener("click", () => {
+      pendingUnrecognizedRecipient = null;
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-confirm-unrecognized-recipient]")
+    ?.addEventListener("click", () => {
+      if (!pendingUnrecognizedRecipient) {
+        return;
+      }
+      simpleTo = pendingUnrecognizedRecipient;
+      pendingUnrecognizedRecipient = null;
+      void reviewSimpleSend(state, { confirmedUnrecognized: true });
+    });
+
+  root
     .querySelector<HTMLInputElement>("#send-contract")
     ?.addEventListener("blur", async () => {
       const contractInput = root.querySelector<HTMLInputElement>(
@@ -3632,7 +3768,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       if (sendEstimateMode) {
         try {
           [sendEstimate, sendChiRate] = await Promise.all([
-            sendRuntimeMessage<{ estimated: number; suggested: number }>({
+            sendRuntimeMessage<{ estimated: number }>({
               type: "wallet_estimate_transaction",
               contract: sendContract,
               function: sendFunction,
@@ -3843,77 +3979,8 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
   {
     const reviewBtn = root.querySelector<HTMLButtonElement>("[data-review-simple]");
     reviewBtn?.addEventListener("click", async () => {
-      const tokenSelect = root.querySelector<HTMLSelectElement>("#simple-token");
-      if (tokenSelect) simpleToken = tokenSelect.value;
-      const toInput = root.querySelector<HTMLInputElement>("#simple-to");
-      const amtInput = root.querySelector<HTMLInputElement>("#simple-amount");
-      if (toInput) simpleTo = toInput.value.trim();
-      if (amtInput) simpleAmount = amtInput.value.trim();
-
-      if (!simpleTo) {
-        setFlash("Recipient address is required.", "warning");
-        render(state);
-        return;
-      }
-      if (!isValidXianAddress(simpleTo)) {
-        setFlash(
-          "Recipient must be a 64-character hex Xian address.",
-          "warning"
-        );
-        render(state);
-        return;
-      }
-      if (simpleTo === state.publicKey) {
-        setFlash("You can't send tokens to your own address.", "warning");
-        render(state);
-        return;
-      }
-      const amount = parseRuntimeNumberInput(simpleAmount);
-      if (amount == null || !isPositiveRuntimeAmount(amount)) {
-        setFlash("Enter a valid amount.", "warning");
-        render(state);
-        return;
-      }
-
-      // Set up as a token.transfer call
-      sendContract = simpleToken;
-      sendFunction = "transfer";
-      sendParsedKwargs = { to: simpleTo, amount };
-      sendEstimateMode = true;
-
-      // Show loading state on button
-      const originalText = reviewBtn.textContent ?? "Review";
-      reviewBtn.disabled = true;
-      reviewBtn.innerHTML = `<span class="btn-spinner"></span> Estimating...`;
-
-      // Timeout: restore button after 15s
-      const timeout = setTimeout(() => {
-        reviewBtn.disabled = false;
-        reviewBtn.textContent = originalText;
-        setFlash("Estimation timed out. Try again.", "warning");
-        renderToast();
-      }, 15000);
-
-      try {
-        [sendEstimate, sendChiRate] = await Promise.all([
-          sendRuntimeMessage<{ estimated: number; suggested: number }>({
-            type: "wallet_estimate_transaction",
-            contract: sendContract,
-            function: sendFunction,
-            kwargs: sendParsedKwargs
-          }),
-          sendRuntimeMessage<number | null>({ type: "wallet_get_chi_rate" }),
-        ]);
-        clearTimeout(timeout);
-        sendStep = "review";
-        render(state);
-      } catch (error) {
-        clearTimeout(timeout);
-        reviewBtn.disabled = false;
-        reviewBtn.textContent = originalText;
-        setFlash(formatError(error), "danger");
-        renderToast();
-      }
+      captureSimpleSendFormState();
+      await reviewSimpleSend(state);
     });
   }
 

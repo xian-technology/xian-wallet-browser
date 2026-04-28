@@ -13,6 +13,8 @@ export type RuntimeArgType =
 
 const INTEGER_PATTERN = /^-?\d+$/;
 const DECIMAL_PATTERN = /^-?(?:\d+\.?\d*|\.\d+)$/;
+const XIAN_ADDRESS_PATTERN = /^[0-9a-fA-F]{64}$/;
+const XIAN_CONTRACT_NAME_PATTERN = /^(?:currency|con_[a-zA-Z0-9_]+)$/;
 
 function normalizeDecimalText(value: string): string {
   return value.trim().replace(",", ".");
@@ -35,6 +37,12 @@ export function isRuntimeFixed(value: unknown): value is RuntimeFixed {
     typeof value === "object" &&
     value != null &&
     typeof (value as { __fixed__?: unknown }).__fixed__ === "string"
+  );
+}
+
+export function isRecognizedXianRecipient(value: string): boolean {
+  return (
+    XIAN_ADDRESS_PATTERN.test(value) || XIAN_CONTRACT_NAME_PATTERN.test(value)
   );
 }
 

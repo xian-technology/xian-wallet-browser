@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   isPositiveRuntimeAmount,
+  isRecognizedXianRecipient,
   parseArgValue,
   parseRuntimeNumberInput
 } from "./runtime-input";
@@ -23,5 +24,14 @@ describe("runtime input parsing", () => {
     expect(parseArgValue("0.0001", "float")).toEqual({ __fixed__: "0.0001" });
     expect(parseArgValue("5", "float")).toEqual({ __fixed__: "5" });
     expect(parseArgValue("5oops", "float")).toBe("5oops");
+  });
+
+  it("recognizes normal Xian recipients without requiring extra confirmation", () => {
+    expect(isRecognizedXianRecipient("ab".repeat(32))).toBe(true);
+    expect(isRecognizedXianRecipient("currency")).toBe(true);
+    expect(isRecognizedXianRecipient("con_bridge_1")).toBe(true);
+    expect(isRecognizedXianRecipient("qwe")).toBe(false);
+    expect(isRecognizedXianRecipient("external:abc123")).toBe(false);
+    expect(isRecognizedXianRecipient("0xabc123")).toBe(false);
   });
 });
