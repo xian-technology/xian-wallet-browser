@@ -1434,6 +1434,10 @@ textarea {
   box-shadow: 0 18px 44px rgba(0, 0, 0, 0.5);
 }
 
+.app-dialog-wide {
+  max-width: 420px;
+}
+
 .app-dialog-icon {
   display: flex;
   align-items: center;
@@ -1473,6 +1477,13 @@ textarea {
   font-size: 12px;
   line-height: 1.4;
   overflow-wrap: anywhere;
+}
+
+.app-dialog-textarea {
+  min-height: 170px;
+  margin-top: 12px;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .app-dialog-actions {

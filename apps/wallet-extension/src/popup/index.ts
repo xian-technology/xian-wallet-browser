@@ -103,6 +103,7 @@ let confirmDeleteAccountIndex: number | null = null;
 let confirmDeleteContactId: string | null = null;
 let confirmRemoveSelectedAsset = false;
 let confirmWalletRemoval = false;
+let showImportBackupDialog = false;
 let showSaveRecipient = false;
 let autoLockEnabled = DEFAULT_AUTO_LOCK;
 let autoLockRefreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -921,6 +922,29 @@ function renderUnrecognizedRecipientDialog(recipient: string): string {
   `;
 }
 
+function renderImportBackupDialog(): string {
+  return `
+    <div class="app-dialog-backdrop" role="presentation">
+      <div class="app-dialog app-dialog-wide" role="dialog" aria-modal="true" aria-labelledby="import-backup-title">
+        <div class="app-dialog-icon">${ICONS.arrowDown}</div>
+        <h3 id="import-backup-title" class="app-dialog-title">Import Backup</h3>
+        <p class="app-dialog-copy">Paste the exported wallet backup JSON.</p>
+        <textarea
+          id="import-backup-json"
+          class="app-dialog-textarea mono"
+          rows="8"
+          placeholder="Paste backup JSON"
+          spellcheck="false"
+        ></textarea>
+        <div class="app-dialog-actions">
+          <button class="secondary full-width" data-cancel-import-backup>Cancel</button>
+          <button class="full-width" data-confirm-import-backup>Import</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 /* ═══════════════════════════════════════════════════════════
    SETUP SCREEN
    ═══════════════════════════════════════════════════════════ */
@@ -1193,6 +1217,7 @@ function renderUnlocked(state: PopupRuntimeState): void {
         </button>
       </nav>
       ${pendingUnrecognizedRecipient ? renderUnrecognizedRecipientDialog(pendingUnrecognizedRecipient) : ""}
+      ${showImportBackupDialog ? renderImportBackupDialog() : ""}
     </div>
   `;
 
@@ -2866,10 +2891,9 @@ function renderSecurityTab(state: PopupRuntimeState): string {
             <div style="display: flex; gap: 8px">
               <button type="submit" class="secondary full-width">Export</button>
               <button type="button" class="secondary full-width" data-import-trigger>Import</button>
-              <input type="file" accept=".json" id="import-wallet-file" style="display: none" />
             </div>
           </form>
-          <p class="muted text-sm">Export saves your ${escapeHtml(state.seedSource === "mnemonic" ? "seed and all accounts" : "private key")} to an encrypted file. Stored shielded snapshots are included automatically. Import restores from a previously exported file.</p>
+          <p class="muted text-sm">Export saves your ${escapeHtml(state.seedSource === "mnemonic" ? "seed and all accounts" : "private key")} to encrypted JSON. Stored shielded snapshots are included automatically. Import restores from exported backup JSON.</p>
         </div>
       </div>
 
@@ -4446,28 +4470,44 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
   root
     .querySelector<HTMLElement>("[data-import-trigger]")
     ?.addEventListener("click", () => {
-      root.querySelector<HTMLInputElement>("#import-wallet-file")?.click();
-    });
-
-  root
-    .querySelector<HTMLInputElement>("#import-wallet-file")
-    ?.addEventListener("change", async (event) => {
-      const input = event.target as HTMLInputElement;
-      const file = input.files?.[0];
-      if (!file) return;
-
       const password = value("#backup-password");
       if (!password) {
         setFlash("Enter a password first. It will encrypt the imported wallet.", "warning");
         render(state);
         return;
       }
+      showImportBackupDialog = true;
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-cancel-import-backup]")
+    ?.addEventListener("click", () => {
+      showImportBackupDialog = false;
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-confirm-import-backup]")
+    ?.addEventListener("click", () => {
+      const password = value("#backup-password");
+      if (!password) {
+        setFlash("Enter a password first. It will encrypt the imported wallet.", "warning");
+        showImportBackupDialog = false;
+        render(state);
+        return;
+      }
 
       void withErrorFlash(async () => {
-        const text = await file.text();
+        const text = value("#import-backup-json").trim();
+        if (!text) {
+          setFlash("Paste backup JSON first.", "warning");
+          render(state);
+          return;
+        }
         const backup = JSON.parse(text);
         if (!backup || backup.version !== 1 || !backup.type) {
-          setFlash("Invalid backup file.", "danger");
+          setFlash("Invalid backup JSON.", "danger");
           render(state);
           return;
         }
@@ -4476,6 +4516,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           backup,
           password
         });
+        showImportBackupDialog = false;
         resetSendState();
         await refresh({
           tone: "success",
