@@ -261,7 +261,7 @@ chrome.runtime.onMessage.addListener(
             sendResponse(ok(await getPopupRuntimeState()));
             return;
           case "wallet_get_asset_balances":
-            sendResponse(ok(await controller.getAssetBalances()));
+            sendResponse(ok(await controller.getAssetBalanceSnapshot()));
             return;
           case "wallet_get_detected_assets":
             sendResponse(ok(await controller.getDetectedAssets()));

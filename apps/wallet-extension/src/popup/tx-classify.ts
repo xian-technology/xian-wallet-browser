@@ -29,6 +29,8 @@ export interface ActivityTx {
     [key: string]: unknown;
   } | null;
   envelope?: unknown;
+  local?: boolean;
+  local_status?: "accepted" | "finalized";
 }
 
 export type TxCategory =
@@ -120,6 +122,9 @@ export function formatTxAmount(value: unknown): string | null {
   if (value === null || value === undefined) {
     return null;
   }
+  if (typeof value === "bigint") {
+    return value.toLocaleString();
+  }
   if (typeof value === "number" && Number.isFinite(value)) {
     return value.toLocaleString(undefined, { maximumFractionDigits: 8 });
   }
@@ -148,6 +153,7 @@ export function formatTxAmount(value: unknown): string | null {
 export function formatTxArgValue(value: unknown): string {
   if (value === null || value === undefined) return "—";
   if (typeof value === "string") return value;
+  if (typeof value === "bigint") return value.toString();
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (typeof value === "object" && "__fixed__" in (value as Record<string, unknown>)) {
     const fixed = (value as Record<string, unknown>).__fixed__;

@@ -5,6 +5,7 @@ import type {
   ProviderRequestStartResult,
   ProviderRequestStatusResult,
   ShieldedWalletHistoryStatus,
+  WalletAssetBalanceSnapshot,
   WalletBackup,
   WalletCreateResult
 } from "@xian-tech/wallet-core";
@@ -352,6 +353,7 @@ export type PopupRuntimeState = PopupState & {
 export type WalletCreateRuntimeResult = Omit<WalletCreateResult, "popupState"> & {
   popupState: PopupRuntimeState;
 };
+export type WalletAssetBalanceRuntimeResult = WalletAssetBalanceSnapshot;
 export type ShieldedSnapshotHistoryRuntimeResult = ShieldedWalletHistoryStatus;
 
 export interface RuntimeFailure {

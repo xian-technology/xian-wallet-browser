@@ -11,6 +11,7 @@ import {
   type PopupRuntimeState,
   popupStateBanner,
   sendRuntimeMessage,
+  type WalletAssetBalanceRuntimeResult,
   type ShieldedSnapshotHistoryRuntimeResult,
   type WalletCreateRuntimeResult
 } from "../shared/messages";
@@ -24,6 +25,10 @@ import {
   parseArgValue,
   parseRuntimeNumberInput
 } from "../runtime-input";
+import {
+  loadLocalActivityTxs,
+  saveLocalActivityTx
+} from "../shared/storage";
 
 const appRoot = document.querySelector<HTMLElement>("#app");
 if (!appRoot) {
@@ -141,6 +146,7 @@ let showTokenPicker = false;
 let simpleTo = "";
 let simpleAmount = "";
 let pendingUnrecognizedRecipient: string | null = null;
+let pendingUnavailableTokenContract: string | null = null;
 let simpleReviewLoading = false;
 let simpleReviewRequestId = 0;
 
@@ -395,6 +401,59 @@ function visibleDetectedAssets(state: PopupRuntimeState): WalletDetectedAsset[] 
   return state.detectedAssets.filter((asset) => !asset.tracked);
 }
 
+function activeAssetNetworkState(
+  state: PopupRuntimeState,
+  contract: string
+) {
+  const networkId = state.activeNetworkId ?? "";
+  return state.assetNetworkStates?.[networkId]?.[contract];
+}
+
+function isAssetUnavailableOnActiveNetwork(
+  state: PopupRuntimeState,
+  asset: PopupState["watchedAssets"][number]
+): boolean {
+  if (asset.contract === "currency") {
+    return false;
+  }
+  return activeAssetNetworkState(state, asset.contract)?.status === "not_found";
+}
+
+function isAssetHiddenOnActiveNetwork(
+  state: PopupRuntimeState,
+  asset: PopupState["watchedAssets"][number]
+): boolean {
+  return activeAssetNetworkState(state, asset.contract)?.hidden ?? asset.hidden === true;
+}
+
+function visibleWatchedAssets(state: PopupRuntimeState): PopupState["watchedAssets"] {
+  return [...state.watchedAssets]
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+    .filter(
+      (asset) =>
+        !isAssetHiddenOnActiveNetwork(state, asset) &&
+        !isAssetUnavailableOnActiveNetwork(state, asset)
+    );
+}
+
+function hiddenAssetCount(state: PopupRuntimeState): number {
+  return state.watchedAssets.filter((asset) =>
+    isAssetHiddenOnActiveNetwork(state, asset)
+  ).length;
+}
+
+function unavailableAssetCount(state: PopupRuntimeState): number {
+  return state.watchedAssets.filter((asset) =>
+    isAssetUnavailableOnActiveNetwork(state, asset)
+  ).length;
+}
+
+function unavailableAssetLabel(state: PopupRuntimeState): string {
+  return state.activeNetworkName
+    ? `Unavailable on ${state.activeNetworkName}`
+    : "Unavailable on this network";
+}
+
 function findDisplayedAsset(
   state: PopupRuntimeState,
   contract: string
@@ -425,7 +484,9 @@ function assetRawBalance(
 }
 
 function visibleAssetContracts(state: PopupRuntimeState): string[] {
-  const contracts = new Set(state.watchedAssets.map((asset) => asset.contract));
+  const contracts = new Set(
+    visibleWatchedAssets(state).map((asset) => asset.contract)
+  );
   for (const asset of visibleDetectedAssets(state)) {
     contracts.add(asset.contract);
   }
@@ -626,9 +687,13 @@ function setActiveTab(tab: PopupTab): void {
   revealedPrivateKey = null;
   selectedTxHash = null;
   pendingUnrecognizedRecipient = null;
+  pendingUnavailableTokenContract = null;
   confirmDeleteContactId = null;
   confirmRemoveSelectedAsset = false;
   if (tab === "activity" && currentState?.publicKey) {
+    if (activityStateKey !== activityKey(currentState, currentState.publicKey)) {
+      resetActivityState();
+    }
     void fetchActivityTxs(currentState.publicKey);
   }
   if (currentState) {
@@ -689,6 +754,15 @@ async function refresh(nextFlash?: FlashMessage | null): Promise<void> {
 }
 
 async function applyPopupState(state: PopupRuntimeState): Promise<void> {
+  const nextActivityKey =
+    state.unlocked && state.publicKey ? activityKey(state, state.publicKey) : null;
+  const activityContextChanged =
+    activeTab === "activity" &&
+    nextActivityKey != null &&
+    activityStateKey !== nextActivityKey;
+  if (activityContextChanged) {
+    resetActivityState();
+  }
   currentState = state;
   const activeSnapshotIds = new Set(
     state.shieldedWalletSnapshots.map((snapshot) => snapshot.id)
@@ -711,6 +785,7 @@ async function applyPopupState(state: PopupRuntimeState): Promise<void> {
   if (!state.unlocked) {
     generatedMnemonic = null;
     resetSendState();
+    resetActivityState();
     contactsLoaded = false;
     contacts = [];
     confirmDeleteContactId = null;
@@ -721,6 +796,9 @@ async function applyPopupState(state: PopupRuntimeState): Promise<void> {
     (state.watchedAssets.length > 0 ||
       visibleDetectedAssets(state).length > 0);
   render(state);
+  if (activityContextChanged && state.publicKey) {
+    void fetchActivityTxs(state.publicKey);
+  }
   void syncBalanceSubscriptions();
   void refreshDetectedAssets();
   void refreshBalances();
@@ -800,14 +878,15 @@ async function refreshBalances(): Promise<void> {
   }
   const gen = ++balanceGeneration;
   try {
-    const balances = await sendRuntimeMessage<Record<string, string | null>>({
+    const snapshot = await sendRuntimeMessage<WalletAssetBalanceRuntimeResult>({
       type: "wallet_get_asset_balances"
     });
     if (gen !== balanceGeneration) {
       return;
     }
     if (currentState) {
-      currentState.assetBalances = balances;
+      currentState.assetBalances = snapshot.balances;
+      currentState.assetNetworkStates = snapshot.assetNetworkStates;
     }
   } catch {
     if (gen !== balanceGeneration) {
@@ -847,6 +926,68 @@ async function fetchTokenMeta(contract: string): Promise<void> {
   if (currentState) {
     render(currentState);
   }
+}
+
+async function addTokenToWallet(
+  contract: string,
+  options: { confirmedInactive?: boolean } = {}
+): Promise<void> {
+  let metadata:
+    | {
+        contract: string;
+        name: string | null;
+        symbol: string | null;
+        logoUrl: string | null;
+        logoSvg: string | null;
+      }
+    | null = null;
+
+  try {
+    metadata = await sendRuntimeMessage<{
+      contract: string;
+      name: string | null;
+      symbol: string | null;
+      logoUrl: string | null;
+      logoSvg: string | null;
+    }>({
+      type: "wallet_get_token_metadata",
+      contract
+    });
+  } catch (error) {
+    if (isMissingContractError(error) && !options.confirmedInactive) {
+      pendingUnavailableTokenContract = contract;
+      if (currentState) render(currentState);
+      return;
+    }
+
+    if (!isMissingContractError(error)) {
+      setFlash(formatError(error), "danger");
+      if (currentState) render(currentState);
+      return;
+    }
+  }
+
+  await sendRuntimeMessage<PopupState>({
+    type: "wallet_track_asset",
+    asset: {
+      contract,
+      name: metadata?.name ?? undefined,
+      symbol: metadata?.symbol ?? undefined,
+      icon: metadata?.logoUrl ?? metadata?.logoSvg ?? undefined
+    }
+  });
+  setFlash(
+    metadata?.symbol
+      ? `Added ${metadata.symbol}.`
+      : options.confirmedInactive
+        ? `Added ${contract} as inactive.`
+        : `Added ${contract}.`,
+    "success"
+  );
+  pendingUnavailableTokenContract = null;
+  await refresh(null);
+  managingAssets = true;
+  render(currentState);
 }
 
 /* ── Render dispatch ───────────────────────────────────────── */
@@ -916,6 +1057,23 @@ function renderUnrecognizedRecipientDialog(recipient: string): string {
         <div class="app-dialog-actions">
           <button class="secondary full-width" data-cancel-unrecognized-recipient>Cancel</button>
           <button class="danger full-width" data-confirm-unrecognized-recipient>Send Anyway</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderUnavailableTokenDialog(contract: string, state: PopupRuntimeState): string {
+  return `
+    <div class="app-dialog-backdrop" role="presentation">
+      <div class="app-dialog" role="dialog" aria-modal="true" aria-labelledby="token-unavailable-title">
+        <div class="app-dialog-icon">${ICONS.alertTriangle}</div>
+        <h3 id="token-unavailable-title" class="app-dialog-title">Token unavailable</h3>
+        <p class="app-dialog-copy">This token contract was not found on ${escapeHtml(state.activeNetworkName ?? "the current network")}. Add it as an inactive token anyway?</p>
+        <div class="app-dialog-value mono">${escapeHtml(contract)}</div>
+        <div class="app-dialog-actions">
+          <button class="secondary full-width" data-cancel-unavailable-token>Cancel</button>
+          <button class="full-width" data-confirm-unavailable-token>Add Inactive</button>
         </div>
       </div>
     </div>
@@ -1217,6 +1375,7 @@ function renderUnlocked(state: PopupRuntimeState): void {
         </button>
       </nav>
       ${pendingUnrecognizedRecipient ? renderUnrecognizedRecipientDialog(pendingUnrecognizedRecipient) : ""}
+      ${pendingUnavailableTokenContract ? renderUnavailableTokenDialog(pendingUnavailableTokenContract, state) : ""}
       ${showImportBackupDialog ? renderImportBackupDialog() : ""}
     </div>
   `;
@@ -1305,15 +1464,13 @@ function renderHomeTab(state: PopupRuntimeState): string {
   const sortedAssets = [...state.watchedAssets].sort(
     (a, b) => (a.order ?? 0) - (b.order ?? 0)
   );
-  const visibleAssets = managingAssets
-    ? sortedAssets
-    : sortedAssets.filter((a) => !a.hidden);
+  const visibleAssets = visibleWatchedAssets(state);
 
   const trackedAssetsHtml =
     visibleAssets.length === 0 && !managingAssets
-      ? `<div class="token-list"><div style="padding: 24px 0; text-align: center" class="muted text-sm">No assets tracked yet.</div></div>`
+      ? `<div class="token-list"><div style="padding: 24px 0; text-align: center" class="muted text-sm">${state.watchedAssets.length > 0 ? "No assets available on this network." : "No assets tracked yet."}</div></div>`
       : managingAssets
-        ? `<div class="token-list" id="manage-asset-list">${sortedAssets.map((a, i) => renderManageAssetRow(a, i)).join("")}</div>`
+        ? `<div class="token-list" id="manage-asset-list">${sortedAssets.map((a, i) => renderManageAssetRow(a, state, i)).join("")}</div>`
         : `<div class="token-list">${visibleAssets.map((a) => renderAssetItem(a, state)).join("")}</div>`;
 
   const detectedAssets = visibleDetectedAssets(state);
@@ -1328,7 +1485,15 @@ function renderHomeTab(state: PopupRuntimeState): string {
           <div class="token-list">${detectedAssets.map((asset) => renderAssetItem(asset, state)).join("")}</div>
         `;
 
-  const hiddenCount = state.watchedAssets.filter((a) => a.hidden).length;
+  const hiddenCount = hiddenAssetCount(state);
+  const unavailableCount = unavailableAssetCount(state);
+  const secondaryAssetCount =
+    hiddenCount > 0 || unavailableCount > 0
+      ? ` · ${[
+          hiddenCount > 0 ? `${hiddenCount} hidden` : "",
+          unavailableCount > 0 ? `${unavailableCount} unavailable` : ""
+        ].filter(Boolean).join(" · ")}`
+      : "";
 
   return `
     <div class="balance-hero">
@@ -1361,7 +1526,7 @@ function renderHomeTab(state: PopupRuntimeState): string {
 
     <div class="section-hd">
       <span class="section-hd-label">Assets</span>
-      <span class="section-hd-badge">${managingAssets ? state.watchedAssets.length : visibleAssets.length}${hiddenCount > 0 && !managingAssets ? ` · ${hiddenCount} hidden` : ""}</span>
+      <span class="section-hd-badge">${managingAssets ? state.watchedAssets.length : visibleAssets.length}${!managingAssets ? secondaryAssetCount : ""}</span>
     </div>
     ${trackedAssetsHtml}
     ${detectedAssetsHtml}
@@ -1448,14 +1613,22 @@ function renderManageAssetRow(
     icon?: string;
     hidden?: boolean;
   },
+  state: PopupRuntimeState,
   index: number
 ): string {
   const symbol = asset.symbol ?? asset.contract.slice(0, 6);
   const color = asset.contract === "currency" ? "var(--accent-dim)" : assetColor(asset.contract);
-  const isHidden = asset.hidden === true;
+  const isHidden = isAssetHiddenOnActiveNetwork(state, asset);
+  const isUnavailable = isAssetUnavailableOnActiveNetwork(state, asset);
+  const statusText = isUnavailable
+    ? `<div class="token-status">${escapeHtml(unavailableAssetLabel(state))}</div>`
+    : "";
+  const toggleTitle = isUnavailable
+    ? "Unavailable on this network"
+    : isHidden ? "Show" : "Hide";
 
   return `
-    <div class="manage-asset-row ${isHidden ? "is-hidden" : ""}" draggable="true" data-drag-contract="${escapeAttribute(asset.contract)}" data-drag-index="${index}">
+    <div class="manage-asset-row ${isHidden ? "is-hidden" : ""} ${isUnavailable ? "is-unavailable" : ""}" draggable="true" data-drag-contract="${escapeAttribute(asset.contract)}" data-drag-index="${index}">
       <span class="drag-handle">${ICONS.grip}</span>
       ${renderTokenIcon({
         contract: asset.contract,
@@ -1468,8 +1641,9 @@ function renderManageAssetRow(
       <div class="token-body" style="flex: 1; min-width: 0">
         <div class="token-name">${escapeHtml(symbol)}</div>
         <div class="token-sub">${escapeHtml(asset.name ?? asset.contract)}</div>
+        ${statusText}
       </div>
-      <button class="icon-action" data-toggle-hide="${escapeAttribute(asset.contract)}" title="${isHidden ? "Show" : "Hide"}">
+      <button class="icon-action" data-toggle-hide="${escapeAttribute(asset.contract)}" title="${escapeAttribute(toggleTitle)}" ${isUnavailable ? "disabled" : ""}>
         ${isHidden ? ICONS.eyeOff : ICONS.eye}
       </button>
     </div>
@@ -1669,34 +1843,281 @@ function renderOriginItem(origin: string): string {
 let activityTxs: ActivityTx[] = [];
 let activityLoading = false;
 let activityError: string | null = null;
+let activityStateKey: string | null = null;
+let activityRequestId = 0;
+let activityPollGeneration = 0;
+const ACTIVITY_TX_POLL_DELAYS_MS = [0, 750, 2_000, 5_000, 10_000];
 
-async function fetchActivityTxs(address: string): Promise<void> {
-  activityLoading = true;
-  activityError = null;
-  if (currentState) render(currentState);
+function activityKey(state: PopupRuntimeState, address: string): string {
+  return `${state.activeNetworkId ?? state.rpcUrl}|${state.rpcUrl}|${address}`;
+}
+
+function txTimestampMillis(tx: ActivityTx): number {
+  const raw = tx.created_at ?? tx.block_time;
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return raw > 1e12 ? raw : raw * 1000;
+  }
+  if (typeof raw === "string") {
+    const parsed = Date.parse(raw);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+  return 0;
+}
+
+function mergeActivityTxs(
+  indexedTxs: ActivityTx[],
+  localTxs: ActivityTx[]
+): ActivityTx[] {
+  const indexedHashes = new Set(indexedTxs.map((tx) => tx.hash));
+  const seenLocalHashes = new Set<string>();
+  const dedupedLocalTxs = localTxs.filter((tx) => {
+    if (indexedHashes.has(tx.hash) || seenLocalHashes.has(tx.hash)) {
+      return false;
+    }
+    seenLocalHashes.add(tx.hash);
+    return true;
+  });
+  return [...dedupedLocalTxs, ...indexedTxs].sort(
+    (left, right) => txTimestampMillis(right) - txTimestampMillis(left)
+  );
+}
+
+async function loadLocalActivityForKey(networkKey: string): Promise<ActivityTx[]> {
   try {
-    const rpcUrl = currentState?.rpcUrl ?? "http://127.0.0.1:26657";
-    const resp = await fetch(
-      `${rpcUrl}/abci_query?path=%22/txs_by_sender/${address}/limit=50/offset=0%22`
-    );
-    if (!resp.ok) {
-      throw new Error(`RPC responded ${resp.status}`);
+    return (await loadLocalActivityTxs(networkKey)) as ActivityTx[];
+  } catch {
+    return [];
+  }
+}
+
+function localActivityStatusLabel(tx: ActivityTx): string {
+  if (!tx.success) return "Failed";
+  if (tx.local === true && tx.block_height == null) {
+    return tx.local_status === "finalized" ? "Finalized" : "Accepted";
+  }
+  return "Success";
+}
+
+function isLocalUnindexedTx(tx: ActivityTx): boolean {
+  return tx.local === true && tx.block_height == null;
+}
+
+function normalizeActivityPayload(value: unknown): ActivityTx[] {
+  if (Array.isArray(value)) {
+    return value as ActivityTx[];
+  }
+  if (value && typeof value === "object") {
+    const items = (value as { items?: unknown }).items;
+    return Array.isArray(items) ? (items as ActivityTx[]) : [];
+  }
+  return [];
+}
+
+async function readJsonBodyOrNull(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text.trim()) {
+    return null;
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function decodeActivityValue(value: unknown): ActivityTx[] {
+  if (typeof value !== "string" || !value.trim()) {
+    return [];
+  }
+  let decoded = "";
+  try {
+    decoded = atob(value);
+  } catch {
+    return [];
+  }
+  if (!decoded.trim()) {
+    return [];
+  }
+  try {
+    return normalizeActivityPayload(JSON.parse(decoded));
+  } catch {
+    return [];
+  }
+}
+
+async function loadActivityTxsFromRpc(
+  rpcUrl: string,
+  address: string
+): Promise<ActivityTx[]> {
+  const resp = await fetch(
+    `${rpcUrl}/abci_query?path=%22/txs_by_sender/${address}/limit=50/offset=0%22`
+  );
+  if (!resp.ok) {
+    throw new Error("Activity is unavailable on this network.");
+  }
+  const data = await readJsonBodyOrNull(resp);
+  return decodeActivityValue(
+    (data as { result?: { response?: { value?: unknown } } } | null)
+      ?.result?.response?.value
+  );
+}
+
+function resetActivityState(): void {
+  activityTxs = [];
+  activityError = null;
+  activityLoading = false;
+  selectedTxHash = null;
+}
+
+async function fetchActivityTxs(
+  address: string,
+  options: { showLoading?: boolean } = {}
+): Promise<void> {
+  const state = currentState;
+  if (!state) {
+    return;
+  }
+  const requestKey = activityKey(state, address);
+  const requestId = ++activityRequestId;
+  activityStateKey = requestKey;
+  const showLoading = options.showLoading ?? true;
+  if (showLoading) {
+    activityLoading = true;
+  }
+  activityError = null;
+  if (showLoading) {
+    render(state);
+  }
+  const localTxs = await loadLocalActivityForKey(requestKey);
+  try {
+    const txs = await loadActivityTxsFromRpc(state.rpcUrl, address);
+    if (
+      requestId !== activityRequestId ||
+      !currentState ||
+      activityKey(currentState, address) !== requestKey
+    ) {
+      return;
     }
-    const data = await resp.json();
-    const val = data?.result?.response?.value;
-    if (val) {
-      const decoded = JSON.parse(atob(val));
-      activityTxs = Array.isArray(decoded) ? decoded : decoded?.items ?? [];
-    } else {
-      activityTxs = [];
+    activityTxs = mergeActivityTxs(txs, localTxs);
+  } catch {
+    if (
+      requestId !== activityRequestId ||
+      !currentState ||
+      activityKey(currentState, address) !== requestKey
+    ) {
+      return;
     }
-  } catch (err) {
-    activityTxs = [];
-    activityError =
-      err instanceof Error ? err.message : "Failed to load transactions";
+    activityTxs = localTxs;
+    activityError = localTxs.length > 0
+      ? null
+      : "Activity is unavailable on this network.";
   }
   activityLoading = false;
   if (currentState) render(currentState);
+}
+
+function makeLocalActivityTx(
+  state: PopupRuntimeState,
+  txHash: string,
+  result: NonNullable<typeof sendResult>
+): ActivityTx | null {
+  if (!state.publicKey || !txHash.trim()) {
+    return null;
+  }
+  const kwargs = sendParsedKwargs ?? {};
+  return {
+    hash: txHash.trim(),
+    sender: state.publicKey,
+    contract: sendContract,
+    function: sendFunction,
+    success: result.finalized || result.accepted === true,
+    created_at: new Date().toISOString(),
+    payload: {
+      sender: state.publicKey,
+      contract: sendContract,
+      function: sendFunction,
+      kwargs
+    },
+    result: result.message ? { message: result.message } : undefined,
+    local: true,
+    local_status: result.finalized ? "finalized" : "accepted"
+  };
+}
+
+function upsertActivityTx(tx: ActivityTx): void {
+  activityTxs = mergeActivityTxs(
+    activityTxs.filter((item) => item.hash !== tx.hash),
+    [tx]
+  );
+}
+
+async function recordLocalActivityTx(
+  state: PopupRuntimeState,
+  txHash: string,
+  result: NonNullable<typeof sendResult>
+): Promise<void> {
+  const tx = makeLocalActivityTx(state, txHash, result);
+  if (!tx || !state.publicKey) {
+    return;
+  }
+  const networkKey = activityKey(state, state.publicKey);
+  if (
+    currentState?.publicKey &&
+    activityKey(currentState, currentState.publicKey) === networkKey
+  ) {
+    upsertActivityTx(tx);
+    if (activeTab === "activity") {
+      render(currentState);
+    }
+  }
+  await saveLocalActivityTx(networkKey, tx);
+}
+
+function activityHasTx(hash: string): boolean {
+  return activityTxs.some((tx) => tx.hash === hash);
+}
+
+function refreshActivityAfterTransaction(
+  sourceState: PopupRuntimeState,
+  txHash?: string | null
+): void {
+  if (!sourceState.publicKey) {
+    return;
+  }
+  const expectedHash = txHash?.trim();
+  const expectedKey = activityKey(sourceState, sourceState.publicKey);
+  const generation = ++activityPollGeneration;
+  const delays = expectedHash ? ACTIVITY_TX_POLL_DELAYS_MS : [0];
+
+  const poll = (attempt: number) => {
+    const delay = delays[attempt];
+    if (delay == null) {
+      return;
+    }
+    window.setTimeout(() => {
+      void (async () => {
+        const state = currentState;
+        if (
+          generation !== activityPollGeneration ||
+          !state?.publicKey ||
+          activityKey(state, state.publicKey) !== expectedKey
+        ) {
+          return;
+        }
+
+        await fetchActivityTxs(state.publicKey, {
+          showLoading: activeTab === "activity" && attempt === 0
+        });
+
+        if (expectedHash && activityHasTx(expectedHash)) {
+          return;
+        }
+        poll(attempt + 1);
+      })();
+    }, delay);
+  };
+
+  poll(0);
 }
 let selectedTxHash: string | null = null;
 
@@ -1889,7 +2310,7 @@ function renderTxDetail(tx: ActivityTx, state: PopupRuntimeState): string {
               <p class="s-card-desc">${escapeHtml(tx.contract)}.${escapeHtml(tx.function)}</p>
             </div>
           </div>
-          <span class="pill ${tx.success ? "pill-info" : "pill-danger"}">${tx.success ? "Success" : "Failed"}</span>
+          <span class="pill ${tx.success ? "pill-info" : "pill-danger"}">${escapeHtml(localActivityStatusLabel(tx))}</span>
         </div>
         <div class="s-card-body">
           ${rows.join("")}
@@ -1926,15 +2347,15 @@ function renderActivityTab(state: PopupRuntimeState): string {
     if (activityError) {
       return `
         <div class="send-centered" style="padding: 48px 0; gap: 12px">
-          <p class="muted text-sm" style="color: var(--danger)">Couldn't load transactions.</p>
-          <p class="muted text-sm" style="opacity: 0.6">${escapeHtml(activityError)}</p>
-          <button class="detail-back" data-retry-activity>${ICONS.repeat} Retry</button>
+          <p class="muted text-sm" style="color: var(--danger)">${escapeHtml(activityError)}</p>
+          <p class="muted text-sm" style="opacity: 0.6">Check the RPC endpoint and try again.</p>
+          <button class="secondary activity-retry-btn" data-retry-activity>${ICONS.repeat} Retry</button>
         </div>
       `;
     }
     return `
       <div class="send-centered" style="padding: 48px 0">
-        <p class="muted text-sm">No transactions yet.</p>
+        <p class="muted text-sm">No transactions on this network yet.</p>
         <p class="muted text-sm" style="opacity: 0.6">Send or receive tokens to see activity here.</p>
       </div>
     `;
@@ -1972,7 +2393,7 @@ function renderActivityTab(state: PopupRuntimeState): string {
               ${cls.icon}
             </div>
             <div class="token-body">
-              <div class="token-name">${escapeHtml(cls.label)}${tx.success ? "" : ` <span style="color:var(--danger);font-weight:500;font-size:11px">· Failed</span>`}</div>
+              <div class="token-name">${escapeHtml(cls.label)}${tx.success ? "" : ` <span style="color:var(--danger);font-weight:500;font-size:11px">· Failed</span>`}${tx.success && isLocalUnindexedTx(tx) ? ` <span style="color:var(--warning);font-weight:500;font-size:11px">· ${escapeHtml(localActivityStatusLabel(tx))}</span>` : ""}</div>
               <div class="token-sub">${escapeHtml(subtitle)}</div>
             </div>
             <div class="token-end">
@@ -2113,12 +2534,18 @@ function renderSimpleSend(state: PopupRuntimeState): string {
     return renderContactsEditor();
   }
 
+  const visibleTokens = visibleWatchedAssets(state);
+  if (!visibleTokens.some((asset) => asset.contract === simpleToken)) {
+    simpleToken =
+      visibleTokens.find((asset) => asset.contract === "currency")?.contract ??
+      visibleTokens[0]?.contract ??
+      "currency";
+  }
   const selectedAssetObj = state.watchedAssets.find((a) => a.contract === simpleToken);
   const tokenSymbol = selectedAssetObj?.symbol ?? simpleToken.slice(0, 6).toUpperCase();
   const tokenBalance = state.assetBalances[simpleToken] ?? "0";
   const displayBalance = formatSimpleBalance(tokenBalance);
   const tokenColor = simpleToken === "currency" ? "var(--accent-dim)" : assetColor(simpleToken);
-  const visibleTokens = state.watchedAssets.filter((a) => !a.hidden).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
   return `
     <div class="settings-wrap">
@@ -3274,14 +3701,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       const contract = input?.value.trim();
       if (!contract) return;
       void withErrorFlash(async () => {
-        await sendRuntimeMessage<PopupState>({
-          type: "wallet_track_asset",
-          asset: { contract }
-        });
-        setFlash(`Added ${contract}.`, "success");
-        await refresh(null);
-        managingAssets = true;
-        render(currentState);
+        await addTokenToWallet(contract);
       });
     });
 
@@ -3290,10 +3710,11 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       const contract = btn.dataset.toggleHide!;
       const asset = state.watchedAssets.find((a) => a.contract === contract);
       if (!asset) return;
+      if (isAssetUnavailableOnActiveNetwork(state, asset)) return;
       void withErrorFlash(async () => {
         await sendRuntimeMessage<PopupState>({
           type: "wallet_update_assets",
-          assets: [{ contract, hidden: !asset.hidden }]
+          assets: [{ contract, hidden: !isAssetHiddenOnActiveNetwork(state, asset) }]
         });
         await refresh(null);
         managingAssets = true;
@@ -3671,6 +4092,25 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     });
 
   root
+    .querySelector<HTMLElement>("[data-cancel-unavailable-token]")
+    ?.addEventListener("click", () => {
+      pendingUnavailableTokenContract = null;
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-confirm-unavailable-token]")
+    ?.addEventListener("click", () => {
+      const contract = pendingUnavailableTokenContract;
+      if (!contract) {
+        return;
+      }
+      void withErrorFlash(async () => {
+        await addTokenToWallet(contract, { confirmedInactive: true });
+      });
+    });
+
+  root
     .querySelector<HTMLInputElement>("#send-contract")
     ?.addEventListener("blur", async () => {
       const contractInput = root.querySelector<HTMLInputElement>(
@@ -3879,9 +4319,15 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
             : null;
         applyReceiptStateWrites(execution);
         void refresh(ok ? null : undefined);
-        // Refresh activity cache so the new tx shows up
-        if (ok && currentState?.publicKey) {
-          void fetchActivityTxs(currentState.publicKey);
+        if (ok) {
+          const txHash =
+            sendResult && typeof sendResult.txHash === "string"
+              ? sendResult.txHash
+              : null;
+          if (txHash && sendResult) {
+            void recordLocalActivityTx(state, txHash, sendResult);
+          }
+          refreshActivityAfterTransaction(state, txHash);
         }
         render(state);
       } catch (error) {
@@ -4679,6 +5125,12 @@ function formatError(error: unknown): string {
     return msg || "Unknown error";
   }
   return String(error) || "Unknown error";
+}
+
+function isMissingContractError(error: unknown): boolean {
+  const message = formatError(error);
+  return /ImportError\(['"]Module\s+[^'"]+\s+not found['"]\)/i.test(message) ||
+    /Module\s+\S+\s+not found/i.test(message);
 }
 
 /* ── Init ──────────────────────────────────────────────────── */

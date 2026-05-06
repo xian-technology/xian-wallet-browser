@@ -79,6 +79,7 @@ export interface StoredWalletState {
   activeNetworkId: string;
   networkPresets: WalletNetworkPreset[];
   watchedAssets: WalletWatchedAsset[];
+  assetNetworkStates?: WalletAssetNetworkStates;
   shieldedWalletSnapshots?: StoredShieldedWalletSnapshot[];
   connectedOrigins: string[];
   createdAt: string;
@@ -158,6 +159,7 @@ export interface PopupState {
   activeNetworkName?: string;
   networkPresets: WalletNetworkPreset[];
   watchedAssets: WalletWatchedAsset[];
+  assetNetworkStates: WalletAssetNetworkStates;
   detectedAssets: WalletDetectedAsset[];
   /** Maps contract address to raw balance (number as string), or null if fetch failed. */
   assetBalances: Record<string, string | null>;
@@ -220,6 +222,25 @@ export interface WalletWatchedAsset extends XianWatchedAsset {
   order?: number;
 }
 
+export type WalletAssetNetworkStatus = "available" | "not_found" | "unknown";
+
+export interface WalletAssetNetworkState {
+  status?: WalletAssetNetworkStatus;
+  hidden?: boolean;
+  lastCheckedAt?: string;
+  error?: string;
+}
+
+export type WalletAssetNetworkStates = Record<
+  string,
+  Record<string, WalletAssetNetworkState>
+>;
+
+export interface WalletAssetBalanceSnapshot {
+  balances: Record<string, string | null>;
+  assetNetworkStates: WalletAssetNetworkStates;
+}
+
 export interface WalletDetectedAsset extends XianWatchedAsset {
   balance: string | null;
   tracked: boolean;
@@ -252,6 +273,7 @@ export interface WalletBackup {
   activeNetworkId?: string;
   networkPresets?: WalletNetworkPreset[];
   watchedAssets?: Array<{ contract: string; name?: string; symbol?: string; icon?: string; decimals?: number }>;
+  assetNetworkStates?: WalletAssetNetworkStates;
   shieldedStateSnapshots?: Array<{
     label: string;
     stateSnapshot: string;

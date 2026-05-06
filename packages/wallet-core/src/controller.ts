@@ -61,6 +61,9 @@ import type {
   WalletControllerStore,
   WalletCreateResult,
   WalletDetectedAsset,
+  WalletAssetBalanceSnapshot,
+  WalletAssetNetworkState,
+  WalletAssetNetworkStates,
   WalletNetworkPreset,
   WalletNetworkPresetInput,
   WalletNetworkStatus,
@@ -211,6 +214,78 @@ function trimNullableString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function messageFromUnknown(value: unknown): string {
+  if (value instanceof Error) {
+    return value.message;
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function isMissingContractResult(value: unknown): boolean {
+  const message = messageFromUnknown(value);
+  return /ImportError\(['"]Module\s+[^'"]+\s+not found['"]\)/i.test(message) ||
+    /Module\s+\S+\s+not found/i.test(message);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value != null;
+}
+
+function normalizeAssetNetworkStates(value: unknown): WalletAssetNetworkStates {
+  if (!isRecord(value)) {
+    return {};
+  }
+
+  const states: WalletAssetNetworkStates = {};
+  for (const [networkId, rawNetworkState] of Object.entries(value)) {
+    if (!networkId || !isRecord(rawNetworkState)) {
+      continue;
+    }
+
+    const networkState: Record<string, WalletAssetNetworkState> = {};
+    for (const [contract, rawAssetState] of Object.entries(rawNetworkState)) {
+      if (!contract || !isRecord(rawAssetState)) {
+        continue;
+      }
+
+      const status = rawAssetState.status;
+      const normalized: WalletAssetNetworkState = {};
+      if (
+        status === "available" ||
+        status === "not_found" ||
+        status === "unknown"
+      ) {
+        normalized.status = status;
+      }
+      if (typeof rawAssetState.hidden === "boolean") {
+        normalized.hidden = rawAssetState.hidden;
+      }
+      if (typeof rawAssetState.lastCheckedAt === "string") {
+        normalized.lastCheckedAt = rawAssetState.lastCheckedAt;
+      }
+      if (typeof rawAssetState.error === "string") {
+        normalized.error = rawAssetState.error;
+      }
+
+      if (Object.keys(normalized).length > 0) {
+        networkState[contract] = normalized;
+      }
+    }
+
+    if (Object.keys(networkState).length > 0) {
+      states[networkId] = networkState;
+    }
+  }
+  return states;
+}
+
 function normalizeTrackedAsset(
   asset: XianWatchAssetRequest["options"]
 ): XianWatchAssetRequest["options"] {
@@ -264,6 +339,9 @@ function normalizePresetInputValue(
 function normalizeStoredWalletNetworks(state: StoredWalletState): StoredWalletState {
   const localPreset = createLocalNetworkPreset();
   const rawPresets = Array.isArray(state.networkPresets) ? state.networkPresets : [];
+  const assetNetworkStates = normalizeAssetNetworkStates(
+    (state as { assetNetworkStates?: unknown }).assetNetworkStates
+  );
 
   if (rawPresets.length === 0) {
     const rpcUrl = trimOptionalString(state.rpcUrl) ?? DEFAULT_RPC_URL;
@@ -279,7 +357,8 @@ function normalizeStoredWalletNetworks(state: StoredWalletState): StoredWalletSt
         rpcUrl: localPreset.rpcUrl,
         dashboardUrl: localPreset.dashboardUrl,
         activeNetworkId: localPreset.id,
-        networkPresets: [localPreset]
+        networkPresets: [localPreset],
+        assetNetworkStates
       };
     }
 
@@ -303,7 +382,8 @@ function normalizeStoredWalletNetworks(state: StoredWalletState): StoredWalletSt
       rpcUrl: customPreset.rpcUrl,
       dashboardUrl: customPreset.dashboardUrl,
       activeNetworkId: customPreset.id,
-      networkPresets: [localPreset, customPreset]
+      networkPresets: [localPreset, customPreset],
+      assetNetworkStates
     };
   }
 
@@ -335,8 +415,66 @@ function normalizeStoredWalletNetworks(state: StoredWalletState): StoredWalletSt
     rpcUrl: activePreset.rpcUrl,
     dashboardUrl: activePreset.dashboardUrl,
     activeNetworkId,
-    networkPresets: [...presets.values()]
+    networkPresets: [...presets.values()],
+    assetNetworkStates
   };
+}
+
+function updateAssetNetworkStateInWallet(
+  state: StoredWalletState,
+  networkId: string,
+  contract: string,
+  update: WalletAssetNetworkState
+): { state: StoredWalletState; changed: boolean } {
+  const currentStates = normalizeAssetNetworkStates(state.assetNetworkStates);
+  const currentNetwork = currentStates[networkId] ?? {};
+  const currentAsset = currentNetwork[contract] ?? {};
+  const nextAsset = { ...currentAsset, ...update };
+
+  if (nextAsset.status === "available" || nextAsset.status === "unknown") {
+    delete nextAsset.error;
+  }
+
+  if (JSON.stringify(currentAsset) === JSON.stringify(nextAsset)) {
+    return { state, changed: false };
+  }
+
+  return {
+    state: {
+      ...state,
+      assetNetworkStates: {
+        ...currentStates,
+        [networkId]: {
+          ...currentNetwork,
+          [contract]: nextAsset
+        }
+      }
+    },
+    changed: true
+  };
+}
+
+function removeAssetNetworkStateFromWallet(
+  state: StoredWalletState,
+  contract: string
+): StoredWalletState {
+  const currentStates = normalizeAssetNetworkStates(state.assetNetworkStates);
+  let changed = false;
+  const assetNetworkStates = Object.fromEntries(
+    Object.entries(currentStates).flatMap(([networkId, networkState]) => {
+      if (!(contract in networkState)) {
+        return [[networkId, networkState]];
+      }
+      changed = true;
+      const nextNetworkState = { ...networkState };
+      delete nextNetworkState[contract];
+      return Object.keys(nextNetworkState).length > 0
+        ? [[networkId, nextNetworkState]]
+        : [];
+    })
+  );
+
+  return changed ? { ...state, assetNetworkStates } : state;
 }
 
 interface ParsedShieldedWalletSnapshot {
@@ -1664,6 +1802,7 @@ export class WalletController {
       activeNetworkName: activePreset?.name,
       networkPresets: state?.networkPresets ?? DEFAULT_NETWORK_PRESETS,
       watchedAssets,
+      assetNetworkStates: state?.assetNetworkStates ?? {},
       detectedAssets: [],
       assetBalances: {},
       assetFiatValues: {},
@@ -1683,11 +1822,18 @@ export class WalletController {
   }
 
   async getAssetBalances(): Promise<Record<string, string | null>> {
+    return (await this.getAssetBalanceSnapshot()).balances;
+  }
+
+  async getAssetBalanceSnapshot(): Promise<WalletAssetBalanceSnapshot> {
     const state = await this.loadWalletState();
     if (!state) {
-      return {};
+      return {
+        balances: {},
+        assetNetworkStates: {}
+      };
     }
-    return this.fetchAssetBalances(state, state.watchedAssets);
+    return this.fetchAssetBalanceSnapshot(state, state.watchedAssets);
   }
 
   async getTokenMetadata(contract: string): Promise<{
@@ -1721,10 +1867,15 @@ export class WalletController {
       throw new TypeError("asset contract is required");
     }
 
+    const state = this.requireStoredWallet(await this.loadWalletState());
+    let networkState: WalletAssetNetworkState = {
+      status: "available",
+      lastCheckedAt: new Date().toISOString()
+    };
+
     // Auto-fetch metadata if any display metadata is missing.
     if (!normalized.name || !normalized.symbol || !normalized.icon) {
       try {
-        const state = this.requireStoredWallet(await this.loadWalletState());
         const meta = await this.resolveTokenMetadataForState(
           state,
           normalized.contract
@@ -1733,32 +1884,49 @@ export class WalletController {
         if (meta.symbol && !normalized.symbol) normalized.symbol = meta.symbol;
         if (meta.logoUrl && !normalized.icon) normalized.icon = meta.logoUrl;
         if (meta.logoSvg && !normalized.icon) normalized.icon = meta.logoSvg;
-      } catch {
-        // Metadata fetch failed — use contract name as fallback
+      } catch (error) {
+        networkState = {
+          status: isMissingContractResult(error) ? "not_found" : "unknown",
+          lastCheckedAt: new Date().toISOString(),
+          error: messageFromUnknown(error)
+        };
       }
     }
 
-    await this.updateWatchedAssets((assets) => {
-      const next = assets.filter(
-        (entry) => entry.contract !== normalized.contract
-      );
-      next.push(normalized);
-      return next;
-    });
+    const watchedAssets = state.watchedAssets.filter(
+      (entry) => entry.contract !== normalized.contract
+    );
+    watchedAssets.push(normalized);
+    const updated = updateAssetNetworkStateInWallet(
+      {
+        ...state,
+        watchedAssets
+      },
+      state.activeNetworkId,
+      normalized.contract,
+      networkState
+    ).state;
+
+    await this.store.saveState(updated);
     return this.getPopupState();
   }
 
   async updateAssetSettings(
     assets: Array<{ contract: string; hidden?: boolean; order?: number }>
   ): Promise<PopupState> {
-    const state = this.requireStoredWallet(await this.loadWalletState());
+    let state = this.requireStoredWallet(await this.loadWalletState());
     for (const update of assets) {
       const asset = state.watchedAssets.find(
         (a) => a.contract === update.contract
       );
       if (asset) {
         if (update.hidden !== undefined) {
-          asset.hidden = update.hidden;
+          state = updateAssetNetworkStateInWallet(
+            state,
+            state.activeNetworkId,
+            update.contract,
+            { hidden: update.hidden }
+          ).state;
         }
         if (update.order !== undefined) {
           asset.order = update.order;
@@ -1840,15 +2008,22 @@ export class WalletController {
     return this.currentClient(state).getContractMethods(contract);
   }
 
-  private async fetchAssetBalances(
+  private async fetchAssetBalanceSnapshot(
     state: StoredWalletState | null,
     assets: { contract: string }[]
-  ): Promise<Record<string, string | null>> {
+  ): Promise<WalletAssetBalanceSnapshot> {
     const balances: Record<string, string | null> = {};
     if (!state || assets.length === 0) {
-      return balances;
+      return {
+        balances,
+        assetNetworkStates: state?.assetNetworkStates ?? {}
+      };
     }
+
     const client = this.currentClient(state);
+    let nextState = state;
+    let changed = false;
+    const checkedAt = new Date().toISOString();
     const results = await Promise.allSettled(
       assets.map(async (asset) => {
         const raw = await client.getBalance(state.publicKey, {
@@ -1857,17 +2032,84 @@ export class WalletController {
         return { contract: asset.contract, raw };
       })
     );
-    for (const result of results) {
+    for (const [index, result] of results.entries()) {
       if (result.status === "fulfilled") {
         const { contract, raw } = result.value;
-        balances[contract] =
-          raw != null ? String(raw) : null;
+        if (isMissingContractResult(raw)) {
+          balances[contract] = null;
+          const updated = updateAssetNetworkStateInWallet(
+            nextState,
+            state.activeNetworkId,
+            contract,
+            {
+              status: "not_found",
+              lastCheckedAt: checkedAt,
+              error: messageFromUnknown(raw)
+            }
+          );
+          nextState = updated.state;
+          changed = changed || updated.changed;
+          continue;
+        }
+
+        balances[contract] = raw != null ? String(raw) : null;
+        const updated = updateAssetNetworkStateInWallet(
+          nextState,
+          state.activeNetworkId,
+          contract,
+          { status: "available", lastCheckedAt: checkedAt }
+        );
+        nextState = updated.state;
+        changed = changed || updated.changed;
       } else {
-        // If a single balance fetch fails, mark it null rather than
-        // failing the entire popup state.
+        const reason = result.reason;
+        const contract = assets[index]?.contract;
+        if (!contract) {
+          continue;
+        }
+        balances[contract] = null;
+        const updated = updateAssetNetworkStateInWallet(
+          nextState,
+          state.activeNetworkId,
+          contract,
+          {
+            status: isMissingContractResult(reason) ? "not_found" : "unknown",
+            lastCheckedAt: checkedAt,
+            error: messageFromUnknown(reason)
+          }
+        );
+        nextState = updated.state;
+        changed = changed || updated.changed;
       }
     }
-    return balances;
+
+    let assetNetworkStates = nextState.assetNetworkStates ?? {};
+    if (changed) {
+      const latestState = await this.loadWalletState();
+      if (latestState?.publicKey === state.publicKey) {
+        const networkId = state.activeNetworkId;
+        const latestStates = latestState.assetNetworkStates ?? {};
+        const latestNetworkState = latestStates[networkId] ?? {};
+        const fetchedNetworkState = nextState.assetNetworkStates?.[networkId] ?? {};
+        const mergedState: StoredWalletState = {
+          ...latestState,
+          assetNetworkStates: {
+            ...latestStates,
+            [networkId]: {
+              ...latestNetworkState,
+              ...fetchedNetworkState
+            }
+          }
+        };
+        await this.store.saveState(mergedState);
+        assetNetworkStates = mergedState.assetNetworkStates ?? {};
+      }
+    }
+
+    return {
+      balances,
+      assetNetworkStates
+    };
   }
 
   async createOrImportWallet(input: WalletSetupInput): Promise<WalletCreateResult> {
@@ -1956,6 +2198,13 @@ export class WalletController {
           symbol: "XIAN"
         }
       ],
+      assetNetworkStates: {
+        [activePreset.id]: {
+          currency: {
+            status: "available"
+          }
+        }
+      },
       connectedOrigins: [],
       createdAt: new Date().toISOString()
     });
@@ -2023,7 +2272,8 @@ export class WalletController {
       activeAccountIndex: state.activeAccountIndex ?? accounts[0]?.index ?? 0,
       activeNetworkId: state.activeNetworkId,
       networkPresets: state.networkPresets.filter((p) => !p.builtin),
-      watchedAssets: state.watchedAssets
+      watchedAssets: state.watchedAssets,
+      assetNetworkStates: state.assetNetworkStates
     };
 
     if (state.encryptedMnemonic) {
@@ -2147,6 +2397,7 @@ export class WalletController {
       activeNetworkId: activePreset.id,
       networkPresets: presets,
       watchedAssets,
+      assetNetworkStates: backup.assetNetworkStates,
       shieldedWalletSnapshots,
       connectedOrigins: [],
       createdAt: nowIso
@@ -2499,12 +2750,12 @@ export class WalletController {
       throw new Error("the native XIAN asset is pinned in the wallet");
     }
 
-    return this.persistWalletState({
+    return this.persistWalletState(removeAssetNetworkStateFromWallet({
       ...state,
       watchedAssets: state.watchedAssets.filter(
         (asset) => asset.contract !== trimmed
       )
-    });
+    }, trimmed));
   }
 
   async saveNetworkPreset(input: WalletNetworkPresetInput): Promise<PopupState> {

@@ -538,6 +538,49 @@ describe("@xian-tech/wallet-core controller", () => {
     );
   });
 
+  it("marks watched assets unavailable when the active network is missing the contract", async () => {
+    const store = createStore();
+    const client = createClient();
+    client.getBalance = vi.fn(async (_address, options) =>
+      options?.contract === "con_missing"
+        ? "ImportError('Module con_missing not found')"
+        : "12"
+    );
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined)
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+    await controller.trackAsset({
+      contract: "con_missing",
+      name: "Missing",
+      symbol: "MISS",
+      icon: "https://example.com/missing.svg"
+    });
+
+    const snapshot = await controller.getAssetBalanceSnapshot();
+    expect(snapshot.balances.con_missing).toBeNull();
+    expect(
+      snapshot.assetNetworkStates["local-node"]?.con_missing?.status
+    ).toBe("not_found");
+    expect((store.current() as StoredWalletState).watchedAssets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ contract: "con_missing" })
+      ])
+    );
+  });
+
   it("falls back to on-chain SVG metadata when no logo URL exists", async () => {
     const store = createStore();
     const client = createClient();

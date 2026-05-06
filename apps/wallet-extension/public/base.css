@@ -508,6 +508,18 @@ main {
   opacity: 0.5;
   background: var(--bg-2);
 }
+.manage-asset-row.is-unavailable {
+  opacity: 0.55;
+}
+.manage-asset-row.is-unavailable .drag-handle,
+.manage-asset-row.is-unavailable .icon-action {
+  cursor: default;
+}
+.token-status {
+  margin-top: 2px;
+  color: var(--warning);
+  font-size: 11px;
+}
 
 .drag-handle {
   color: var(--muted);
@@ -573,6 +585,19 @@ main {
   align-items: center;
   padding-top: 48px;
   gap: 12px;
+}
+
+.activity-retry-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 0 auto;
+}
+
+.activity-retry-btn svg {
+  width: 15px;
+  height: 15px;
 }
 
 /* ── Quick Actions ── */

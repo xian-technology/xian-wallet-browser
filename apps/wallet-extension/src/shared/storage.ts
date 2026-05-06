@@ -9,6 +9,8 @@ import {
   type StoredProviderRequest,
   type StoredUnlockedSession,
   type StoredWalletState,
+  type WalletAssetNetworkState,
+  type WalletAssetNetworkStates,
   type WalletNetworkPreset
 } from "@xian-tech/wallet-core";
 
@@ -41,6 +43,53 @@ function emptyEnvelope(): WalletStorageEnvelope {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value != null;
+}
+
+function normalizeAssetNetworkStates(value: unknown): WalletAssetNetworkStates {
+  if (!isRecord(value)) {
+    return {};
+  }
+
+  const states: WalletAssetNetworkStates = {};
+  for (const [networkId, rawNetworkState] of Object.entries(value)) {
+    if (!networkId || !isRecord(rawNetworkState)) {
+      continue;
+    }
+
+    const networkState: Record<string, WalletAssetNetworkState> = {};
+    for (const [contract, rawAssetState] of Object.entries(rawNetworkState)) {
+      if (!contract || !isRecord(rawAssetState)) {
+        continue;
+      }
+
+      const normalized: WalletAssetNetworkState = {};
+      if (
+        rawAssetState.status === "available" ||
+        rawAssetState.status === "not_found" ||
+        rawAssetState.status === "unknown"
+      ) {
+        normalized.status = rawAssetState.status;
+      }
+      if (typeof rawAssetState.hidden === "boolean") {
+        normalized.hidden = rawAssetState.hidden;
+      }
+      if (typeof rawAssetState.lastCheckedAt === "string") {
+        normalized.lastCheckedAt = rawAssetState.lastCheckedAt;
+      }
+      if (typeof rawAssetState.error === "string") {
+        normalized.error = rawAssetState.error;
+      }
+      if (Object.keys(normalized).length > 0) {
+        networkState[contract] = normalized;
+      }
+    }
+
+    if (Object.keys(networkState).length > 0) {
+      states[networkId] = networkState;
+    }
+  }
+
+  return states;
 }
 
 function encodeStorageValue(value: unknown): unknown {
@@ -275,6 +324,7 @@ function normalizeWalletState(value: unknown): StoredWalletState | null {
     activeNetworkId,
     networkPresets,
     watchedAssets: Array.isArray(value.watchedAssets) ? value.watchedAssets : [],
+    assetNetworkStates: normalizeAssetNetworkStates(value.assetNetworkStates),
     shieldedWalletSnapshots: normalizeShieldedWalletSnapshots(
       value.shieldedWalletSnapshots
     ),
@@ -506,4 +556,98 @@ export async function loadContacts(): Promise<StoredContact[]> {
 
 export async function saveContacts(contacts: StoredContact[]): Promise<void> {
   await chrome.storage.local.set({ [CONTACTS_STORAGE_KEY]: contacts });
+}
+
+/* ── Local activity fallback ────────────────────────────────── */
+
+const LOCAL_ACTIVITY_STORAGE_KEY = "xianWalletLocalActivity";
+const MAX_LOCAL_ACTIVITY_PER_NETWORK = 50;
+
+export interface StoredLocalActivityTx {
+  hash: string;
+  sender: string;
+  contract: string;
+  function: string;
+  success: boolean;
+  created_at?: string | null;
+  block_height?: number | null;
+  block_hash?: string | null;
+  block_time?: string | number | null;
+  tx_index?: number | null;
+  nonce?: number | null;
+  status_code?: number | null;
+  chi_used?: number | null;
+  result?: unknown;
+  payload?: {
+    sender?: string;
+    nonce?: number;
+    contract?: string;
+    function?: string;
+    kwargs?: Record<string, unknown>;
+    [key: string]: unknown;
+  } | null;
+  kwargs?: Record<string, unknown>;
+  envelope?: unknown;
+  local?: boolean;
+  local_status?: "accepted" | "finalized";
+}
+
+type LocalActivityStore = Record<string, StoredLocalActivityTx[]>;
+
+function normalizeLocalActivityTx(value: unknown): StoredLocalActivityTx | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  if (
+    typeof value.hash !== "string" ||
+    typeof value.sender !== "string" ||
+    typeof value.contract !== "string" ||
+    typeof value.function !== "string"
+  ) {
+    return null;
+  }
+  return value as unknown as StoredLocalActivityTx;
+}
+
+function normalizeLocalActivityStore(value: unknown): LocalActivityStore {
+  if (!isRecord(value)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([networkKey, entries]) => [
+      networkKey,
+      Array.isArray(entries)
+        ? entries.flatMap((entry) => normalizeLocalActivityTx(entry) ?? [])
+        : []
+    ])
+  );
+}
+
+async function loadLocalActivityStore(): Promise<LocalActivityStore> {
+  const raw = await storageGet<unknown>(LOCAL_ACTIVITY_STORAGE_KEY);
+  return normalizeLocalActivityStore(decodeStorageValue(raw));
+}
+
+async function saveLocalActivityStore(store: LocalActivityStore): Promise<void> {
+  await storageSet({
+    [LOCAL_ACTIVITY_STORAGE_KEY]: encodeStorageValue(store)
+  });
+}
+
+export async function loadLocalActivityTxs(
+  networkKey: string
+): Promise<StoredLocalActivityTx[]> {
+  const store = await loadLocalActivityStore();
+  return store[networkKey] ?? [];
+}
+
+export async function saveLocalActivityTx(
+  networkKey: string,
+  tx: StoredLocalActivityTx
+): Promise<void> {
+  const store = await loadLocalActivityStore();
+  const current = store[networkKey] ?? [];
+  store[networkKey] = [tx, ...current.filter((item) => item.hash !== tx.hash)]
+    .slice(0, MAX_LOCAL_ACTIVITY_PER_NETWORK);
+  await saveLocalActivityStore(store);
 }
