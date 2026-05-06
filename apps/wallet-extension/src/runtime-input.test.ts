@@ -30,6 +30,7 @@ describe("runtime input parsing", () => {
     expect(isRecognizedXianRecipient("ab".repeat(32))).toBe(true);
     expect(isRecognizedXianRecipient("currency")).toBe(true);
     expect(isRecognizedXianRecipient("con_bridge_1")).toBe(true);
+    expect(isRecognizedXianRecipient("con_Bridge_1")).toBe(false);
     expect(isRecognizedXianRecipient("qwe")).toBe(false);
     expect(isRecognizedXianRecipient("external:abc123")).toBe(false);
     expect(isRecognizedXianRecipient("0xabc123")).toBe(false);
