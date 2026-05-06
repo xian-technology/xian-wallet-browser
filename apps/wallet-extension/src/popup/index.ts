@@ -341,6 +341,11 @@ function renderTokenIcon(options: {
   const fontSize = options.fontSize ?? 14;
   const className = options.className ?? "token-icon";
   const src = tokenIconSource(options.icon);
+  const isNativeXianLogo = options.contract === "currency" && Boolean(src);
+  const imageSize = isNativeXianLogo ? Math.round(size * 0.7) : size;
+  const imageStyle = isNativeXianLogo
+    ? `width: ${imageSize}px; height: ${imageSize}px; border-radius: 0`
+    : "";
   const styleParts = [`width: ${size}px`, `height: ${size}px`, `font-size: ${fontSize}px`];
 
   if (!src) {
@@ -354,7 +359,7 @@ function renderTokenIcon(options: {
   if (src) {
     return `
       <div class="${className}" style="${style}">
-        <img src="${escapeAttribute(src)}" alt="" width="${size}" height="${size}" />
+        <img src="${escapeAttribute(src)}" alt="" width="${imageSize}" height="${imageSize}"${imageStyle ? ` style="${escapeAttribute(imageStyle)}"` : ""} />
       </div>
     `;
   }
