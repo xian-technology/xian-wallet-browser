@@ -179,10 +179,17 @@ async function render(): Promise<void> {
             ? `
                 <label class="surface trust-option">
                   <input id="trust-toggle" type="checkbox" />
-                  <span>
+                  <span class="trust-icon" aria-hidden="true">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                      <path d="m9 12 2 2 4-4"/>
+                    </svg>
+                  </span>
+                  <span class="trust-text">
                     <strong>${escapeHtml(view.trustSuggestion.label)}</strong>
                     <span class="muted">${escapeHtml(view.trustSuggestion.description)}</span>
                   </span>
+                  <span class="trust-switch" aria-hidden="true"></span>
                 </label>
               `
             : ""
