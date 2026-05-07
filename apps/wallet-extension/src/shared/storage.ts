@@ -11,6 +11,7 @@ import {
   type StoredWalletState,
   type WalletAssetNetworkState,
   type WalletAssetNetworkStates,
+  type WalletConnectedDappMetadata,
   type WalletNetworkPreset
 } from "@xian-tech/wallet-core";
 import type { XianDappPolicy } from "@xian-tech/provider";
@@ -149,6 +150,78 @@ function normalizeTrustedDappPolicies(value: unknown): XianDappPolicy[] {
       }
     ];
   });
+}
+
+function trimMetadataText(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed.slice(0, 120) : undefined;
+}
+
+function normalizeDappIconUrl(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > 2048) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === "https:" || url.protocol === "http:"
+      ? url.href
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeConnectedDappMetadataEntry(
+  value: unknown
+): WalletConnectedDappMetadata | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const metadata: WalletConnectedDappMetadata = {};
+  const name = trimMetadataText(value.name);
+  const iconUrl = normalizeDappIconUrl(value.iconUrl);
+  if (name) {
+    metadata.name = name;
+  }
+  if (iconUrl) {
+    metadata.iconUrl = iconUrl;
+  }
+  if (typeof value.lastSeenAt === "number" && Number.isFinite(value.lastSeenAt)) {
+    metadata.lastSeenAt = value.lastSeenAt;
+  }
+
+  return Object.keys(metadata).length > 0 ? metadata : null;
+}
+
+function normalizeConnectedDappMetadata(
+  value: unknown,
+  connectedOrigins: string[]
+): Record<string, WalletConnectedDappMetadata> {
+  if (!isRecord(value)) {
+    return {};
+  }
+
+  const allowedOrigins = new Set(connectedOrigins);
+  const metadata: Record<string, WalletConnectedDappMetadata> = {};
+  for (const [origin, entry] of Object.entries(value)) {
+    if (!allowedOrigins.has(origin)) {
+      continue;
+    }
+    const normalized = normalizeConnectedDappMetadataEntry(entry);
+    if (normalized) {
+      metadata[origin] = normalized;
+    }
+  }
+  return metadata;
 }
 
 function encodeStorageValue(value: unknown): unknown {
@@ -363,6 +436,9 @@ function normalizeWalletState(value: unknown): StoredWalletState | null {
       : networkPresets[0]?.id ?? LOCAL_NETWORK_PRESET_ID;
   const activePreset =
     networkPresets.find((preset) => preset.id === activeNetworkId) ?? localPreset;
+  const connectedOrigins = Array.isArray(value.connectedOrigins)
+    ? value.connectedOrigins.filter((entry): entry is string => typeof entry === "string")
+    : [];
 
   return {
     publicKey: value.publicKey,
@@ -385,12 +461,14 @@ function normalizeWalletState(value: unknown): StoredWalletState | null {
     watchedAssets: Array.isArray(value.watchedAssets) ? value.watchedAssets : [],
     assetNetworkStates: normalizeAssetNetworkStates(value.assetNetworkStates),
     trustedDappPolicies: normalizeTrustedDappPolicies(value.trustedDappPolicies),
+    connectedDappMetadata: normalizeConnectedDappMetadata(
+      value.connectedDappMetadata,
+      connectedOrigins
+    ),
     shieldedWalletSnapshots: normalizeShieldedWalletSnapshots(
       value.shieldedWalletSnapshots
     ),
-    connectedOrigins: Array.isArray(value.connectedOrigins)
-      ? value.connectedOrigins.filter((entry): entry is string => typeof entry === "string")
-      : [],
+    connectedOrigins,
     createdAt:
       typeof value.createdAt === "string" && value.createdAt.length > 0
         ? value.createdAt

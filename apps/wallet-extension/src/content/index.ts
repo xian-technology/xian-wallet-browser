@@ -1,5 +1,6 @@
 import {
   errorFromSerializedWalletError,
+  type WalletConnectedDappMetadata,
 } from "@xian-tech/wallet-core";
 
 import {
@@ -39,6 +40,83 @@ function sleep(durationMs: number): Promise<void> {
   return new Promise((resolve) => {
     globalThis.setTimeout(resolve, durationMs);
   });
+}
+
+function metadataText(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed.slice(0, 120) : undefined;
+}
+
+function absoluteHttpUrl(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed.length > 2048) {
+    return undefined;
+  }
+  try {
+    const url = new URL(trimmed, document.baseURI || window.location.href);
+    return url.protocol === "https:" || url.protocol === "http:"
+      ? url.href
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function largestIconSize(sizes: string | null): number {
+  if (!sizes) {
+    return 0;
+  }
+  if (sizes.toLowerCase().split(/\s+/).includes("any")) {
+    return 10_000;
+  }
+  return sizes
+    .split(/\s+/)
+    .map((entry) => {
+      const match = /^(\d+)x(\d+)$/i.exec(entry);
+      return match ? Math.max(Number(match[1]), Number(match[2])) : 0;
+    })
+    .reduce((largest, size) => Math.max(largest, size), 0);
+}
+
+function faviconScore(link: HTMLLinkElement): number {
+  const rel = link.rel.toLowerCase();
+  const href = link.getAttribute("href") ?? "";
+  const isSvg = /\.svg(?:[?#]|$)/i.test(href);
+  const size = largestIconSize(link.getAttribute("sizes"));
+  return (
+    size +
+    (isSvg ? 20_000 : 0) +
+    (rel.includes("apple-touch-icon") ? 5_000 : 0) +
+    (rel.includes("shortcut") ? 500 : 0) +
+    (rel.includes("icon") ? 1_000 : 0)
+  );
+}
+
+function collectPageMetadata(): WalletConnectedDappMetadata {
+  const siteName = metadataText(
+    document
+      .querySelector<HTMLMetaElement>(
+        'meta[property="og:site_name"], meta[name="application-name"]'
+      )
+      ?.content
+  );
+  const title = metadataText(document.title);
+  const iconUrl =
+    Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel*="icon"]'))
+      .map((link) => ({
+        href: absoluteHttpUrl(link.href || link.getAttribute("href")),
+        score: faviconScore(link)
+      }))
+      .filter((candidate): candidate is { href: string; score: number } =>
+        Boolean(candidate.href)
+      )
+      .sort((left, right) => right.score - left.score)[0]?.href ??
+    absoluteHttpUrl("/favicon.ico");
+
+  return {
+    name: siteName ?? title,
+    iconUrl
+  };
 }
 
 async function sendRuntimeMessage<T>(message: Record<string, unknown>): Promise<T> {
@@ -107,7 +185,8 @@ window.addEventListener("message", async (event: MessageEvent<unknown>) => {
       type: "provider_request",
       origin: window.location.origin,
       requestId: data.id,
-      request: data.request
+      request: data.request,
+      dappMetadata: collectPageMetadata()
     });
 
     let result: unknown;

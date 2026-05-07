@@ -384,9 +384,19 @@ describe("@xian-tech/wallet-core controller", () => {
       privateKey: PRIVATE_KEY
     });
 
-    await controller.startProviderRequest("request-1", ORIGIN, {
-      method: "xian_requestAccounts"
-    });
+    await controller.startProviderRequest(
+      "request-1",
+      ORIGIN,
+      {
+        method: "xian_requestAccounts"
+      },
+      {
+        dappMetadata: {
+          name: "Swap Example",
+          iconUrl: "https://app.example/icon.svg"
+        }
+      }
+    );
 
     const popupWhilePending = await controller.getPopupState();
     expect(popupWhilePending.pendingApprovalCount).toBe(1);
@@ -401,9 +411,17 @@ describe("@xian-tech/wallet-core controller", () => {
     await controller.resolveApproval("approval-1", true);
     const connectedState = await controller.getPopupState();
     expect(connectedState.connectedOrigins).toEqual([ORIGIN]);
+    expect(connectedState.connectedDappMetadata[ORIGIN]).toEqual(
+      expect.objectContaining({
+        name: "Swap Example",
+        iconUrl: "https://app.example/icon.svg",
+        lastSeenAt: expect.any(Number)
+      })
+    );
 
     const disconnectedState = await controller.disconnectOrigin(ORIGIN);
     expect(disconnectedState.connectedOrigins).toEqual([]);
+    expect(disconnectedState.connectedDappMetadata).toEqual({});
     expect(onProviderEvent).toHaveBeenLastCalledWith(
       "disconnect",
       [{ code: 4100, message: "wallet disconnected" }],

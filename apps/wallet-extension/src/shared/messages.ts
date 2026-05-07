@@ -7,6 +7,7 @@ import type {
   ShieldedWalletHistoryStatus,
   WalletAssetBalanceSnapshot,
   WalletBackup,
+  WalletConnectedDappMetadata,
   WalletCreateResult
 } from "@xian-tech/wallet-core";
 
@@ -54,6 +55,7 @@ export interface ProviderRequestRuntimeMessage {
   origin: string;
   requestId: string;
   request: XianProviderRequest;
+  dappMetadata?: WalletConnectedDappMetadata;
 }
 
 export interface ProviderRequestStatusRuntimeMessage {

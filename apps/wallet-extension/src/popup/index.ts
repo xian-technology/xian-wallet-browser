@@ -1802,6 +1802,14 @@ function renderAppsTab(state: PopupRuntimeState): string {
   const trustedDappPolicies = Array.isArray(state.trustedDappPolicies)
     ? state.trustedDappPolicies
     : [];
+  const rawConnectedDappMetadata = (state as {
+    connectedDappMetadata?: unknown;
+  }).connectedDappMetadata;
+  const connectedDappMetadata =
+    rawConnectedDappMetadata &&
+    typeof rawConnectedDappMetadata === "object"
+      ? rawConnectedDappMetadata as PopupRuntimeState["connectedDappMetadata"]
+      : {};
 
   if (connectedOrigins.length === 0) {
     return `
@@ -1825,19 +1833,31 @@ function renderAppsTab(state: PopupRuntimeState): string {
         : ""
     }
     <div class="app-list">
-      ${connectedOrigins.map((o) => renderOriginItem(o, trustedDappPolicies)).join("")}
+      ${connectedOrigins.map((o) =>
+        renderOriginItem(
+          o,
+          trustedDappPolicies,
+          connectedDappMetadata[o]
+        )
+      ).join("")}
     </div>
   `;
 }
 
 function renderOriginItem(
   origin: string,
-  trustedDappPolicies: PopupRuntimeState["trustedDappPolicies"]
+  trustedDappPolicies: PopupRuntimeState["trustedDappPolicies"],
+  metadata?: PopupRuntimeState["connectedDappMetadata"][string]
 ): string {
   const hostname = safeOriginLabel(origin);
-  const letter = escapeHtml(hostname.charAt(0).toUpperCase());
+  const displayName = metadata?.name?.trim() || hostname;
+  const displaySubtitle =
+    displayName === hostname ? origin : `${hostname} · ${origin}`;
+  const letter = escapeHtml(displayName.charAt(0).toUpperCase());
   const fallback = `this.replaceWith(Object.assign(document.createElement('div'),{className:'token-icon',style:'background:${assetColor(origin)}',textContent:'${letter}'}))`;
-  const faviconUrl = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=32`;
+  const faviconUrl =
+    metadata?.iconUrl ??
+    `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=64`;
   const policies = trustedDappPolicies.filter(
     (policy) => policy.origin === origin
   );
@@ -1847,8 +1867,8 @@ function renderOriginItem(
       <div class="app-item">
         <img class="app-favicon" src="${escapeAttribute(faviconUrl)}" alt="" width="32" height="32" onerror="${escapeAttribute(fallback)}" />
         <div class="app-item-info">
-          <div class="app-item-host">${escapeHtml(hostname)}</div>
-          <div class="app-item-url">${escapeHtml(origin)}</div>
+          <div class="app-item-host">${escapeHtml(displayName)}</div>
+          <div class="app-item-url">${escapeHtml(displaySubtitle)}</div>
           ${
             policies.length > 0
               ? `<div class="app-item-url">${policies.length} auto-approval rule${policies.length === 1 ? "" : "s"}</div>`

@@ -67,6 +67,7 @@ import type {
   WalletAssetBalanceSnapshot,
   WalletAssetNetworkState,
   WalletAssetNetworkStates,
+  WalletConnectedDappMetadata,
   WalletNetworkPreset,
   WalletNetworkPresetInput,
   WalletNetworkStatus,
@@ -83,6 +84,8 @@ interface RequestWaiter {
 
 const SAFE_CHAIN_ID_LOOKUP_TIMEOUT_MS = 2_000;
 const TRUSTED_DAPP_POLICY_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const MAX_DAPP_METADATA_TEXT_LENGTH = 120;
+const MAX_DAPP_ICON_URL_LENGTH = 2048;
 
 export interface WalletNetworkClient {
   getChainId(): Promise<string>;
@@ -348,6 +351,88 @@ function normalizeTrustedDappPolicies(value: unknown): XianDappPolicy[] {
   });
 }
 
+function trimMetadataText(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0
+    ? trimmed.slice(0, MAX_DAPP_METADATA_TEXT_LENGTH)
+    : undefined;
+}
+
+function normalizeDappIconUrl(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (
+    trimmed.length === 0 ||
+    trimmed.length > MAX_DAPP_ICON_URL_LENGTH
+  ) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === "https:" || url.protocol === "http:"
+      ? url.href
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeConnectedDappMetadataEntry(
+  value: unknown,
+  options?: { now?: number }
+): WalletConnectedDappMetadata | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const metadata: WalletConnectedDappMetadata = {};
+  const name = trimMetadataText(value.name);
+  const iconUrl = normalizeDappIconUrl(value.iconUrl);
+  if (name) {
+    metadata.name = name;
+  }
+  if (iconUrl) {
+    metadata.iconUrl = iconUrl;
+  }
+  if (typeof value.lastSeenAt === "number" && Number.isFinite(value.lastSeenAt)) {
+    metadata.lastSeenAt = value.lastSeenAt;
+  } else if (typeof options?.now === "number") {
+    metadata.lastSeenAt = options.now;
+  }
+
+  return Object.keys(metadata).length > 0 ? metadata : null;
+}
+
+function normalizeConnectedDappMetadata(
+  value: unknown,
+  connectedOrigins?: Iterable<string>
+): Record<string, WalletConnectedDappMetadata> {
+  if (!isRecord(value)) {
+    return {};
+  }
+
+  const allowedOrigins = connectedOrigins
+    ? new Set(connectedOrigins)
+    : undefined;
+  const metadata: Record<string, WalletConnectedDappMetadata> = {};
+  for (const [origin, entry] of Object.entries(value)) {
+    if (allowedOrigins && !allowedOrigins.has(origin)) {
+      continue;
+    }
+    const normalized = normalizeConnectedDappMetadataEntry(entry);
+    if (normalized) {
+      metadata[origin] = normalized;
+    }
+  }
+  return metadata;
+}
+
 function normalizeTrackedAsset(
   asset: XianWatchAssetRequest["options"]
 ): XianWatchAssetRequest["options"] {
@@ -407,6 +492,10 @@ function normalizeStoredWalletNetworks(state: StoredWalletState): StoredWalletSt
   const trustedDappPolicies = normalizeTrustedDappPolicies(
     (state as { trustedDappPolicies?: unknown }).trustedDappPolicies
   );
+  const connectedDappMetadata = normalizeConnectedDappMetadata(
+    (state as { connectedDappMetadata?: unknown }).connectedDappMetadata,
+    state.connectedOrigins
+  );
 
   if (rawPresets.length === 0) {
     const rpcUrl = trimOptionalString(state.rpcUrl) ?? DEFAULT_RPC_URL;
@@ -424,7 +513,8 @@ function normalizeStoredWalletNetworks(state: StoredWalletState): StoredWalletSt
         activeNetworkId: localPreset.id,
         networkPresets: [localPreset],
         assetNetworkStates,
-        trustedDappPolicies
+        trustedDappPolicies,
+        connectedDappMetadata
       };
     }
 
@@ -450,7 +540,8 @@ function normalizeStoredWalletNetworks(state: StoredWalletState): StoredWalletSt
       activeNetworkId: customPreset.id,
       networkPresets: [localPreset, customPreset],
       assetNetworkStates,
-      trustedDappPolicies
+      trustedDappPolicies,
+      connectedDappMetadata
     };
   }
 
@@ -484,7 +575,8 @@ function normalizeStoredWalletNetworks(state: StoredWalletState): StoredWalletSt
     activeNetworkId,
     networkPresets: [...presets.values()],
     assetNetworkStates,
-    trustedDappPolicies
+    trustedDappPolicies,
+    connectedDappMetadata
   };
 }
 
@@ -1171,18 +1263,35 @@ export class WalletController {
 
   private async updateConnectedOrigin(
     origin: string,
-    connected: boolean
+    connected: boolean,
+    dappMetadata?: WalletConnectedDappMetadata
   ): Promise<StoredWalletState> {
     const state = this.requireStoredWallet(await this.loadWalletState());
     const nextOrigins = new Set(state.connectedOrigins);
+    const nextDappMetadata = {
+      ...(state.connectedDappMetadata ?? {})
+    };
+
     if (connected) {
       nextOrigins.add(origin);
+      const normalizedMetadata = normalizeConnectedDappMetadataEntry(
+        dappMetadata,
+        { now: this.now() }
+      );
+      if (normalizedMetadata) {
+        nextDappMetadata[origin] = {
+          ...(nextDappMetadata[origin] ?? {}),
+          ...normalizedMetadata
+        };
+      }
     } else {
       nextOrigins.delete(origin);
+      delete nextDappMetadata[origin];
     }
     const nextState: StoredWalletState = {
       ...state,
       connectedOrigins: [...nextOrigins],
+      connectedDappMetadata: nextDappMetadata,
       trustedDappPolicies: connected
         ? state.trustedDappPolicies ?? []
         : (state.trustedDappPolicies ?? []).filter(
@@ -1577,7 +1686,8 @@ export class WalletController {
 
   private async executeApprovedRequest(
     origin: string,
-    request: XianProviderRequest
+    request: XianProviderRequest,
+    dappMetadata?: WalletConnectedDappMetadata
   ): Promise<unknown> {
     const state = this.requireStoredWallet(await this.loadWalletState());
 
@@ -1588,7 +1698,11 @@ export class WalletController {
           this.activeNetworkPreset(state),
           await this.safeGetChainId(state)
         );
-        const nextState = await this.updateConnectedOrigin(origin, true);
+        const nextState = await this.updateConnectedOrigin(
+          origin,
+          true,
+          dappMetadata
+        );
         await this.emitConnectionLifecycle(
           origin,
           chainId ?? "unknown",
@@ -1770,7 +1884,8 @@ export class WalletController {
   private async executeImmediateRequest(
     state: StoredWalletState | null,
     origin: string,
-    request: XianProviderRequest
+    request: XianProviderRequest,
+    dappMetadata?: WalletConnectedDappMetadata
   ): Promise<{ kind: "result"; value: unknown } | { kind: "approval"; account?: string; chainId?: string }> {
     switch (request.method) {
       case "xian_getWalletInfo":
@@ -1788,9 +1903,14 @@ export class WalletController {
         );
 
         if (walletState.connectedOrigins.includes(origin)) {
+          const nextState = await this.updateConnectedOrigin(
+            origin,
+            true,
+            dappMetadata
+          );
           return {
             kind: "result",
-            value: [walletState.publicKey]
+            value: [nextState.publicKey]
           };
         }
 
@@ -1998,6 +2118,7 @@ export class WalletController {
       assetFiatValues: {},
       connectedOrigins: state?.connectedOrigins ?? [],
       trustedDappPolicies: state?.trustedDappPolicies ?? [],
+      connectedDappMetadata: state?.connectedDappMetadata ?? {},
       pendingApprovalCount: pendingApprovals.length,
       pendingApprovals,
       hasRecoveryPhrase: Boolean(state?.encryptedMnemonic),
@@ -2397,6 +2518,7 @@ export class WalletController {
         }
       },
       trustedDappPolicies: [],
+      connectedDappMetadata: {},
       connectedOrigins: [],
       createdAt: new Date().toISOString()
     });
@@ -2592,6 +2714,7 @@ export class WalletController {
       assetNetworkStates: backup.assetNetworkStates,
       shieldedWalletSnapshots,
       trustedDappPolicies: [],
+      connectedDappMetadata: {},
       connectedOrigins: [],
       createdAt: nowIso
     });
@@ -2920,7 +3043,8 @@ export class WalletController {
     const nextState: StoredWalletState = {
       ...state,
       connectedOrigins: [],
-      trustedDappPolicies: []
+      trustedDappPolicies: [],
+      connectedDappMetadata: {}
     };
     await this.store.saveState(nextState);
     await Promise.all(
@@ -3040,7 +3164,8 @@ export class WalletController {
   async startProviderRequest(
     requestId: string,
     origin: string,
-    request: XianProviderRequest
+    request: XianProviderRequest,
+    options?: { dappMetadata?: WalletConnectedDappMetadata }
   ): Promise<ProviderRequestStartResult> {
     const existing = await this.store.loadRequestState(requestId);
     if (existing) {
@@ -3069,6 +3194,8 @@ export class WalletController {
       requestId,
       origin,
       request,
+      dappMetadata:
+        normalizeConnectedDappMetadataEntry(options?.dappMetadata) ?? undefined,
       createdAt: this.now(),
       updatedAt: this.now(),
       status: "pending"
@@ -3079,7 +3206,8 @@ export class WalletController {
       const immediate = await this.executeImmediateRequest(
         await this.loadWalletState(),
         origin,
-        request
+        request,
+        requestState.dappMetadata
       );
 
       if (immediate.kind === "result") {
@@ -3196,7 +3324,8 @@ export class WalletController {
     try {
       const result = await this.executeApprovedRequest(
         approval.record.origin,
-        approval.record.request
+        approval.record.request,
+        requestState.dappMetadata
       );
       await this.fulfillRequest(requestState, result);
       if (options?.trust) {

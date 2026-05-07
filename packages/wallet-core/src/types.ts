@@ -82,6 +82,7 @@ export interface StoredWalletState {
   watchedAssets: WalletWatchedAsset[];
   assetNetworkStates?: WalletAssetNetworkStates;
   trustedDappPolicies?: XianDappPolicy[];
+  connectedDappMetadata?: Record<string, WalletConnectedDappMetadata>;
   shieldedWalletSnapshots?: StoredShieldedWalletSnapshot[];
   connectedOrigins: string[];
   createdAt: string;
@@ -116,6 +117,7 @@ export interface StoredProviderRequest {
   requestId: string;
   origin: string;
   request: XianProviderRequest;
+  dappMetadata?: WalletConnectedDappMetadata;
   createdAt: number;
   updatedAt: number;
   status: StoredProviderRequestStatus;
@@ -169,6 +171,7 @@ export interface PopupState {
   assetFiatValues: Record<string, string | null>;
   connectedOrigins: string[];
   trustedDappPolicies: XianDappPolicy[];
+  connectedDappMetadata: Record<string, WalletConnectedDappMetadata>;
   pendingApprovalCount: number;
   pendingApprovals: ApprovalView[];
   hasRecoveryPhrase: boolean;
@@ -178,6 +181,12 @@ export interface PopupState {
   activeAccountIndex: number;
   shieldedWalletSnapshots: ShieldedWalletSnapshotSummary[];
   version: string;
+}
+
+export interface WalletConnectedDappMetadata {
+  name?: string;
+  iconUrl?: string;
+  lastSeenAt?: number;
 }
 
 export type ApprovalKind =

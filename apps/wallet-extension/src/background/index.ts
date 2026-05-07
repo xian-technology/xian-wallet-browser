@@ -450,7 +450,8 @@ chrome.runtime.onMessage.addListener(
                 await controller.startProviderRequest(
                   message.requestId,
                   message.origin,
-                  message.request
+                  message.request,
+                  { dappMetadata: message.dappMetadata }
                 )
               )
             );
