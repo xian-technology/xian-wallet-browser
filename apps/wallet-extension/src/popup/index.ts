@@ -13,7 +13,8 @@ import {
   sendRuntimeMessage,
   type WalletAssetBalanceRuntimeResult,
   type ShieldedSnapshotHistoryRuntimeResult,
-  type WalletCreateRuntimeResult
+  type WalletCreateRuntimeResult,
+  type WalletTransactionSubmittedRuntimeMessage
 } from "../shared/messages";
 import {
   DEFAULT_AUTO_LOCK,
@@ -2204,6 +2205,40 @@ function refreshActivityAfterTransaction(
 
   poll(0);
 }
+
+function isWalletTransactionSubmittedMessage(
+  message: unknown
+): message is WalletTransactionSubmittedRuntimeMessage {
+  return (
+    typeof message === "object" &&
+    message !== null &&
+    (message as { type?: unknown }).type === "wallet_transaction_submitted"
+  );
+}
+
+async function handleWalletTransactionSubmitted(
+  message: WalletTransactionSubmittedRuntimeMessage
+): Promise<void> {
+  const state = currentState;
+  if (!state?.publicKey) {
+    return;
+  }
+  if (message.sender && message.sender !== state.publicKey) {
+    return;
+  }
+
+  applyReceiptStateWrites(message.execution);
+  void refresh(null);
+
+  if (message.txHash) {
+    refreshActivityAfterTransaction(state, message.txHash);
+  } else {
+    await fetchActivityTxs(state.publicKey, {
+      showLoading: activeTab === "activity"
+    });
+  }
+}
+
 let selectedTxHash: string | null = null;
 
 function renderTxDetail(tx: ActivityTx, state: PopupRuntimeState): string {
@@ -5265,10 +5300,21 @@ function isMissingContractError(error: unknown): boolean {
 /* ── Init ──────────────────────────────────────────────────── */
 
 chrome.runtime.onMessage.addListener(
-  (message: { type?: string; approvalId?: string }) => {
-    if (message.type === "approval_notify" && message.approvalId) {
-      activeApprovalId = message.approvalId;
+  (message: unknown) => {
+    const runtimeMessage =
+      typeof message === "object" && message !== null
+        ? (message as { type?: unknown; approvalId?: unknown })
+        : null;
+    if (
+      runtimeMessage?.type === "approval_notify" &&
+      typeof runtimeMessage.approvalId === "string"
+    ) {
+      activeApprovalId = runtimeMessage.approvalId;
       void refresh(null);
+      return;
+    }
+    if (isWalletTransactionSubmittedMessage(message)) {
+      void handleWalletTransactionSubmitted(message);
     }
   }
 );

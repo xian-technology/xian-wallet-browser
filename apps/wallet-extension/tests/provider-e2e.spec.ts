@@ -146,6 +146,28 @@ async function waitForInjectedProviderResult(
   );
 }
 
+async function readLocalActivityTxs(
+  page: Page,
+  networkKey: string
+): Promise<Array<Record<string, unknown>>> {
+  return page.evaluate(
+    (key) =>
+      new Promise<Array<Record<string, unknown>>>((resolve, reject) => {
+        chrome.storage.local.get("xianWalletLocalActivity", (result) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          const store = result.xianWalletLocalActivity as
+            | Record<string, Array<Record<string, unknown>>>
+            | undefined;
+          resolve(store?.[key] ?? []);
+        });
+      }),
+    networkKey
+  );
+}
+
 test("approves connect and send-call requests through the injected provider bridge", async () => {
   const rpc = await startMockRpcServer({
     chainId: "xian-local",
@@ -220,6 +242,7 @@ test("approves connect and send-call requests through the injected provider brid
     });
     const sendApproval = await waitForApprovalPage(context, sendExistingPages);
     await expect(sendApproval.getByText("Send contract call")).toBeVisible();
+    await sendApproval.locator("#trust-toggle").check({ force: true });
     const sendClose = sendApproval.waitForEvent("close");
     await sendApproval.getByRole("button", { name: "Approve call" }).click();
     await sendClose;
@@ -241,6 +264,62 @@ test("approves connect and send-call requests through the injected provider brid
         expect.stringContaining("POST /broadcast_tx_sync?tx=%22")
       ])
     );
+
+    await startInjectedProviderRequest(dappPage, "auto-send-call", {
+      method: "xian_sendCall",
+      params: [
+        {
+          intent: {
+            contract: "currency",
+            function: "transfer",
+            kwargs: {
+              to: "carol",
+              amount: "7"
+            },
+            chi: 500
+          }
+        }
+      ]
+    });
+
+    expect(await waitForInjectedProviderResult(dappPage, "auto-send-call")).toEqual({
+      status: "fulfilled",
+      result: expect.objectContaining({
+        accepted: true,
+        txHash: "ABC123",
+        nonce: 12,
+        chiSupplied: 500
+      })
+    });
+
+    const popupState = await sendRuntimeMessage<{
+      activeNetworkId?: string;
+      publicKey?: string;
+      rpcUrl: string;
+    }>(popup, {
+      type: "wallet_get_popup_state"
+    });
+    const networkKey = `${popupState.activeNetworkId ?? popupState.rpcUrl}|${popupState.rpcUrl}|${account}`;
+
+    await expect
+      .poll(() => readLocalActivityTxs(popup, networkKey))
+      .toEqual([
+        expect.objectContaining({
+          hash: "ABC123",
+          sender: account,
+          contract: "currency",
+          function: "transfer",
+          success: true,
+          local: true,
+          local_status: "accepted",
+          payload: expect.objectContaining({
+            kwargs: {
+              to: "carol",
+              amount: "7"
+            }
+          })
+        })
+      ]);
   } finally {
     await cleanupExtension(context, userDataDir);
     await dapp.close();

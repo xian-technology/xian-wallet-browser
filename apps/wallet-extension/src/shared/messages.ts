@@ -64,6 +64,24 @@ export interface ProviderRequestStatusRuntimeMessage {
   consume?: boolean;
 }
 
+export interface WalletTransactionSubmittedRuntimeMessage {
+  type: "wallet_transaction_submitted";
+  origin: string;
+  requestId: string;
+  method: "xian_sendTransaction" | "xian_sendCall";
+  autoApproved: boolean;
+  submitted?: boolean;
+  accepted?: boolean | null;
+  finalized?: boolean;
+  txHash?: string;
+  sender?: string;
+  contract?: string;
+  function?: string;
+  kwargs?: Record<string, unknown>;
+  message?: unknown;
+  execution?: unknown;
+}
+
 export interface WalletCreateRuntimeMessage {
   type: "wallet_create";
   password: string;

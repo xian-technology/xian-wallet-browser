@@ -3,7 +3,13 @@ import {
   WalletController
 } from "@xian-tech/wallet-core";
 
-import { fail, ok, type RuntimeMessage } from "../shared/messages";
+import {
+  fail,
+  ok,
+  type ProviderRequestRuntimeMessage,
+  type RuntimeMessage,
+  type WalletTransactionSubmittedRuntimeMessage
+} from "../shared/messages";
 import {
   DEFAULT_WALLET_SHELL_MODE,
   type WalletShellMode
@@ -28,7 +34,9 @@ import {
   loadContacts,
   saveContacts,
   loadAutoLock,
-  saveAutoLock
+  saveAutoLock,
+  saveLocalActivityTx,
+  type StoredLocalActivityTx
 } from "../shared/storage";
 
 const WALLET_METADATA = {
@@ -124,6 +132,229 @@ async function broadcastProviderEvent(
         }
       })
   );
+}
+
+type SubmittedProviderMethod = "xian_sendTransaction" | "xian_sendCall";
+
+interface ProviderTransactionDetails {
+  sender?: string;
+  contract?: string;
+  function?: string;
+  kwargs?: Record<string, unknown>;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function readBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function readBooleanOrNull(value: unknown): boolean | null | undefined {
+  return value === null || typeof value === "boolean" ? value : undefined;
+}
+
+function isSubmittedProviderMethod(
+  method: string
+): method is SubmittedProviderMethod {
+  return method === "xian_sendTransaction" || method === "xian_sendCall";
+}
+
+function firstParamRecord(params: unknown): Record<string, unknown> {
+  if (Array.isArray(params)) {
+    const first = params[0];
+    return isRecord(first) ? first : {};
+  }
+  return isRecord(params) ? params : {};
+}
+
+function detailsFromPayload(value: unknown): ProviderTransactionDetails {
+  const payload = isRecord(value) ? value : {};
+  const kwargs = isRecord(payload.kwargs) ? payload.kwargs : undefined;
+  return {
+    sender: readString(payload.sender),
+    contract: readString(payload.contract),
+    function: readString(payload.function),
+    kwargs
+  };
+}
+
+function detailsFromProviderRequest(
+  request: ProviderRequestRuntimeMessage["request"]
+): ProviderTransactionDetails {
+  const params = firstParamRecord(request.params);
+
+  if (request.method === "xian_sendCall") {
+    const intent = isRecord(params.intent) ? params.intent : params;
+    return detailsFromPayload(intent);
+  }
+
+  if (request.method === "xian_sendTransaction") {
+    const tx = isRecord(params.tx) ? params.tx : params;
+    const payload = isRecord(tx.payload)
+      ? tx.payload
+      : isRecord(params.payload)
+        ? params.payload
+        : {};
+    return detailsFromPayload(payload);
+  }
+
+  return {};
+}
+
+function receiptFromSubmission(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  return isRecord(value.receipt) ? value.receipt : null;
+}
+
+function executionFromSubmission(value: unknown): unknown {
+  const receipt = receiptFromSubmission(value);
+  return receipt ? receipt.execution : undefined;
+}
+
+function txHashFromSubmission(value: unknown): string | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const receipt = receiptFromSubmission(value);
+  return (
+    readString(value.txHash) ??
+    readString(value.tx_hash) ??
+    readString(value.hash) ??
+    readString(receipt?.txHash) ??
+    readString(receipt?.tx_hash) ??
+    readString(receipt?.hash)
+  );
+}
+
+function detailsFromSubmission(value: unknown): ProviderTransactionDetails {
+  if (!isRecord(value)) {
+    return {};
+  }
+  const receipt = receiptFromSubmission(value);
+  const receiptTransaction = isRecord(receipt?.transaction)
+    ? receipt.transaction
+    : null;
+  const receiptPayload = isRecord(receiptTransaction?.payload)
+    ? receiptTransaction.payload
+    : null;
+  const transaction = isRecord(value.transaction) ? value.transaction : null;
+  const payload = isRecord(transaction?.payload)
+    ? transaction.payload
+    : isRecord(value.payload)
+      ? value.payload
+      : receiptPayload;
+
+  return detailsFromPayload(payload);
+}
+
+function buildTransactionSubmittedMessage(
+  runtimeMessage: ProviderRequestRuntimeMessage,
+  result: { status: "fulfilled"; result: unknown }
+): WalletTransactionSubmittedRuntimeMessage | null {
+  const method = runtimeMessage.request.method;
+  if (!isSubmittedProviderMethod(method)) {
+    return null;
+  }
+
+  const submission = isRecord(result.result) ? result.result : {};
+  const requestDetails = detailsFromProviderRequest(runtimeMessage.request);
+  const submissionDetails = detailsFromSubmission(submission);
+
+  return {
+    type: "wallet_transaction_submitted",
+    origin: runtimeMessage.origin,
+    requestId: runtimeMessage.requestId,
+    method,
+    autoApproved: true,
+    submitted: readBoolean(submission.submitted),
+    accepted: readBooleanOrNull(submission.accepted),
+    finalized: readBoolean(submission.finalized),
+    txHash: txHashFromSubmission(submission),
+    sender: submissionDetails.sender ?? requestDetails.sender,
+    contract: submissionDetails.contract ?? requestDetails.contract,
+    function: submissionDetails.function ?? requestDetails.function,
+    kwargs: submissionDetails.kwargs ?? requestDetails.kwargs,
+    message: submission.message,
+    execution: executionFromSubmission(submission)
+  };
+}
+
+async function recordProviderTransactionActivity(
+  notification: WalletTransactionSubmittedRuntimeMessage
+): Promise<void> {
+  if (!notification.txHash) {
+    return;
+  }
+
+  const state = await controller.getPopupState();
+  if (!state.publicKey) {
+    return;
+  }
+
+  const sender = notification.sender ?? state.publicKey;
+  if (sender !== state.publicKey) {
+    return;
+  }
+
+  const contract = notification.contract ?? "unknown";
+  const functionName = notification.function ?? "transaction";
+  const tx: StoredLocalActivityTx = {
+    hash: notification.txHash,
+    sender,
+    contract,
+    function: functionName,
+    success: notification.finalized === true || notification.accepted === true,
+    created_at: new Date().toISOString(),
+    payload: {
+      sender,
+      contract,
+      function: functionName,
+      kwargs: notification.kwargs ?? {}
+    },
+    local: true
+  };
+
+  if (notification.finalized === true) {
+    tx.local_status = "finalized";
+  } else if (notification.accepted === true) {
+    tx.local_status = "accepted";
+  }
+  if (notification.message !== undefined) {
+    tx.result = { message: notification.message };
+  }
+
+  const networkKey = `${state.activeNetworkId ?? state.rpcUrl}|${state.rpcUrl}|${sender}`;
+  await saveLocalActivityTx(networkKey, tx);
+}
+
+async function publishProviderTransaction(
+  runtimeMessage: ProviderRequestRuntimeMessage,
+  result: { status: "fulfilled"; result: unknown }
+): Promise<void> {
+  const notification = buildTransactionSubmittedMessage(runtimeMessage, result);
+  if (!notification) {
+    return;
+  }
+
+  try {
+    await recordProviderTransactionActivity(notification);
+  } catch {
+    // Activity fallback is best-effort; the dapp response must not depend on it.
+  }
+
+  try {
+    await chrome.runtime.sendMessage(notification);
+  } catch {
+    // Popup/side panel may not be open.
+  }
 }
 
 const controller = new WalletController({
@@ -445,16 +676,18 @@ chrome.runtime.onMessage.addListener(
             return;
           }
           case "provider_request":
-            sendResponse(
-              ok(
-                await controller.startProviderRequest(
-                  message.requestId,
-                  message.origin,
-                  message.request,
-                  { dappMetadata: message.dappMetadata }
-                )
-              )
-            );
+            {
+              const result = await controller.startProviderRequest(
+                message.requestId,
+                message.origin,
+                message.request,
+                { dappMetadata: message.dappMetadata }
+              );
+              if (result.status === "fulfilled") {
+                void publishProviderTransaction(message, result);
+              }
+              sendResponse(ok(result));
+            }
             return;
           case "provider_request_status":
             sendResponse(
