@@ -174,6 +174,20 @@ async function render(): Promise<void> {
           <pre class="approval-payload">${escapeHtml(view.payload)}</pre>
         </details>
 
+        ${
+          view.trustSuggestion
+            ? `
+                <label class="surface trust-option">
+                  <input id="trust-toggle" type="checkbox" />
+                  <span>
+                    <strong>${escapeHtml(view.trustSuggestion.label)}</strong>
+                    <span class="muted">${escapeHtml(view.trustSuggestion.description)}</span>
+                  </span>
+                </label>
+              `
+            : ""
+        }
+
         <div class="action-row approval-actions">
           <button id="approve-button">${escapeHtml(view.approveLabel ?? "Approve")}</button>
           <button id="reject-button" class="secondary">Reject</button>
@@ -198,10 +212,14 @@ async function render(): Promise<void> {
 async function resolveApproval(approved: boolean): Promise<void> {
   disableButtons();
   try {
+    const trust =
+      approved &&
+      root.querySelector<HTMLInputElement>("#trust-toggle")?.checked === true;
     await sendRuntimeMessage<null>({
       type: "approval_resolve",
       approvalId,
-      approved
+      approved,
+      trust
     });
   } finally {
     window.close();

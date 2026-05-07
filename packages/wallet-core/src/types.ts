@@ -1,4 +1,5 @@
 import type {
+  XianDappPolicy,
   XianProviderRequest,
   XianWatchedAsset
 } from "@xian-tech/provider";
@@ -80,6 +81,7 @@ export interface StoredWalletState {
   networkPresets: WalletNetworkPreset[];
   watchedAssets: WalletWatchedAsset[];
   assetNetworkStates?: WalletAssetNetworkStates;
+  trustedDappPolicies?: XianDappPolicy[];
   shieldedWalletSnapshots?: StoredShieldedWalletSnapshot[];
   connectedOrigins: string[];
   createdAt: string;
@@ -166,6 +168,7 @@ export interface PopupState {
   /** Maps contract address to fiat display string (e.g. "$12.34"), or null if unavailable. */
   assetFiatValues: Record<string, string | null>;
   connectedOrigins: string[];
+  trustedDappPolicies: XianDappPolicy[];
   pendingApprovalCount: number;
   pendingApprovals: ApprovalView[];
   hasRecoveryPhrase: boolean;
@@ -208,6 +211,7 @@ export interface ApprovalView {
   details?: ApprovalDetail[];
   highlights?: string[];
   warnings?: string[];
+  trustSuggestion?: ApprovalTrustSuggestion;
 }
 
 export interface ApprovalDetail {
@@ -215,6 +219,11 @@ export interface ApprovalDetail {
   value: string;
   monospace?: boolean;
   tone?: "default" | "accent" | "warning" | "danger";
+}
+
+export interface ApprovalTrustSuggestion {
+  label: string;
+  description: string;
 }
 
 export interface WalletWatchedAsset extends XianWatchedAsset {

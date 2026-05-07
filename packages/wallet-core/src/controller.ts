@@ -5,11 +5,14 @@ import {
   XianClient
 } from "@xian-tech/client";
 import {
+  createXianDappPolicyForRequest,
+  findMatchingXianDappPolicy,
   ProviderChainMismatchError,
   ProviderUnauthorizedError,
   ProviderUnsupportedMethodError,
   type BroadcastMode,
   type TransactionSubmission,
+  type XianDappPolicy,
   type XianProviderRequest,
   type XianSignedTransaction,
   type XianTransactionIntent,
@@ -79,6 +82,7 @@ interface RequestWaiter {
 }
 
 const SAFE_CHAIN_ID_LOOKUP_TIMEOUT_MS = 2_000;
+const TRUSTED_DAPP_POLICY_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface WalletNetworkClient {
   getChainId(): Promise<string>;
@@ -286,6 +290,64 @@ function normalizeAssetNetworkStates(value: unknown): WalletAssetNetworkStates {
   return states;
 }
 
+function normalizeTrustedDappPolicies(value: unknown): XianDappPolicy[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((entry): XianDappPolicy[] => {
+    if (
+      !isRecord(entry) ||
+      typeof entry.id !== "string" ||
+      typeof entry.origin !== "string" ||
+      typeof entry.account !== "string" ||
+      typeof entry.chainId !== "string" ||
+      !Array.isArray(entry.methods) ||
+      typeof entry.createdAt !== "number"
+    ) {
+      return [];
+    }
+
+    const methods = entry.methods.filter(
+      (method): method is XianDappPolicy["methods"][number] =>
+        method === "xian_signTransaction" ||
+        method === "xian_sendTransaction" ||
+        method === "xian_sendCall"
+    );
+    if (methods.length === 0) {
+      return [];
+    }
+
+    return [
+      {
+        id: entry.id,
+        origin: entry.origin,
+        account: entry.account,
+        chainId: entry.chainId,
+        methods,
+        contract: trimNullableString(entry.contract) ?? undefined,
+        function: trimNullableString(entry.function) ?? undefined,
+        maxChi:
+          typeof entry.maxChi === "number" ||
+          typeof entry.maxChi === "bigint" ||
+          typeof entry.maxChi === "string"
+            ? entry.maxChi
+            : undefined,
+        kwargs: isRecord(entry.kwargs) ? entry.kwargs : undefined,
+        label: trimNullableString(entry.label) ?? undefined,
+        createdAt: entry.createdAt,
+        updatedAt:
+          typeof entry.updatedAt === "number" ? entry.updatedAt : undefined,
+        expiresAt:
+          typeof entry.expiresAt === "number" ? entry.expiresAt : undefined,
+        lastUsedAt:
+          typeof entry.lastUsedAt === "number" ? entry.lastUsedAt : undefined,
+        useCount: typeof entry.useCount === "number" ? entry.useCount : undefined
+      }
+    ];
+  });
+}
+
 function normalizeTrackedAsset(
   asset: XianWatchAssetRequest["options"]
 ): XianWatchAssetRequest["options"] {
@@ -342,6 +404,9 @@ function normalizeStoredWalletNetworks(state: StoredWalletState): StoredWalletSt
   const assetNetworkStates = normalizeAssetNetworkStates(
     (state as { assetNetworkStates?: unknown }).assetNetworkStates
   );
+  const trustedDappPolicies = normalizeTrustedDappPolicies(
+    (state as { trustedDappPolicies?: unknown }).trustedDappPolicies
+  );
 
   if (rawPresets.length === 0) {
     const rpcUrl = trimOptionalString(state.rpcUrl) ?? DEFAULT_RPC_URL;
@@ -358,7 +423,8 @@ function normalizeStoredWalletNetworks(state: StoredWalletState): StoredWalletSt
         dashboardUrl: localPreset.dashboardUrl,
         activeNetworkId: localPreset.id,
         networkPresets: [localPreset],
-        assetNetworkStates
+        assetNetworkStates,
+        trustedDappPolicies
       };
     }
 
@@ -383,7 +449,8 @@ function normalizeStoredWalletNetworks(state: StoredWalletState): StoredWalletSt
       dashboardUrl: customPreset.dashboardUrl,
       activeNetworkId: customPreset.id,
       networkPresets: [localPreset, customPreset],
-      assetNetworkStates
+      assetNetworkStates,
+      trustedDappPolicies
     };
   }
 
@@ -416,7 +483,8 @@ function normalizeStoredWalletNetworks(state: StoredWalletState): StoredWalletSt
     dashboardUrl: activePreset.dashboardUrl,
     activeNetworkId,
     networkPresets: [...presets.values()],
-    assetNetworkStates
+    assetNetworkStates,
+    trustedDappPolicies
   };
 }
 
@@ -475,6 +543,21 @@ function removeAssetNetworkStateFromWallet(
   );
 
   return changed ? { ...state, assetNetworkStates } : state;
+}
+
+function sameTrustedDappPolicyScope(
+  left: XianDappPolicy,
+  right: XianDappPolicy
+): boolean {
+  return (
+    left.origin === right.origin &&
+    left.account === right.account &&
+    left.chainId === right.chainId &&
+    left.contract === right.contract &&
+    left.function === right.function &&
+    left.methods.length === right.methods.length &&
+    left.methods.every((method) => right.methods.includes(method))
+  );
 }
 
 interface ParsedShieldedWalletSnapshot {
@@ -1099,10 +1182,106 @@ export class WalletController {
     }
     const nextState: StoredWalletState = {
       ...state,
-      connectedOrigins: [...nextOrigins]
+      connectedOrigins: [...nextOrigins],
+      trustedDappPolicies: connected
+        ? state.trustedDappPolicies ?? []
+        : (state.trustedDappPolicies ?? []).filter(
+            (policy) => policy.origin !== origin
+          )
     };
     await this.store.saveState(nextState);
     return nextState;
+  }
+
+  private async upsertTrustedDappPolicy(
+    policy: XianDappPolicy
+  ): Promise<void> {
+    const state = this.requireStoredWallet(await this.loadWalletState());
+    const currentPolicies = state.trustedDappPolicies ?? [];
+    await this.store.saveState({
+      ...state,
+      trustedDappPolicies: [
+        ...currentPolicies.filter(
+          (existing) => !sameTrustedDappPolicyScope(existing, policy)
+        ),
+        policy
+      ]
+    });
+  }
+
+  private async touchTrustedDappPolicy(policyId: string): Promise<void> {
+    const state = this.requireStoredWallet(await this.loadWalletState());
+    const policies = state.trustedDappPolicies ?? [];
+    if (!policies.some((policy) => policy.id === policyId)) {
+      return;
+    }
+    await this.store.saveState({
+      ...state,
+      trustedDappPolicies: policies.map((policy) =>
+        policy.id === policyId
+          ? {
+              ...policy,
+              lastUsedAt: this.now(),
+              useCount: (policy.useCount ?? 0) + 1
+            }
+          : policy
+      )
+    });
+  }
+
+  private async maybeExecuteTrustedDappRequest(
+    state: StoredWalletState,
+    origin: string,
+    request: XianProviderRequest,
+    account: string,
+    chainId: string | undefined
+  ): Promise<{ kind: "result"; value: unknown } | null> {
+    if (!chainId) {
+      return null;
+    }
+
+    const match = findMatchingXianDappPolicy(
+      state.trustedDappPolicies ?? [],
+      {
+        origin,
+        account,
+        chainId,
+        now: this.now()
+      },
+      request
+    );
+
+    if (!match.matched || !match.policy) {
+      return null;
+    }
+
+    const value = await this.executeApprovedRequest(origin, request);
+    await this.touchTrustedDappPolicy(match.policy.id);
+    return {
+      kind: "result",
+      value
+    };
+  }
+
+  private async createTrustedDappPolicyForApproval(
+    approval: PersistedApproval
+  ): Promise<XianDappPolicy | null> {
+    const state = this.requireStoredWallet(await this.loadWalletState());
+    const activeChainId =
+      approval.view.chainId ??
+      this.displayChainId(this.activeNetworkPreset(state), await this.safeGetChainId(state));
+    if (!activeChainId) {
+      return null;
+    }
+    return createXianDappPolicyForRequest({
+      id: this.createId(),
+      origin: approval.record.origin,
+      account: state.publicKey,
+      chainId: activeChainId,
+      request: approval.record.request,
+      now: this.now(),
+      expiresAt: this.now() + TRUSTED_DAPP_POLICY_TTL_MS
+    });
   }
 
   private async updateWatchedAssets(
@@ -1743,13 +1922,24 @@ export class WalletController {
         const walletState = this.requireStoredWallet(state);
         this.requireConnectedOrigin(walletState, origin);
         await this.getUnlockedSigner();
+        const activeChainId = this.displayChainId(
+          this.activeNetworkPreset(walletState),
+          await this.safeGetChainId(walletState)
+        );
+        const trustedResult = await this.maybeExecuteTrustedDappRequest(
+          walletState,
+          origin,
+          request,
+          walletState.publicKey,
+          activeChainId
+        );
+        if (trustedResult) {
+          return trustedResult;
+        }
         return {
           kind: "approval",
           account: walletState.publicKey,
-          chainId: this.displayChainId(
-            this.activeNetworkPreset(walletState),
-            await this.safeGetChainId(walletState)
-          )
+          chainId: activeChainId
         };
       }
 
@@ -1807,6 +1997,7 @@ export class WalletController {
       assetBalances: {},
       assetFiatValues: {},
       connectedOrigins: state?.connectedOrigins ?? [],
+      trustedDappPolicies: state?.trustedDappPolicies ?? [],
       pendingApprovalCount: pendingApprovals.length,
       pendingApprovals,
       hasRecoveryPhrase: Boolean(state?.encryptedMnemonic),
@@ -2205,6 +2396,7 @@ export class WalletController {
           }
         }
       },
+      trustedDappPolicies: [],
       connectedOrigins: [],
       createdAt: new Date().toISOString()
     });
@@ -2399,6 +2591,7 @@ export class WalletController {
       watchedAssets,
       assetNetworkStates: backup.assetNetworkStates,
       shieldedWalletSnapshots,
+      trustedDappPolicies: [],
       connectedOrigins: [],
       createdAt: nowIso
     });
@@ -2726,12 +2919,31 @@ export class WalletController {
 
     const nextState: StoredWalletState = {
       ...state,
-      connectedOrigins: []
+      connectedOrigins: [],
+      trustedDappPolicies: []
     };
     await this.store.saveState(nextState);
     await Promise.all(
       state.connectedOrigins.map((origin) => this.emitDisconnectLifecycle(origin))
     );
+    return this.getPopupState();
+  }
+
+  async removeTrustedDappPolicy(policyId: string): Promise<PopupState> {
+    const state = await this.loadWalletState();
+    if (!state) {
+      return this.getPopupState();
+    }
+    const nextPolicies = (state.trustedDappPolicies ?? []).filter(
+      (policy) => policy.id !== policyId
+    );
+    if (nextPolicies.length === (state.trustedDappPolicies ?? []).length) {
+      return this.getPopupState();
+    }
+    await this.store.saveState({
+      ...state,
+      trustedDappPolicies: nextPolicies
+    });
     return this.getPopupState();
   }
 
@@ -2956,7 +3168,11 @@ export class WalletController {
     });
   }
 
-  async resolveApproval(approvalId: string, approved: boolean): Promise<null> {
+  async resolveApproval(
+    approvalId: string,
+    approved: boolean,
+    options?: { trust?: boolean }
+  ): Promise<null> {
     const approval = await this.store.loadApprovalState(approvalId);
     if (!approval) {
       throw new Error("approval request not found");
@@ -2983,6 +3199,12 @@ export class WalletController {
         approval.record.request
       );
       await this.fulfillRequest(requestState, result);
+      if (options?.trust) {
+        const policy = await this.createTrustedDappPolicyForApproval(approval);
+        if (policy) {
+          await this.upsertTrustedDappPolicy(policy);
+        }
+      }
       return null;
     } catch (error) {
       await this.rejectRequest(requestState, error);

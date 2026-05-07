@@ -1796,7 +1796,14 @@ function renderApprovalItem(approval: ApprovalView): string {
    ═══════════════════════════════════════════════════════════ */
 
 function renderAppsTab(state: PopupRuntimeState): string {
-  if (state.connectedOrigins.length === 0) {
+  const connectedOrigins = Array.isArray(state.connectedOrigins)
+    ? state.connectedOrigins
+    : [];
+  const trustedDappPolicies = Array.isArray(state.trustedDappPolicies)
+    ? state.trustedDappPolicies
+    : [];
+
+  if (connectedOrigins.length === 0) {
     return `
       <div class="section-hd">
         <span class="section-hd-label">Connected apps</span>
@@ -1810,33 +1817,86 @@ function renderAppsTab(state: PopupRuntimeState): string {
   return `
     <div class="section-hd">
       <span class="section-hd-label">Connected apps</span>
-      <span class="section-hd-badge">${state.connectedOrigins.length}</span>
+      <span class="section-hd-badge">${connectedOrigins.length}</span>
     </div>
     ${
-      state.connectedOrigins.length > 1
+      connectedOrigins.length > 1
         ? `<div style="padding: 0 16px"><button class="ghost full-width" data-disconnect-all>Disconnect all</button></div>`
         : ""
     }
     <div class="app-list">
-      ${state.connectedOrigins.map((o) => renderOriginItem(o)).join("")}
+      ${connectedOrigins.map((o) => renderOriginItem(o, trustedDappPolicies)).join("")}
     </div>
   `;
 }
 
-function renderOriginItem(origin: string): string {
+function renderOriginItem(
+  origin: string,
+  trustedDappPolicies: PopupRuntimeState["trustedDappPolicies"]
+): string {
   const hostname = safeOriginLabel(origin);
   const letter = escapeHtml(hostname.charAt(0).toUpperCase());
   const fallback = `this.replaceWith(Object.assign(document.createElement('div'),{className:'token-icon',style:'background:${assetColor(origin)}',textContent:'${letter}'}))`;
   const faviconUrl = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=32`;
+  const policies = trustedDappPolicies.filter(
+    (policy) => policy.origin === origin
+  );
 
   return `
-    <div class="app-item">
-      <img class="app-favicon" src="${escapeAttribute(faviconUrl)}" alt="" width="32" height="32" onerror="${escapeAttribute(fallback)}" />
-      <div class="app-item-info">
-        <div class="app-item-host">${escapeHtml(hostname)}</div>
-        <div class="app-item-url">${escapeHtml(origin)}</div>
+    <div class="app-group">
+      <div class="app-item">
+        <img class="app-favicon" src="${escapeAttribute(faviconUrl)}" alt="" width="32" height="32" onerror="${escapeAttribute(fallback)}" />
+        <div class="app-item-info">
+          <div class="app-item-host">${escapeHtml(hostname)}</div>
+          <div class="app-item-url">${escapeHtml(origin)}</div>
+          ${
+            policies.length > 0
+              ? `<div class="app-item-url">${policies.length} auto-approval rule${policies.length === 1 ? "" : "s"}</div>`
+              : ""
+          }
+        </div>
+        <button class="ghost-sm" data-disconnect-origin="${escapeAttribute(origin)}">Disconnect</button>
       </div>
-      <button class="ghost-sm" data-disconnect-origin="${escapeAttribute(origin)}">Disconnect</button>
+      ${
+        policies.length > 0
+          ? `
+              <div class="app-policy-list">
+                ${policies.map(renderTrustedDappPolicy).join("")}
+              </div>
+            `
+          : ""
+      }
+    </div>
+  `;
+}
+
+function renderTrustedDappPolicy(policy: PopupRuntimeState["trustedDappPolicies"][number]): string {
+  const methodLabel = policy.methods
+    .map((method) => method.replace("xian_", ""))
+    .join(", ");
+  const scope = [
+    policy.contract && policy.function
+      ? `${policy.contract}.${policy.function}`
+      : policy.label,
+    methodLabel,
+    policy.chainId
+  ].filter(Boolean).join(" · ");
+  const expires =
+    policy.expiresAt != null
+      ? `Expires ${formatTimestamp(policy.expiresAt)}`
+      : "No expiry";
+  const lastUsed =
+    policy.lastUsedAt != null
+      ? ` · Used ${formatTimestamp(policy.lastUsedAt)}`
+      : "";
+
+  return `
+    <div class="app-policy-row">
+      <div>
+        <div class="app-policy-title">${escapeHtml(scope)}</div>
+        <div class="app-policy-meta">${escapeHtml(expires)}${escapeHtml(lastUsed)}</div>
+      </div>
+      <button class="ghost-sm" data-remove-trusted-policy="${escapeAttribute(policy.id)}">Revoke</button>
     </div>
   `;
 }
@@ -2503,6 +2563,20 @@ function renderApprovalInline(view: ApprovalView): string {
                 <summary>${escapeHtml(view.payloadLabel ?? "Raw payload")}</summary>
                 <pre class="approval-payload">${escapeHtml(view.payload)}</pre>
               </details>
+            `
+          : ""
+      }
+
+      ${
+        view.trustSuggestion
+          ? `
+              <label class="surface trust-option">
+                <input data-trust-inline="${escapeAttribute(view.id)}" type="checkbox" />
+                <span>
+                  <strong>${escapeHtml(view.trustSuggestion.label)}</strong>
+                  <span class="muted">${escapeHtml(view.trustSuggestion.description)}</span>
+                </span>
+              </label>
             `
           : ""
       }
@@ -3939,6 +4013,24 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     });
   }
 
+  for (const button of root.querySelectorAll<HTMLButtonElement>(
+    "[data-remove-trusted-policy]"
+  )) {
+    button.addEventListener("click", () => {
+      const policyId = button.dataset.removeTrustedPolicy ?? "";
+      void withErrorFlash(async () => {
+        await sendRuntimeMessage<PopupState>({
+          type: "wallet_remove_trusted_dapp_policy",
+          policyId
+        });
+        await refresh({
+          tone: "success",
+          message: "Auto-approval rule revoked."
+        });
+      });
+    });
+  }
+
   for (const el of root.querySelectorAll<HTMLElement>(
     "[data-select-token]"
   )) {
@@ -4589,11 +4681,16 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         root.querySelector<HTMLElement>("[data-approve-inline]")?.dataset
           .approveInline;
       if (!id) return;
+      const trust =
+        root.querySelector<HTMLInputElement>(
+          `[data-trust-inline="${CSS.escape(id)}"]`
+        )?.checked === true;
       void withErrorFlash(async () => {
         await sendRuntimeMessage<null>({
           type: "approval_resolve",
           approvalId: id,
-          approved: true
+          approved: true,
+          trust
         });
         activeApprovalId = null;
         await refresh({ tone: "success", message: "Approved." });

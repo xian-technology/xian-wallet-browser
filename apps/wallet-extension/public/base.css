@@ -910,16 +910,19 @@ main {
   padding: 0 16px;
 }
 
+.app-group {
+  border-bottom: 1px solid var(--line);
+}
+
+.app-group:last-child {
+  border-bottom: none;
+}
+
 .app-item {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 12px 0;
-  border-bottom: 1px solid var(--line);
-}
-
-.app-item:last-child {
-  border-bottom: none;
 }
 
 .app-favicon {
@@ -948,6 +951,35 @@ main {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.app-policy-list {
+  display: grid;
+  gap: 8px;
+  padding: 0 0 12px 44px;
+}
+
+.app-policy-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-2);
+}
+
+.app-policy-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.app-policy-meta {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -1946,6 +1978,22 @@ textarea {
 
 .approval-actions button {
   flex: 1 1 0;
+}
+
+.trust-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.trust-option input {
+  margin-top: 3px;
+}
+
+.trust-option span {
+  display: grid;
+  gap: 4px;
 }
 
 /* ═══════════════════════════════════════════════════════════

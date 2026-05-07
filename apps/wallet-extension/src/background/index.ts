@@ -337,6 +337,9 @@ chrome.runtime.onMessage.addListener(
           case "wallet_disconnect_all_origins":
             sendResponse(ok(await controller.disconnectAllOrigins()));
             return;
+          case "wallet_remove_trusted_dapp_policy":
+            sendResponse(ok(await controller.removeTrustedDappPolicy(message.policyId)));
+            return;
           case "wallet_remove_asset":
             sendResponse(ok(await controller.removeWatchedAsset(message.contract)));
             return;
@@ -432,7 +435,11 @@ chrome.runtime.onMessage.addListener(
             sendResponse(ok(await controller.getApprovalView(message.approvalId)));
             return;
           case "approval_resolve": {
-            const result = await controller.resolveApproval(message.approvalId, message.approved);
+            const result = await controller.resolveApproval(
+              message.approvalId,
+              message.approved,
+              { trust: message.trust }
+            );
             void updateApprovalBadge();
             sendResponse(ok(result));
             return;

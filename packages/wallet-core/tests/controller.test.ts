@@ -411,6 +411,109 @@ describe("@xian-tech/wallet-core controller", () => {
     );
   });
 
+  it("auto-approves dapp transactions that match a trusted policy", async () => {
+    const store = createStore();
+    const client = createClient();
+    const onApprovalRequested = vi.fn(async () => undefined);
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested,
+      createId: vi
+        .fn()
+        .mockReturnValueOnce("approval-connect")
+        .mockReturnValueOnce("approval-send")
+        .mockReturnValueOnce("policy-1")
+        .mockReturnValueOnce("approval-different"),
+      now: vi.fn(() => 1_000)
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+
+    await controller.startProviderRequest("request-connect", ORIGIN, {
+      method: "xian_requestAccounts"
+    });
+    await controller.resolveApproval("approval-connect", true);
+
+    const trustedRequest = {
+      method: "xian_sendCall",
+      params: [
+        {
+          intent: {
+            contract: "currency",
+            function: "transfer",
+            kwargs: { to: "bob", amount: "5" },
+            chi: 500
+          }
+        }
+      ]
+    };
+    await expect(
+      controller.startProviderRequest("request-first-send", ORIGIN, trustedRequest)
+    ).resolves.toEqual({
+      status: "pending",
+      approvalId: "approval-send"
+    });
+
+    await controller.resolveApproval("approval-send", true, { trust: true });
+    expect(store.current()?.trustedDappPolicies).toEqual([
+      expect.objectContaining({
+        id: "policy-1",
+        origin: ORIGIN,
+        chainId: "xian-local",
+        methods: ["xian_sendCall"],
+        contract: "currency",
+        function: "transfer",
+        maxChi: 500
+      })
+    ]);
+
+    await expect(
+      controller.startProviderRequest("request-trusted-send", ORIGIN, trustedRequest)
+    ).resolves.toMatchObject({
+      status: "fulfilled",
+      result: expect.objectContaining({
+        txHash: "ABC123"
+      })
+    });
+
+    expect(onApprovalRequested).toHaveBeenCalledTimes(2);
+    expect(store.current()?.trustedDappPolicies?.[0]).toEqual(
+      expect.objectContaining({
+        useCount: 1,
+        lastUsedAt: 1_000
+      })
+    );
+
+    await expect(
+      controller.startProviderRequest("request-different-send", ORIGIN, {
+        method: "xian_sendCall",
+        params: [
+          {
+            intent: {
+              contract: "currency",
+              function: "approve",
+              kwargs: {},
+              chi: 500
+            }
+          }
+        ]
+      })
+    ).resolves.toEqual({
+      status: "pending",
+      approvalId: "approval-different"
+    });
+  });
+
   it("removes watched assets while keeping the native asset pinned", async () => {
     const store = createStore();
     const controller = new WalletController({

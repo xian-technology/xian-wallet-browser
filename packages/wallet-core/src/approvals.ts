@@ -228,6 +228,15 @@ export function buildApprovalView(
           warnings: [
             "Prepared transactions may perform arbitrary contract actions. Inspect the raw payload if anything looks unfamiliar."
           ],
+          trustSuggestion:
+            typeof txPayload.contract === "string" &&
+            typeof txPayload.function === "string"
+              ? {
+                  label: `Always allow ${txPayload.contract}.${txPayload.function}`,
+                  description:
+                    "For the next 30 days, matching prepared-signature requests from this site can be signed without another prompt on this account and network."
+                }
+              : undefined,
           payload: prettyJson(payload),
           payloadLabel: "Raw transaction",
           account: options?.account,
@@ -262,6 +271,15 @@ export function buildApprovalView(
           warnings: [
             "Broadcasting a transaction may move funds or execute irreversible contract logic."
           ],
+          trustSuggestion:
+            typeof txPayload.contract === "string" &&
+            typeof txPayload.function === "string"
+              ? {
+                  label: `Always allow ${txPayload.contract}.${txPayload.function}`,
+                  description:
+                    "For the next 30 days, matching prepared-transaction broadcasts from this site can be sent without another prompt on this account and network."
+                }
+              : undefined,
           payload: prettyJson(payload),
           payloadLabel: "Raw transaction",
           account: options?.account,
@@ -306,6 +324,15 @@ export function buildApprovalView(
           warnings: [
             "The wallet will fill the sender and nonce at approval time. Confirm the contract and arguments match your intent."
           ],
+          trustSuggestion:
+            typeof intent.contract === "string" &&
+            typeof intent.function === "string"
+              ? {
+                  label: `Always allow ${intent.contract}.${intent.function}`,
+                  description:
+                    "For the next 30 days, matching contract calls from this site can be prepared, signed, and sent without another prompt on this account and network."
+                }
+              : undefined,
           payload: prettyJson(payload),
           payloadLabel: "Raw call intent",
           account: options?.account,

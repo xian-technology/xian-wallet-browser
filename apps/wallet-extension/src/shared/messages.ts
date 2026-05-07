@@ -124,6 +124,11 @@ export interface WalletDisconnectAllOriginsRuntimeMessage {
   type: "wallet_disconnect_all_origins";
 }
 
+export interface WalletRemoveTrustedDappPolicyRuntimeMessage {
+  type: "wallet_remove_trusted_dapp_policy";
+  policyId: string;
+}
+
 export interface WalletRemoveAssetRuntimeMessage {
   type: "wallet_remove_asset";
   contract: string;
@@ -288,6 +293,7 @@ export interface ApprovalResolveRuntimeMessage {
   type: "approval_resolve";
   approvalId: string;
   approved: boolean;
+  trust?: boolean;
 }
 
 export interface ProviderEventRuntimeMessage {
@@ -310,6 +316,7 @@ export type RuntimeMessage =
   | WalletRemoveNetworkPresetRuntimeMessage
   | WalletDisconnectOriginRuntimeMessage
   | WalletDisconnectAllOriginsRuntimeMessage
+  | WalletRemoveTrustedDappPolicyRuntimeMessage
   | WalletRemoveAssetRuntimeMessage
   | WalletGetPopupStateRuntimeMessage
   | WalletGetAssetBalancesRuntimeMessage

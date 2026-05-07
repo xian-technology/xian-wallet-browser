@@ -13,6 +13,7 @@ import {
   type WalletAssetNetworkStates,
   type WalletNetworkPreset
 } from "@xian-tech/wallet-core";
+import type { XianDappPolicy } from "@xian-tech/provider";
 
 import {
   DEFAULT_AUTO_LOCK,
@@ -90,6 +91,64 @@ function normalizeAssetNetworkStates(value: unknown): WalletAssetNetworkStates {
   }
 
   return states;
+}
+
+function normalizeTrustedDappPolicies(value: unknown): XianDappPolicy[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((entry): XianDappPolicy[] => {
+    if (
+      !isRecord(entry) ||
+      typeof entry.id !== "string" ||
+      typeof entry.origin !== "string" ||
+      typeof entry.account !== "string" ||
+      typeof entry.chainId !== "string" ||
+      !Array.isArray(entry.methods) ||
+      typeof entry.createdAt !== "number"
+    ) {
+      return [];
+    }
+
+    const methods = entry.methods.filter(
+      (method): method is XianDappPolicy["methods"][number] =>
+        method === "xian_signTransaction" ||
+        method === "xian_sendTransaction" ||
+        method === "xian_sendCall"
+    );
+    if (methods.length === 0) {
+      return [];
+    }
+
+    return [
+      {
+        id: entry.id,
+        origin: entry.origin,
+        account: entry.account,
+        chainId: entry.chainId,
+        methods,
+        contract: typeof entry.contract === "string" ? entry.contract : undefined,
+        function: typeof entry.function === "string" ? entry.function : undefined,
+        maxChi:
+          typeof entry.maxChi === "number" ||
+          typeof entry.maxChi === "bigint" ||
+          typeof entry.maxChi === "string"
+            ? entry.maxChi
+            : undefined,
+        kwargs: isRecord(entry.kwargs) ? entry.kwargs : undefined,
+        label: typeof entry.label === "string" ? entry.label : undefined,
+        createdAt: entry.createdAt,
+        updatedAt:
+          typeof entry.updatedAt === "number" ? entry.updatedAt : undefined,
+        expiresAt:
+          typeof entry.expiresAt === "number" ? entry.expiresAt : undefined,
+        lastUsedAt:
+          typeof entry.lastUsedAt === "number" ? entry.lastUsedAt : undefined,
+        useCount: typeof entry.useCount === "number" ? entry.useCount : undefined
+      }
+    ];
+  });
 }
 
 function encodeStorageValue(value: unknown): unknown {
@@ -325,6 +384,7 @@ function normalizeWalletState(value: unknown): StoredWalletState | null {
     networkPresets,
     watchedAssets: Array.isArray(value.watchedAssets) ? value.watchedAssets : [],
     assetNetworkStates: normalizeAssetNetworkStates(value.assetNetworkStates),
+    trustedDappPolicies: normalizeTrustedDappPolicies(value.trustedDappPolicies),
     shieldedWalletSnapshots: normalizeShieldedWalletSnapshots(
       value.shieldedWalletSnapshots
     ),
