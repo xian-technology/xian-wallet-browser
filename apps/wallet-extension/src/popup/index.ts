@@ -306,13 +306,28 @@ function formatTimestamp(value: number): string {
   return new Date(value).toLocaleString();
 }
 
-function assetColor(key: string): string {
+const ASSET_GRADIENTS = [
+  "linear-gradient(135deg, #5B6CFF, #3730A3)",
+  "linear-gradient(135deg, #FF6B9D, #BE185D)",
+  "linear-gradient(135deg, #FF8A4C, #C2410C)",
+  "linear-gradient(135deg, #2DD4BF, #0F766E)",
+  "linear-gradient(135deg, #A78BFA, #6D28D9)",
+  "linear-gradient(135deg, #FBBF24, #B45309)",
+  "linear-gradient(135deg, #FB7185, #9F1239)",
+  "linear-gradient(135deg, #60A5FA, #1D4ED8)",
+  "linear-gradient(135deg, #F472B6, #86198F)",
+  "linear-gradient(135deg, #818CF8, #3730A3)"
+];
+
+function assetGradient(key: string): string {
   let hash = 0;
   for (let i = 0; i < key.length; i++) {
     hash = key.charCodeAt(i) + ((hash << 5) - hash);
   }
-  const hue = Math.abs(hash) % 360;
-  return `hsl(${hue}, 45%, 35%)`;
+  return (
+    ASSET_GRADIENTS[Math.abs(hash) % ASSET_GRADIENTS.length] ??
+    ASSET_GRADIENTS[0]!
+  );
 }
 
 function tokenIconSource(icon: string | null | undefined): string | null {
@@ -348,9 +363,10 @@ function renderTokenIcon(options: {
     ? `width: ${imageSize}px; height: ${imageSize}px; border-radius: 0`
     : "";
   const styleParts = [`width: ${size}px`, `height: ${size}px`, `font-size: ${fontSize}px`];
+  const fallbackBackground = options.background ?? assetGradient(options.contract);
 
   if (!src) {
-    styleParts.push(`background: ${options.background ?? assetColor(options.contract)}`);
+    styleParts.push(`background: ${fallbackBackground}`);
   }
   if (options.style) {
     styleParts.push(options.style);
@@ -358,9 +374,12 @@ function renderTokenIcon(options: {
 
   const style = escapeAttribute(styleParts.join("; "));
   if (src) {
+    const errorFallback =
+      "this.onerror=null;this.hidden=true;this.parentElement.style.background=this.parentElement.dataset.fallbackBg||'';this.nextElementSibling.hidden=false";
     return `
-      <div class="${className}" style="${style}">
-        <img src="${escapeAttribute(src)}" alt="" width="${imageSize}" height="${imageSize}"${imageStyle ? ` style="${escapeAttribute(imageStyle)}"` : ""} />
+      <div class="${className}" style="${style}" data-fallback-bg="${escapeAttribute(fallbackBackground)}">
+        <img src="${escapeAttribute(src)}" alt="" width="${imageSize}" height="${imageSize}"${imageStyle ? ` style="${escapeAttribute(imageStyle)}"` : ""} onerror="${escapeAttribute(errorFallback)}" />
+        <span hidden>${escapeHtml(letter)}</span>
       </div>
     `;
   }
@@ -1481,7 +1500,7 @@ function renderHomeTab(state: PopupRuntimeState): string {
 
   const detectedAssets = visibleDetectedAssets(state);
   const detectedAssetsHtml =
-    detectedAssets.length === 0 || managingAssets
+    detectedAssets.length === 0 || !managingAssets
       ? ""
       : `
           <div class="section-hd">
@@ -1575,7 +1594,7 @@ function renderAssetItem(asset: DisplayedAsset, state: PopupRuntimeState): strin
   const color =
     asset.contract === "currency"
       ? "var(--accent-dim)"
-      : assetColor(asset.contract);
+      : assetGradient(asset.contract);
   const rawBalance = assetRawBalance(asset, state);
   const fiat = state.assetFiatValues[asset.contract];
   const balanceHtml = balancesLoading
@@ -1586,9 +1605,10 @@ function renderAssetItem(asset: DisplayedAsset, state: PopupRuntimeState): strin
     : fiat
       ? escapeHtml(fiat)
       : "";
+  const isDetectedUntracked = isDetectedAsset(asset) && !asset.tracked;
 
   return `
-    <div class="token-item" data-select-token="${escapeAttribute(asset.contract)}">
+    <div class="token-item${isDetectedUntracked ? " is-detected" : ""}" data-select-token="${escapeAttribute(asset.contract)}">
       ${renderTokenIcon({
         contract: asset.contract,
         symbol,
@@ -1602,8 +1622,8 @@ function renderAssetItem(asset: DisplayedAsset, state: PopupRuntimeState): strin
       <div class="token-end">
         <div class="token-balance">${balanceHtml}</div>
         <div class="token-fiat">${
-          isDetectedAsset(asset) && !asset.tracked
-            ? `<button class="ghost-sm" data-track-asset="${escapeAttribute(asset.contract)}">Track</button>`
+          isDetectedUntracked
+            ? `<button class="track-pill" data-track-asset="${escapeAttribute(asset.contract)}">Track</button>`
             : fiatHtml
         }</div>
       </div>
@@ -1623,7 +1643,7 @@ function renderManageAssetRow(
   index: number
 ): string {
   const symbol = asset.symbol ?? asset.contract.slice(0, 6);
-  const color = asset.contract === "currency" ? "var(--accent-dim)" : assetColor(asset.contract);
+  const color = asset.contract === "currency" ? "var(--accent-dim)" : assetGradient(asset.contract);
   const isHidden = isAssetHiddenOnActiveNetwork(state, asset);
   const isUnavailable = isAssetUnavailableOnActiveNetwork(state, asset);
   const statusText = isUnavailable
@@ -1667,7 +1687,7 @@ function renderTokenDetail(state: PopupRuntimeState): string {
   const color =
     asset.contract === "currency"
       ? "var(--accent-dim)"
-      : assetColor(asset.contract);
+      : assetGradient(asset.contract);
   const detailIcon =
     asset.icon ??
     tokenMeta?.logoUrl ??
@@ -1855,7 +1875,7 @@ function renderOriginItem(
   const displaySubtitle =
     displayName === hostname ? origin : `${hostname} · ${origin}`;
   const letter = escapeHtml(displayName.charAt(0).toUpperCase());
-  const fallback = `this.replaceWith(Object.assign(document.createElement('div'),{className:'token-icon',style:'background:${assetColor(origin)}',textContent:'${letter}'}))`;
+  const fallback = `this.replaceWith(Object.assign(document.createElement('div'),{className:'token-icon',style:'background:${assetGradient(origin)}',textContent:'${letter}'}))`;
   const faviconUrl =
     metadata?.iconUrl ??
     `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=64`;
@@ -2686,7 +2706,7 @@ function renderSimpleSend(state: PopupRuntimeState): string {
   const tokenSymbol = selectedAssetObj?.symbol ?? simpleToken.slice(0, 6).toUpperCase();
   const tokenBalance = state.assetBalances[simpleToken] ?? "0";
   const displayBalance = formatSimpleBalance(tokenBalance);
-  const tokenColor = simpleToken === "currency" ? "var(--accent-dim)" : assetColor(simpleToken);
+  const tokenColor = simpleToken === "currency" ? "var(--accent-dim)" : assetGradient(simpleToken);
 
   return `
     <div class="settings-wrap">
@@ -2722,7 +2742,7 @@ function renderSimpleSend(state: PopupRuntimeState): string {
             <div class="token-picker-list">
               ${visibleTokens.map((a) => {
                 const s = a.symbol ?? a.contract.slice(0, 6);
-                const c = a.contract === "currency" ? "var(--accent-dim)" : assetColor(a.contract);
+                const c = a.contract === "currency" ? "var(--accent-dim)" : assetGradient(a.contract);
                 const active = a.contract === simpleToken;
                 return `
                   <button type="button" class="token-picker-item ${active ? "is-active" : ""}" data-pick-token="${escapeAttribute(a.contract)}">

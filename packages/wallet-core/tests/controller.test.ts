@@ -659,6 +659,54 @@ describe("@xian-tech/wallet-core controller", () => {
     );
   });
 
+  it("normalizes JSON-encoded detected token metadata from indexed balances", async () => {
+    const store = createStore();
+    const client = createClient();
+    client.getTokenBalances = vi.fn(async () => ({
+      available: true,
+      address: "alice",
+      items: [
+        {
+          contract: "con_json_token",
+          balance: "1000000",
+          name: '"My Token"',
+          symbol: '"MTK"',
+          logoUrl: '""'
+        }
+      ],
+      total: 1,
+      limit: 100,
+      offset: 0
+    }));
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined)
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+
+    await expect(controller.getDetectedAssets()).resolves.toEqual([
+      {
+        contract: "con_json_token",
+        name: "My Token",
+        symbol: "MTK",
+        icon: undefined,
+        balance: "1000000",
+        tracked: false
+      }
+    ]);
+  });
+
   it("marks watched assets unavailable when the active network is missing the contract", async () => {
     const store = createStore();
     const client = createClient();

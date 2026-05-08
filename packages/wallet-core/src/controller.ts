@@ -213,6 +213,28 @@ function trimOptionalString(value: string | undefined): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
+function trimOptionalIndexedString(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (typeof parsed === "string") {
+      return trimOptionalString(parsed);
+    }
+    if (parsed == null) {
+      return undefined;
+    }
+    if (typeof parsed === "number" || typeof parsed === "boolean") {
+      return String(parsed);
+    }
+  } catch {
+    // BDS versions that already return plain text should pass through unchanged.
+  }
+  return trimmed;
+}
+
 function trimNullableString(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
@@ -1433,9 +1455,9 @@ export class WalletController {
         seenContracts.add(contract);
         detectedAssets.push({
           contract,
-          name: trimOptionalString(item.name ?? undefined),
-          symbol: trimOptionalString(item.symbol ?? undefined),
-          icon: trimOptionalString(item.logoUrl ?? undefined),
+          name: trimOptionalIndexedString(item.name),
+          symbol: trimOptionalIndexedString(item.symbol),
+          icon: trimOptionalIndexedString(item.logoUrl),
           balance: item.balance,
           tracked: trackedContracts.has(contract)
         });
