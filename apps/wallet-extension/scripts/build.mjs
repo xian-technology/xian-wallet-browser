@@ -27,6 +27,7 @@ await esbuild.build({
     inpage: "src/inpage/index.ts",
     popup: "src/popup/index.ts"
   },
+  external: ["@xian-tech/compiler"],
   format: "esm",
   minify: false,
   outdir,
