@@ -5,7 +5,6 @@ import {
   type PopupState,
   type WalletDetectedAsset
 } from "@xian-tech/wallet-core";
-import { encode as encodeQr } from "uqr";
 
 import {
   type PopupRuntimeState,
@@ -62,11 +61,36 @@ interface FlashMessage {
   tone: FlashTone;
 }
 
-type DisplayedAsset = PopupState["watchedAssets"][number] | WalletDetectedAsset;
-
 /* ── Icons (Feather-style SVGs) ────────────────────────────── */
 
 import { ICONS } from "./icons";
+import {
+  assetGradient,
+  assetRawBalance,
+  balanceStateKey,
+  findDisplayedAsset,
+  hiddenAssetCount,
+  isDetectedAsset,
+  isAssetHiddenOnActiveNetwork,
+  isAssetUnavailableOnActiveNetwork,
+  normalizeLiveBalance,
+  renderTokenIcon,
+  unavailableAssetCount,
+  unavailableAssetLabel,
+  visibleAssetContracts,
+  visibleDetectedAssets,
+  visibleWatchedAssets,
+  type DisplayedAsset
+} from "./assets";
+import {
+  escapeAttribute,
+  escapeHtml,
+  formatTimestamp,
+  generateQrSvg,
+  isValidXianAddress,
+  safeOriginLabel,
+  truncateHash
+} from "./format";
 import {
   type ActivityTx,
   type TxCategory,
@@ -278,262 +302,11 @@ function buildSendKwargs(): Record<string, unknown> {
 
 /* ── Utilities ─────────────────────────────────────────────── */
 
-function escapeHtml(value: unknown): string {
-  if (value == null) return "";
-  const s = typeof value === "string" ? value : String(value);
-  return s
-    .split("&").join("&amp;")
-    .split("<").join("&lt;")
-    .split(">").join("&gt;")
-    .split('"').join("&quot;")
-    .split("'").join("&#39;");
-}
-
-function escapeAttribute(value: unknown): string {
-  return escapeHtml(value).split("`").join("&#96;");
-}
-
-function safeOriginLabel(origin: string): string {
-  try {
-    const url = new URL(origin);
-    return url.hostname || origin;
-  } catch {
-    return origin;
-  }
-}
-
-function formatTimestamp(value: number): string {
-  return new Date(value).toLocaleString();
-}
-
-const ASSET_GRADIENTS = [
-  "linear-gradient(135deg, #5B6CFF, #3730A3)",
-  "linear-gradient(135deg, #FF6B9D, #BE185D)",
-  "linear-gradient(135deg, #FF8A4C, #C2410C)",
-  "linear-gradient(135deg, #2DD4BF, #0F766E)",
-  "linear-gradient(135deg, #A78BFA, #6D28D9)",
-  "linear-gradient(135deg, #FBBF24, #B45309)",
-  "linear-gradient(135deg, #FB7185, #9F1239)",
-  "linear-gradient(135deg, #60A5FA, #1D4ED8)",
-  "linear-gradient(135deg, #F472B6, #86198F)",
-  "linear-gradient(135deg, #818CF8, #3730A3)"
-];
-
-function assetGradient(key: string): string {
-  let hash = 0;
-  for (let i = 0; i < key.length; i++) {
-    hash = key.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return (
-    ASSET_GRADIENTS[Math.abs(hash) % ASSET_GRADIENTS.length] ??
-    ASSET_GRADIENTS[0]!
-  );
-}
-
-function tokenIconSource(icon: string | null | undefined): string | null {
-  const trimmed = typeof icon === "string" ? icon.trim() : "";
-  if (!trimmed) {
-    return null;
-  }
-  if (/^<svg[\s>]/i.test(trimmed) || /^<\?xml/i.test(trimmed)) {
-    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(trimmed)}`;
-  }
-  return trimmed;
-}
-
-function renderTokenIcon(options: {
-  contract: string;
-  symbol: string;
-  icon?: string | null;
-  className?: string;
-  size?: number;
-  fontSize?: number;
-  background?: string;
-  style?: string;
-}): string {
-  const symbol = options.symbol || options.contract.slice(0, 6);
-  const letter = symbol.charAt(0).toUpperCase();
-  const size = options.size ?? 36;
-  const fontSize = options.fontSize ?? 14;
-  const className = options.className ?? "token-icon";
-  const src = tokenIconSource(options.icon);
-  const isNativeXianLogo = options.contract === "currency" && Boolean(src);
-  const imageSize = isNativeXianLogo ? Math.round(size * 0.7) : size;
-  const imageStyle = isNativeXianLogo
-    ? `width: ${imageSize}px; height: ${imageSize}px; border-radius: 0`
-    : "";
-  const styleParts = [`width: ${size}px`, `height: ${size}px`, `font-size: ${fontSize}px`];
-  const fallbackBackground = options.background ?? assetGradient(options.contract);
-
-  if (!src) {
-    styleParts.push(`background: ${fallbackBackground}`);
-  }
-  if (options.style) {
-    styleParts.push(options.style);
-  }
-
-  const style = escapeAttribute(styleParts.join("; "));
-  if (src) {
-    const errorFallback =
-      "this.onerror=null;this.hidden=true;this.parentElement.style.background=this.parentElement.dataset.fallbackBg||'';this.nextElementSibling.hidden=false";
-    return `
-      <div class="${className}" style="${style}" data-fallback-bg="${escapeAttribute(fallbackBackground)}">
-        <img src="${escapeAttribute(src)}" alt="" width="${imageSize}" height="${imageSize}"${imageStyle ? ` style="${escapeAttribute(imageStyle)}"` : ""} onerror="${escapeAttribute(errorFallback)}" />
-        <span hidden>${escapeHtml(letter)}</span>
-      </div>
-    `;
-  }
-
-  return `
-    <div class="${className}" style="${style}">
-      ${escapeHtml(letter)}
-    </div>
-  `;
-}
-
-function isValidXianAddress(addr: string): boolean {
-  return /^[0-9a-fA-F]{64}$/.test(addr);
-}
-
-function truncateHash(hash: string, headLen = 10, tailLen = 8): string {
-  if (hash.length <= headLen + tailLen + 3) {
-    return hash;
-  }
-  return `${hash.slice(0, headLen)}...${hash.slice(-tailLen)}`;
-}
-
-function generateQrSvg(text: string): string {
-  const { data } = encodeQr(text, { ecc: "M" });
-  const count = data.length;
-  const margin = 2;
-  const total = count + margin * 2;
-  let d = "";
-  for (let y = 0; y < count; y++) {
-    for (let x = 0; x < count; x++) {
-      if (data[y]![x]) {
-        d += `M${x + margin},${y + margin}h1v1h-1z`;
-      }
-    }
-  }
-  return `<svg viewBox="0 0 ${total} ${total}" xmlns="http://www.w3.org/2000/svg"><rect width="${total}" height="${total}" fill="#fff" rx="1"/><path d="${d}" fill="#000"/></svg>`;
-}
-
-function isDetectedAsset(asset: DisplayedAsset): asset is WalletDetectedAsset {
-  return "tracked" in asset;
-}
-
-function visibleDetectedAssets(state: PopupRuntimeState): WalletDetectedAsset[] {
-  return state.detectedAssets.filter((asset) => !asset.tracked);
-}
-
-function activeAssetNetworkState(
-  state: PopupRuntimeState,
-  contract: string
-) {
-  const networkId = state.activeNetworkId ?? "";
-  return state.assetNetworkStates?.[networkId]?.[contract];
-}
-
-function isAssetUnavailableOnActiveNetwork(
-  state: PopupRuntimeState,
-  asset: PopupState["watchedAssets"][number]
-): boolean {
-  if (asset.contract === "currency") {
-    return false;
-  }
-  return activeAssetNetworkState(state, asset.contract)?.status === "not_found";
-}
-
-function isAssetHiddenOnActiveNetwork(
-  state: PopupRuntimeState,
-  asset: PopupState["watchedAssets"][number]
-): boolean {
-  return activeAssetNetworkState(state, asset.contract)?.hidden ?? asset.hidden === true;
-}
-
-function visibleWatchedAssets(state: PopupRuntimeState): PopupState["watchedAssets"] {
-  return [...state.watchedAssets]
-    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-    .filter(
-      (asset) =>
-        !isAssetHiddenOnActiveNetwork(state, asset) &&
-        !isAssetUnavailableOnActiveNetwork(state, asset)
-    );
-}
-
-function hiddenAssetCount(state: PopupRuntimeState): number {
-  return state.watchedAssets.filter((asset) =>
-    isAssetHiddenOnActiveNetwork(state, asset)
-  ).length;
-}
-
-function unavailableAssetCount(state: PopupRuntimeState): number {
-  return state.watchedAssets.filter((asset) =>
-    isAssetUnavailableOnActiveNetwork(state, asset)
-  ).length;
-}
-
-function unavailableAssetLabel(state: PopupRuntimeState): string {
-  return state.activeNetworkName
-    ? `Unavailable on ${state.activeNetworkName}`
-    : "Unavailable on this network";
-}
-
-function findDisplayedAsset(
-  state: PopupRuntimeState,
-  contract: string
-): DisplayedAsset | null {
-  return (
-    state.watchedAssets.find((asset) => asset.contract === contract) ??
-    state.detectedAssets.find((asset) => asset.contract === contract) ??
-    null
-  );
-}
-
 function selectedAssetIsTracked(state: PopupRuntimeState): boolean {
   if (!selectedAsset) {
     return false;
   }
   return state.watchedAssets.some((asset) => asset.contract === selectedAsset);
-}
-
-function assetRawBalance(
-  asset: DisplayedAsset,
-  state: PopupRuntimeState
-): string | null {
-  const trackedBalance = state.assetBalances[asset.contract];
-  if (trackedBalance != null) {
-    return trackedBalance;
-  }
-  return isDetectedAsset(asset) ? asset.balance : null;
-}
-
-function visibleAssetContracts(state: PopupRuntimeState): string[] {
-  const contracts = new Set(
-    visibleWatchedAssets(state).map((asset) => asset.contract)
-  );
-  for (const asset of visibleDetectedAssets(state)) {
-    contracts.add(asset.contract);
-  }
-  return [...contracts];
-}
-
-function balanceStateKey(contract: string, address: string): string {
-  return `${contract}.balances:${address}`;
-}
-
-function normalizeLiveBalance(value: unknown): string | null {
-  if (value == null) {
-    return null;
-  }
-  if (typeof value === "string" || typeof value === "number" || typeof value === "bigint") {
-    return String(value);
-  }
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
 }
 
 function ensureBalanceWatchClient(state: PopupRuntimeState): XianClient | null {
