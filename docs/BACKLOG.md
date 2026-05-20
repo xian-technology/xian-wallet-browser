@@ -4,7 +4,7 @@ This is the stable backlog entrypoint for `xian-wallet-browser`.
 
 Current themes:
 
-- portfolio valuation UX and deeper activity-history polish
+- portfolio valuation UX
 - verified official network presets once Xian public networks exist
 - publishable browser-wallet packaging and release-process hardening
 - stronger account management and multi-account UX

@@ -1722,6 +1722,7 @@ function renderTrustedDappPolicy(policy: PopupRuntimeState["trustedDappPolicies"
 let activityTxs: ActivityTx[] = [];
 let activityLoading = false;
 let activityError: string | null = null;
+let activityNotice: string | null = null;
 let activityStateKey: string | null = null;
 let activityRequestId = 0;
 let activityPollGeneration = 0;
@@ -1779,6 +1780,58 @@ function localActivityStatusLabel(tx: ActivityTx): string {
 
 function isLocalUnindexedTx(tx: ActivityTx): boolean {
   return tx.local === true && tx.block_height == null;
+}
+
+function formatActivityListTime(tx: ActivityTx): string {
+  const raw = tx.created_at ?? tx.block_time;
+  const timestamp = txTimestampMillis(tx);
+  if (timestamp <= 0) {
+    return formatTxTimestamp(raw) ?? "";
+  }
+  const diff = Date.now() - timestamp;
+  if (diff < 0) {
+    return formatTxTimestamp(raw) ?? "";
+  }
+  if (diff < 60_000) return "just now";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)}d ago`;
+  return new Date(timestamp).toLocaleDateString();
+}
+
+function activitySubtitle(tx: ActivityTx, cls: TxClassification): string {
+  const kwargs = (tx.payload?.kwargs ?? {}) as Record<string, unknown>;
+  const to = typeof kwargs.to === "string" ? kwargs.to : "";
+  if (cls.category === "send" || cls.category === "receive") {
+    const amount = formatTxAmount(kwargs.amount);
+    if (amount && to) {
+      return `${amount} ${tx.contract} to ${truncateHash(to, 6, 4)}`;
+    }
+    if (amount) {
+      return `${amount} ${tx.contract}`;
+    }
+  } else if (cls.category === "approve") {
+    const amount = formatTxAmount(kwargs.amount);
+    if (amount && to) {
+      return `${amount} ${tx.contract} for ${truncateHash(to, 6, 4)}`;
+    }
+    if (amount) {
+      return `${amount} ${tx.contract}`;
+    }
+  } else if (cls.category === "buy" || cls.category === "sell" || cls.category === "swap") {
+    const amountIn = formatTxAmount(kwargs.amountIn);
+    const src = typeof kwargs.src === "string" ? (kwargs.src as string) : "";
+    if (amountIn) return `${amountIn}${src ? ` ${src}` : ""}`;
+  } else if (cls.category === "add_liquidity" || cls.category === "remove_liquidity") {
+    const a = typeof kwargs.tokenA === "string" ? (kwargs.tokenA as string) : "";
+    const b = typeof kwargs.tokenB === "string" ? (kwargs.tokenB as string) : "";
+    if (a && b) return `${a} / ${b}`;
+  } else if (cls.category === "create_token") {
+    const sym = typeof kwargs.token_symbol === "string" ? (kwargs.token_symbol as string) : "";
+    const name = typeof kwargs.token_name === "string" ? (kwargs.token_name as string) : "";
+    return sym || name || "";
+  }
+  return `${tx.contract}.${tx.function}`;
 }
 
 function normalizeActivityPayload(value: unknown): ActivityTx[] {
@@ -1844,6 +1897,7 @@ async function loadActivityTxsFromRpc(
 function resetActivityState(): void {
   activityTxs = [];
   activityError = null;
+  activityNotice = null;
   activityLoading = false;
   selectedTxHash = null;
 }
@@ -1878,6 +1932,9 @@ async function fetchActivityTxs(
       return;
     }
     activityTxs = mergeActivityTxs(txs, localTxs);
+    activityNotice = activityTxs.some(isLocalUnindexedTx)
+      ? "Recent submissions are shown from this device until indexed history catches up."
+      : null;
   } catch {
     if (
       requestId !== activityRequestId ||
@@ -1887,9 +1944,13 @@ async function fetchActivityTxs(
       return;
     }
     activityTxs = localTxs;
-    activityError = localTxs.length > 0
-      ? null
-      : "Activity is unavailable on this network.";
+    if (localTxs.length > 0) {
+      activityError = null;
+      activityNotice = "Showing saved submissions only. Indexed history is unavailable on this network.";
+    } else {
+      activityError = "Activity is unavailable on this network.";
+      activityNotice = null;
+    }
   }
   activityLoading = false;
   if (currentState) render(currentState);
@@ -2274,32 +2335,17 @@ function renderActivityTab(state: PopupRuntimeState): string {
     `;
   }
 
+  const noticeHtml = activityNotice
+    ? `<div class="activity-notice">${ICONS.alertTriangle}<span>${escapeHtml(activityNotice)}</span><button class="ghost-sm" data-retry-activity>Retry</button></div>`
+    : "";
+
   return `
+    ${noticeHtml}
     <div class="token-list">
       ${activityTxs.map((tx) => {
         const cls = classifyTx(tx);
-        const kwargs = (tx.payload?.kwargs ?? {}) as Record<string, unknown>;
-        let subtitle = "";
-        if (cls.category === "send" || cls.category === "receive" || cls.category === "approve") {
-          const amount = formatTxAmount(kwargs.amount);
-          if (amount) subtitle = `${amount} ${tx.contract}`;
-        } else if (cls.category === "buy" || cls.category === "sell" || cls.category === "swap") {
-          const amountIn = formatTxAmount(kwargs.amountIn);
-          const src = typeof kwargs.src === "string" ? (kwargs.src as string) : "";
-          if (amountIn) subtitle = `${amountIn}${src ? ` ${src}` : ""}`;
-        } else if (cls.category === "add_liquidity" || cls.category === "remove_liquidity") {
-          const a = typeof kwargs.tokenA === "string" ? (kwargs.tokenA as string) : "";
-          const b = typeof kwargs.tokenB === "string" ? (kwargs.tokenB as string) : "";
-          if (a && b) subtitle = `${a} / ${b}`;
-        } else if (cls.category === "create_token") {
-          const sym = typeof kwargs.token_symbol === "string" ? (kwargs.token_symbol as string) : "";
-          const name = typeof kwargs.token_name === "string" ? (kwargs.token_name as string) : "";
-          subtitle = sym || name || "";
-        }
-        if (!subtitle) {
-          subtitle = `${tx.contract}.${tx.function}`;
-        }
-        const when = formatTxTimestamp(tx.created_at ?? tx.block_time) ?? "";
+        const subtitle = activitySubtitle(tx, cls);
+        const when = formatActivityListTime(tx);
         return `
           <div class="token-item" data-select-tx="${escapeAttribute(tx.hash)}" style="cursor:pointer">
             <div class="token-icon" style="background:${TX_ACCENT_BG[cls.accent]};color:${TX_ACCENT_FG[cls.accent]}">

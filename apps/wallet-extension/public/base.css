@@ -600,6 +600,31 @@ main {
   height: 15px;
 }
 
+.activity-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 16px 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--warning-soft, rgba(250, 173, 20, 0.12));
+  color: var(--warning, #faad14);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.activity-notice svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+
+.activity-notice span {
+  flex: 1;
+  min-width: 0;
+}
+
 /* ── Quick Actions ── */
 
 .quick-actions {
