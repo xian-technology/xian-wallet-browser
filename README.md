@@ -72,6 +72,7 @@ Typical user-facing flows covered by this repo:
 | Prepare / sign / send tx | provider bridge, `@xian-tech/client` | dapps can send an intent without seeing private keys |
 | Watch asset | provider bridge, token registry UI | lets dapps request token tracking |
 | Network switching | popup UI, provider events | emits provider chain changes for connected dapps |
+| Review activity | popup UI | pulls indexed transaction history where available and keeps a local fallback for submitted txs |
 
 Load the extension locally after building:
 

@@ -16,6 +16,7 @@ That means:
 - the repo root version must be `X.Y.Z`
 - `@xian-tech/wallet-core` must be `X.Y.Z`
 - `apps/wallet-extension/package.json` must also carry `X.Y.Z`
+- `apps/wallet-extension/public/manifest.json` must also carry `X.Y.Z`
 
 This repo is not lockstepped with `xian-js`.
 
@@ -39,6 +40,7 @@ normally through npm.
 1. If needed, release `xian-js` first.
 2. Update `package.json`, `packages/wallet-core/package.json`, and
    `apps/wallet-extension/package.json` to the intended release version.
+   Update `apps/wallet-extension/public/manifest.json` to the same version.
 3. If the wallet depends on a newer SDK release, update
    `packages/wallet-core/package.json` and `apps/wallet-extension/package.json`
    to the new `@xian-tech/client` or `@xian-tech/provider` versions.

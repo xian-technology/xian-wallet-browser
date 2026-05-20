@@ -3254,7 +3254,7 @@ function renderSecurityTab(state: PopupRuntimeState): string {
               <button type="button" class="secondary full-width" data-import-trigger>Import</button>
             </div>
           </form>
-          <p class="muted text-sm">Export saves your ${escapeHtml(state.seedSource === "mnemonic" ? "seed and all accounts" : "private key")} to encrypted JSON. Stored shielded snapshots are included automatically. Import restores from exported backup JSON.</p>
+          <p class="muted text-sm">Export saves your ${escapeHtml(state.seedSource === "mnemonic" ? "seed and all accounts" : "private key")} to sensitive backup JSON. Stored shielded snapshots are included automatically. Import restores from exported backup JSON.</p>
         </div>
       </div>
 

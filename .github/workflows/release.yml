@@ -60,7 +60,8 @@ jobs:
           const packageFiles = [
             "package.json",
             "packages/wallet-core/package.json",
-            "apps/wallet-extension/package.json"
+            "apps/wallet-extension/package.json",
+            "apps/wallet-extension/public/manifest.json"
           ];
 
           for (const file of packageFiles) {

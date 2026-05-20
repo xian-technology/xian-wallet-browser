@@ -90,7 +90,7 @@ It currently supports:
 It does not yet include:
 
 - hardware wallets
-- transaction history and portfolio views
+- portfolio valuation views
 
 ## Manual Review
 
