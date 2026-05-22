@@ -7,6 +7,7 @@ import type {
 } from "@xian-tech/provider";
 
 import {
+  decryptWalletBackup,
   UNLOCKED_SESSION_TIMEOUT_MS,
   WalletController,
   type PersistedApproval,
@@ -247,6 +248,48 @@ describe("@xian-tech/wallet-core controller", () => {
       ["xian-local"],
       ORIGIN
     );
+  });
+
+  it("does not expose provider request state across origins", async () => {
+    const store = createStore();
+    const client = createClient();
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined),
+      createId: vi.fn(() => "approval-1")
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+    await controller.startProviderRequest("request-1", ORIGIN, {
+      method: "xian_requestAccounts"
+    });
+
+    await expect(
+      controller.getProviderRequestStatus("request-1", {
+        origin: "https://evil.example"
+      })
+    ).resolves.toEqual({ status: "not_found" });
+    await expect(
+      controller.startProviderRequest("request-1", "https://evil.example", {
+        method: "xian_accounts"
+      })
+    ).resolves.toEqual({
+      status: "rejected",
+      error: {
+        name: "Error",
+        message: "request id is already in use by a different origin"
+      }
+    });
   });
 
   it("persists approvals and request results across controller instances", async () => {
@@ -1497,8 +1540,16 @@ describe("@xian-tech/wallet-core controller", () => {
       })
     ]);
 
-    const backup = await controller.exportWallet("secret");
-    expect(backup.shieldedStateSnapshots).toEqual([
+    const backup = await controller.exportWallet("backup-pass");
+    expect(backup.version).toBe(2);
+    expect(JSON.stringify(backup)).not.toContain(PRIVATE_KEY);
+    expect(JSON.stringify(backup)).not.toContain(SHIELDED_STATE_SNAPSHOT);
+    await expect(decryptWalletBackup(backup, "wrong-pass")).rejects.toThrow(
+      "invalid password"
+    );
+
+    const decryptedBackup = await decryptWalletBackup(backup, "backup-pass");
+    expect(decryptedBackup.shieldedStateSnapshots).toEqual([
       {
         label: "Treasury shielded",
         stateSnapshot: JSON.stringify(JSON.parse(SHIELDED_STATE_SNAPSHOT))
@@ -1519,7 +1570,7 @@ describe("@xian-tech/wallet-core controller", () => {
       createId
     });
 
-    const imported = await importingController.importWalletBackup(backup, "restored");
+    const imported = await importingController.importWalletBackup(backup, "backup-pass");
     expect(imported.shieldedWalletSnapshots).toEqual([
       expect.objectContaining({
         id: "imported-snapshot-1",
@@ -1705,11 +1756,12 @@ describe("@xian-tech/wallet-core controller", () => {
       makeActive: true
     });
 
-    const backup = await controller.exportWallet("secret");
-    expect(backup.activeAccountIndex).toBe(accountTwo.activeAccountIndex);
-    expect(backup.activeNetworkId).toBe("mainnet-preset");
+    const backup = await controller.exportWallet("backup-pass");
+    const decryptedBackup = await decryptWalletBackup(backup, "backup-pass");
+    expect(decryptedBackup.activeAccountIndex).toBe(accountTwo.activeAccountIndex);
+    expect(decryptedBackup.activeNetworkId).toBe("mainnet-preset");
 
-    const restored = await controller.importWalletBackup(backup, "new-secret");
+    const restored = await controller.importWalletBackup(backup, "backup-pass");
     expect(restored.activeAccountIndex).toBe(accountTwo.activeAccountIndex);
     expect(restored.publicKey).toBe(accountTwo.publicKey);
     expect(restored.activeNetworkId).toBe("mainnet-preset");
@@ -1720,6 +1772,51 @@ describe("@xian-tech/wallet-core controller", () => {
     await expect(controller.addAccount()).resolves.toMatchObject({
       activeAccountIndex: 2
     });
+  });
+
+  it("requires explicit opt-in for remote HTTP network presets", async () => {
+    const store = createStore();
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => createClient(),
+      onApprovalRequested: vi.fn(async () => undefined),
+      createId: vi.fn(() => "lan-preset")
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+
+    await expect(
+      controller.saveNetworkPreset({
+        name: "LAN node",
+        rpcUrl: "http://192.168.1.10:26657"
+      })
+    ).rejects.toThrow("HTTP RPC URLs are disabled");
+
+    const updated = await controller.saveNetworkPreset({
+      name: "LAN node",
+      rpcUrl: "http://192.168.1.10:26657",
+      allowInsecureHttp: true,
+      makeActive: true
+    });
+
+    expect(updated.networkPresets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "lan-preset",
+          rpcUrl: "http://192.168.1.10:26657",
+          allowInsecureHttp: true
+        })
+      ])
+    );
   });
 
   it("rejects pending requests when the wallet is replaced", async () => {

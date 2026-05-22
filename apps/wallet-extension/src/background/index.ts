@@ -693,6 +693,7 @@ chrome.runtime.onMessage.addListener(
             sendResponse(
               ok(
                 await controller.getProviderRequestStatus(message.requestId, {
+                  origin: message.origin,
                   consume: message.consume
                 })
               )

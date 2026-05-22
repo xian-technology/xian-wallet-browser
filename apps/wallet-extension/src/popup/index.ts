@@ -53,6 +53,7 @@ interface NetworkDraft {
   chainId: string;
   rpcUrl: string;
   dashboardUrl: string;
+  allowInsecureHttp: boolean;
   makeActive: boolean;
 }
 
@@ -309,8 +310,48 @@ function selectedAssetIsTracked(state: PopupRuntimeState): boolean {
   return state.watchedAssets.some((asset) => asset.contract === selectedAsset);
 }
 
+function isLoopbackHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "http:" &&
+      (url.hostname === "localhost" ||
+        url.hostname === "::1" ||
+        /^127(?:\.\d{1,3}){3}$/.test(url.hostname))
+    );
+  } catch {
+    return false;
+  }
+}
+
+function activePresetAllowsInsecureHttp(state: PopupRuntimeState): boolean {
+  return (
+    state.networkPresets.find((preset) => preset.id === state.activeNetworkId)
+      ?.allowInsecureHttp === true
+  );
+}
+
+function assertRpcTransportAllowed(
+  rpcUrl: string,
+  allowInsecureHttp: boolean
+): void {
+  const url = new URL(rpcUrl);
+  if (url.protocol === "http:" && !allowInsecureHttp && !isLoopbackHttpUrl(rpcUrl)) {
+    throw new Error(
+      "HTTP RPC URLs are disabled for this network. Enable HTTP data transfers only for endpoints you trust."
+    );
+  }
+}
+
 function ensureBalanceWatchClient(state: PopupRuntimeState): XianClient | null {
   if (!state.dashboardUrl) {
+    balanceWatchClient = null;
+    balanceWatchClientKey = null;
+    return null;
+  }
+  try {
+    assertRpcTransportAllowed(state.rpcUrl, activePresetAllowsInsecureHttp(state));
+  } catch {
     balanceWatchClient = null;
     balanceWatchClientKey = null;
     return null;
@@ -513,6 +554,7 @@ function draftFromPreset(
     chainId: preset.chainId ?? "",
     rpcUrl: preset.rpcUrl,
     dashboardUrl: preset.dashboardUrl ?? "",
+    allowInsecureHttp: preset.allowInsecureHttp === true,
     makeActive: true
   };
 }
@@ -523,6 +565,7 @@ function defaultNetworkDraft(state: PopupRuntimeState): NetworkDraft {
     chainId: "",
     rpcUrl: state.rpcUrl,
     dashboardUrl: state.dashboardUrl ?? "",
+    allowInsecureHttp: false,
     makeActive: true
   };
 }
@@ -884,7 +927,7 @@ function renderImportBackupDialog(): string {
       <div class="app-dialog app-dialog-wide" role="dialog" aria-modal="true" aria-labelledby="import-backup-title">
         <div class="app-dialog-icon">${ICONS.arrowDown}</div>
         <h3 id="import-backup-title" class="app-dialog-title">Import Backup</h3>
-        <p class="app-dialog-copy">Paste the exported wallet backup JSON.</p>
+        <p class="app-dialog-copy">Paste the encrypted wallet backup JSON.</p>
         <textarea
           id="import-backup-json"
           class="app-dialog-textarea mono"
@@ -990,6 +1033,10 @@ function renderSetup(state: PopupRuntimeState | null): void {
               <label>
                 Dashboard URL
                 <input id="setup-dashboard-url" value="${escapeAttribute(defaultDashboard)}" />
+              </label>
+              <label class="inline-check">
+                <input id="setup-allow-insecure-http" type="checkbox" />
+                <span>Allow HTTP data transfers</span>
               </label>
             </div>
           </details>
@@ -1879,8 +1926,10 @@ function decodeActivityValue(value: unknown): ActivityTx[] {
 
 async function loadActivityTxsFromRpc(
   rpcUrl: string,
-  address: string
+  address: string,
+  allowInsecureHttp: boolean
 ): Promise<ActivityTx[]> {
+  assertRpcTransportAllowed(rpcUrl, allowInsecureHttp);
   const resp = await fetch(
     `${rpcUrl}/abci_query?path=%22/txs_by_sender/${address}/limit=50/offset=0%22`
   );
@@ -1923,7 +1972,11 @@ async function fetchActivityTxs(
   }
   const localTxs = await loadLocalActivityForKey(requestKey);
   try {
-    const txs = await loadActivityTxsFromRpc(state.rpcUrl, address);
+    const txs = await loadActivityTxsFromRpc(
+      state.rpcUrl,
+      address,
+      activePresetAllowsInsecureHttp(state)
+    );
     if (
       requestId !== activityRequestId ||
       !currentState ||
@@ -3292,15 +3345,15 @@ function renderSecurityTab(state: PopupRuntimeState): string {
         <div class="s-card-body stack">
           <form id="export-wallet-form" class="stack">
             <label>
-              Password
-              <input id="backup-password" type="password" required autocomplete="current-password" />
+              Backup password
+              <input id="backup-password" type="password" required autocomplete="new-password" />
             </label>
             <div style="display: flex; gap: 8px">
               <button type="submit" class="secondary full-width">Export</button>
               <button type="button" class="secondary full-width" data-import-trigger>Import</button>
             </div>
           </form>
-          <p class="muted text-sm">Export saves your ${escapeHtml(state.seedSource === "mnemonic" ? "seed and all accounts" : "private key")} to sensitive backup JSON. Stored shielded snapshots are included automatically. Import restores from exported backup JSON.</p>
+          <p class="muted text-sm">Export creates encrypted backup JSON for your ${escapeHtml(state.seedSource === "mnemonic" ? "seed and all accounts" : "private key")}. Stored shielded snapshots are included automatically. Import decrypts the backup in the wallet UI.</p>
         </div>
       </div>
 
@@ -3461,7 +3514,10 @@ function renderPresetItem(
           ${!preset.builtin ? `<button class="ghost-sm" data-delete-network="${escapeAttribute(preset.id)}">Delete</button>` : ""}
         </div>
       </div>
-      <div class="preset-detail">${escapeHtml(preset.rpcUrl)}</div>
+      <div class="preset-detail">
+        ${escapeHtml(preset.rpcUrl)}
+        ${preset.allowInsecureHttp ? `<span class="pill pill-warning">HTTP allowed</span>` : ""}
+      </div>
     </div>
   `;
 }
@@ -3489,6 +3545,10 @@ function renderNetworkEditor(state: PopupRuntimeState): string {
       <label>
         Dashboard URL
         <input id="network-dashboard-url" value="${escapeAttribute(networkDraft.dashboardUrl)}" />
+      </label>
+      <label class="inline-check">
+        <input id="network-allow-insecure-http" type="checkbox" ${networkDraft.allowInsecureHttp ? "checked" : ""} />
+        <span>Allow HTTP data transfers</span>
       </label>
       <label class="inline-check">
         <input id="network-make-active" type="checkbox" ${networkDraft.makeActive ? "checked" : ""} />
@@ -3589,7 +3649,8 @@ function bindSetupEvents(): void {
           networkName: value("#setup-network-name") || undefined,
           expectedChainId: value("#setup-expected-chain-id") || undefined,
           rpcUrl: value("#setup-rpc-url") || undefined,
-          dashboardUrl: value("#setup-dashboard-url") || undefined
+          dashboardUrl: value("#setup-dashboard-url") || undefined,
+          allowInsecureHttp: checked("#setup-allow-insecure-http")
         });
 
         currentState = result.popupState;
@@ -4786,6 +4847,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           chainId: value("#network-chain-id") || undefined,
           rpcUrl: value("#network-rpc-url"),
           dashboardUrl: value("#network-dashboard-url") || undefined,
+          allowInsecureHttp: checked("#network-allow-insecure-http"),
           makeActive: checked("#network-make-active")
         });
         resetNetworkDraft();
@@ -4921,7 +4983,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     ?.addEventListener("click", () => {
       const password = value("#backup-password");
       if (!password) {
-        setFlash("Enter a password first. It will encrypt the imported wallet.", "warning");
+        setFlash("Enter the backup password first.", "warning");
         render(state);
         return;
       }
@@ -4941,7 +5003,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     ?.addEventListener("click", () => {
       const password = value("#backup-password");
       if (!password) {
-        setFlash("Enter a password first. It will encrypt the imported wallet.", "warning");
+        setFlash("Enter the backup password first.", "warning");
         showImportBackupDialog = false;
         render(state);
         return;
@@ -4955,7 +5017,10 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           return;
         }
         const backup = JSON.parse(text);
-        if (!backup || backup.version !== 1 || !backup.type) {
+        if (
+          !backup ||
+          (backup.version !== 2 && (backup.version !== 1 || !backup.type))
+        ) {
           setFlash("Invalid backup JSON.", "danger");
           render(state);
           return;

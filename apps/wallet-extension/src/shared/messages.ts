@@ -60,6 +60,7 @@ export interface ProviderRequestRuntimeMessage {
 
 export interface ProviderRequestStatusRuntimeMessage {
   type: "provider_request_status";
+  origin?: string;
   requestId: string;
   consume?: boolean;
 }
@@ -92,6 +93,7 @@ export interface WalletCreateRuntimeMessage {
   expectedChainId?: string;
   rpcUrl?: string;
   dashboardUrl?: string;
+  allowInsecureHttp?: boolean;
 }
 
 export interface WalletUnlockRuntimeMessage {
@@ -113,6 +115,7 @@ export interface WalletUpdateSettingsRuntimeMessage {
   expectedChainId?: string;
   rpcUrl: string;
   dashboardUrl?: string;
+  allowInsecureHttp?: boolean;
 }
 
 export interface WalletSaveNetworkPresetRuntimeMessage {
@@ -122,6 +125,7 @@ export interface WalletSaveNetworkPresetRuntimeMessage {
   chainId?: string;
   rpcUrl: string;
   dashboardUrl?: string;
+  allowInsecureHttp?: boolean;
   makeActive?: boolean;
 }
 

@@ -2,7 +2,12 @@ import { generateMnemonic, mnemonicToSeed, validateMnemonic } from "@scure/bip39
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 import { Ed25519Signer, isValidEd25519Key } from "@xian-tech/client";
 
-import type { WalletSeedSource } from "./types.js";
+import type {
+  EncryptedWalletBackup,
+  WalletBackup,
+  WalletBackupPayload,
+  WalletSeedSource
+} from "./types.js";
 
 const ENCODER = new TextEncoder();
 const DECODER = new TextDecoder();
@@ -48,7 +53,8 @@ function bytesToHex(bytes: Uint8Array): string {
 
 async function deriveKey(
   password: string,
-  salt: Uint8Array
+  salt: Uint8Array,
+  iterations: number = ITERATIONS
 ): Promise<CryptoKey> {
   const passwordKey = await getWebCrypto().subtle.importKey(
     "raw",
@@ -61,7 +67,7 @@ async function deriveKey(
     {
       name: "PBKDF2",
       hash: "SHA-256",
-      iterations: ITERATIONS,
+      iterations,
       salt: toArrayBuffer(salt)
     },
     passwordKey,
@@ -76,7 +82,8 @@ async function deriveKey(
 
 async function deriveSessionKeyBytes(
   password: string,
-  salt: Uint8Array
+  salt: Uint8Array,
+  iterations: number = ITERATIONS
 ): Promise<Uint8Array> {
   const passwordKey = await getWebCrypto().subtle.importKey(
     "raw",
@@ -89,7 +96,7 @@ async function deriveSessionKeyBytes(
     {
       name: "PBKDF2",
       hash: "SHA-256",
-      iterations: ITERATIONS,
+      iterations,
       salt: toArrayBuffer(salt)
     },
     passwordKey,
@@ -137,11 +144,22 @@ async function encryptText(value: string, password: string): Promise<string> {
 
 async function decryptText(payload: string, password: string): Promise<string> {
   const parsed = JSON.parse(payload) as {
+    iterations?: number;
     salt: string;
     iv: string;
     ciphertext: string;
   };
-  const key = await deriveKey(password, base64ToBytes(parsed.salt));
+  const iterations =
+    typeof parsed.iterations === "number" &&
+    Number.isSafeInteger(parsed.iterations) &&
+    parsed.iterations > 0
+      ? parsed.iterations
+      : ITERATIONS;
+  const key = await deriveKey(
+    password,
+    base64ToBytes(parsed.salt),
+    iterations
+  );
   try {
     const plaintext = await getWebCrypto().subtle.decrypt(
       { name: "AES-GCM", iv: toArrayBuffer(base64ToBytes(parsed.iv)) },
@@ -419,6 +437,96 @@ export async function decryptMnemonic(
     throw new Error("missing mnemonic after decryption");
   }
   return mnemonic;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isEncryptedWalletBackup(value: WalletBackup): value is EncryptedWalletBackup {
+  return (
+    isRecord(value) &&
+    value.version === 2 &&
+    value.kind === "xian-wallet-backup" &&
+    isRecord(value.encryption) &&
+    value.encryption.algorithm === "AES-256-GCM" &&
+    value.encryption.kdf === "PBKDF2-SHA256" &&
+    typeof value.encryption.iterations === "number" &&
+    typeof value.encryption.salt === "string" &&
+    typeof value.encryption.iv === "string" &&
+    typeof value.ciphertext === "string"
+  );
+}
+
+function assertPlainWalletBackup(value: unknown): WalletBackupPayload {
+  if (!isRecord(value) || value.version !== 1 || typeof value.type !== "string") {
+    throw new Error("invalid wallet backup");
+  }
+  if (value.type !== "mnemonic" && value.type !== "privateKey") {
+    throw new Error("invalid wallet backup seed type");
+  }
+  return value as unknown as WalletBackupPayload;
+}
+
+export async function encryptWalletBackupPayload(
+  backup: WalletBackupPayload,
+  password: string
+): Promise<EncryptedWalletBackup> {
+  const encrypted = JSON.parse(
+    await encryptText(JSON.stringify(backup), password)
+  ) as {
+    algorithm: string;
+    iterations: number;
+    salt: string;
+    iv: string;
+    ciphertext: string;
+  };
+  return {
+    version: 2,
+    kind: "xian-wallet-backup",
+    encryption: {
+      algorithm: "AES-256-GCM",
+      kdf: "PBKDF2-SHA256",
+      iterations: encrypted.iterations,
+      salt: encrypted.salt,
+      iv: encrypted.iv
+    },
+    ciphertext: encrypted.ciphertext
+  };
+}
+
+export async function decryptWalletBackup(
+  backup: WalletBackup,
+  password: string
+): Promise<WalletBackupPayload> {
+  if (!isEncryptedWalletBackup(backup)) {
+    return assertPlainWalletBackup(backup);
+  }
+
+  if (
+    !Number.isSafeInteger(backup.encryption.iterations) ||
+    backup.encryption.iterations <= 0
+  ) {
+    throw new Error("invalid wallet backup encryption parameters");
+  }
+
+  const encryptedText = JSON.stringify({
+    algorithm: "AES-GCM",
+    iterations: backup.encryption.iterations,
+    salt: backup.encryption.salt,
+    iv: backup.encryption.iv,
+    ciphertext: backup.ciphertext
+  });
+  try {
+    return assertPlainWalletBackup(
+      JSON.parse(await decryptText(encryptedText, password))
+    );
+  } catch (error) {
+    if (error instanceof Error && error.message === "invalid password") {
+      throw error;
+    }
+    throw new Error("invalid wallet backup");
+  }
 }
 
 export async function encryptMnemonicWithSessionKey(

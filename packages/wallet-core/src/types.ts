@@ -13,6 +13,7 @@ export interface WalletNetworkPreset {
   chainId?: string;
   rpcUrl: string;
   dashboardUrl?: string;
+  allowInsecureHttp?: boolean;
   builtin?: boolean;
 }
 
@@ -273,6 +274,7 @@ export interface WalletSetupInput {
   expectedChainId?: string;
   rpcUrl?: string;
   dashboardUrl?: string;
+  allowInsecureHttp?: boolean;
 }
 
 export interface WalletCreateResult {
@@ -281,7 +283,7 @@ export interface WalletCreateResult {
   importedSeedSource: WalletSeedSource;
 }
 
-export interface WalletBackup {
+export interface WalletBackupPayload {
   version: 1;
   type: WalletSeedSource;
   mnemonic?: string;
@@ -298,11 +300,27 @@ export interface WalletBackup {
   }>;
 }
 
+export interface EncryptedWalletBackup {
+  version: 2;
+  kind: "xian-wallet-backup";
+  encryption: {
+    algorithm: "AES-256-GCM";
+    kdf: "PBKDF2-SHA256";
+    iterations: number;
+    salt: string;
+    iv: string;
+  };
+  ciphertext: string;
+}
+
+export type WalletBackup = WalletBackupPayload | EncryptedWalletBackup;
+
 export interface WalletSettingsInput {
   networkName?: string;
   expectedChainId?: string;
   rpcUrl: string;
   dashboardUrl?: string;
+  allowInsecureHttp?: boolean;
 }
 
 export interface WalletNetworkPresetInput {
@@ -311,6 +329,7 @@ export interface WalletNetworkPresetInput {
   chainId?: string;
   rpcUrl: string;
   dashboardUrl?: string;
+  allowInsecureHttp?: boolean;
   makeActive?: boolean;
 }
 

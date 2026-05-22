@@ -152,6 +152,7 @@ async function awaitProviderRequestResult(requestId: string): Promise<unknown> {
 
     const status = await sendRuntimeMessage<ProviderRequestRuntimeResult>({
       type: "provider_request_status",
+      origin: window.location.origin,
       requestId,
       consume: true
     });

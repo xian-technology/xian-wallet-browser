@@ -420,6 +420,7 @@ function normalizeWalletState(value: unknown): StoredWalletState | null {
             rpcUrl: entry.rpcUrl,
             dashboardUrl:
               typeof entry.dashboardUrl === "string" ? entry.dashboardUrl : undefined,
+            allowInsecureHttp: entry.allowInsecureHttp === true,
             builtin: entry.builtin === true
           }
         ];

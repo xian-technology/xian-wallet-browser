@@ -39,11 +39,13 @@ import {
   createWalletSecret,
   decryptMnemonicWithSessionKey,
   decryptPrivateKeyWithSessionKey,
+  decryptWalletBackup,
   deriveWalletSessionKey,
   derivePrivateKeyFromMnemonic,
   encryptSecretTextWithSessionKey,
   encryptMnemonicWithSessionKey,
   encryptPrivateKeyWithSessionKey,
+  encryptWalletBackupPayload,
   isUnsafeMessageToSign
 } from "./crypto.js";
 import type {
@@ -61,6 +63,7 @@ import type {
   StoredWalletState,
   WalletAccount,
   WalletBackup,
+  WalletBackupPayload,
   WalletControllerStore,
   WalletCreateResult,
   WalletDetectedAsset,
@@ -211,6 +214,41 @@ function parseIntentNumber(
 function trimOptionalString(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function isLoopbackHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "http:" &&
+      (url.hostname === "localhost" ||
+        url.hostname === "::1" ||
+        /^127(?:\.\d{1,3}){3}$/.test(url.hostname))
+    );
+  } catch {
+    return false;
+  }
+}
+
+function assertRpcTransportAllowed(
+  rpcUrl: string,
+  allowInsecureHttp: boolean | undefined
+): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(rpcUrl);
+  } catch {
+    throw new TypeError("network preset rpcUrl must be a valid URL");
+  }
+  if (
+    parsed.protocol === "http:" &&
+    !allowInsecureHttp &&
+    !isLoopbackHttpUrl(rpcUrl)
+  ) {
+    throw new Error(
+      "HTTP RPC URLs are disabled for this network. Enable HTTP data transfers only for endpoints you trust."
+    );
+  }
 }
 
 function trimOptionalIndexedString(value: string | null | undefined): string | undefined {
@@ -490,17 +528,22 @@ function normalizePresetInputValue(
     name: string;
     rpcUrl: string;
     dashboardUrl?: string;
+    allowInsecureHttp?: boolean;
     builtin?: boolean;
   }
 ): WalletNetworkPreset {
+  const rpcUrl = trimOptionalString(preset.rpcUrl) ?? fallback.rpcUrl;
+  const allowInsecureHttp =
+    preset.allowInsecureHttp === true || fallback.allowInsecureHttp === true;
   return {
     id: trimOptionalString(preset.id) ?? fallback.id,
     name: trimOptionalString(preset.name) ?? fallback.name,
     chainId: trimOptionalString(preset.chainId),
-    rpcUrl: trimOptionalString(preset.rpcUrl) ?? fallback.rpcUrl,
+    rpcUrl,
     dashboardUrl:
       trimOptionalString(preset.dashboardUrl) ??
       trimOptionalString(fallback.dashboardUrl),
+    allowInsecureHttp,
     builtin: preset.builtin ?? fallback.builtin
   };
 }
@@ -913,6 +956,8 @@ export class WalletController {
   }
 
   private currentClient(state: StoredWalletState): WalletNetworkClient {
+    const activePreset = this.activeNetworkPreset(state);
+    assertRpcTransportAllowed(state.rpcUrl, activePreset.allowInsecureHttp);
     if (this.options.createClient) {
       return this.options.createClient(state);
     }
@@ -1065,8 +1110,8 @@ export class WalletController {
   private async exportShieldedWalletSnapshots(
     state: StoredWalletState,
     sessionKey: string
-  ): Promise<NonNullable<WalletBackup["shieldedStateSnapshots"]>> {
-    const exported: NonNullable<WalletBackup["shieldedStateSnapshots"]> = [];
+  ): Promise<NonNullable<WalletBackupPayload["shieldedStateSnapshots"]>> {
+    const exported: NonNullable<WalletBackupPayload["shieldedStateSnapshots"]> = [];
     for (const record of this.storedShieldedWalletSnapshots(state)) {
       exported.push({
         label: record.label,
@@ -1080,7 +1125,7 @@ export class WalletController {
   }
 
   private async importShieldedWalletSnapshots(
-    snapshots: WalletBackup["shieldedStateSnapshots"] | undefined,
+    snapshots: WalletBackupPayload["shieldedStateSnapshots"] | undefined,
     sessionKey: string,
     nowIso: string
   ): Promise<StoredShieldedWalletSnapshot[]> {
@@ -1490,6 +1535,8 @@ export class WalletController {
     if (!rpcUrl) {
       throw new TypeError("network preset rpcUrl is required");
     }
+    const allowInsecureHttp = input.allowInsecureHttp === true;
+    assertRpcTransportAllowed(rpcUrl, allowInsecureHttp);
     return {
       ...input,
       id: trimOptionalString(input.id),
@@ -1497,6 +1544,7 @@ export class WalletController {
       chainId: trimOptionalString(input.chainId),
       rpcUrl,
       dashboardUrl: trimOptionalString(input.dashboardUrl),
+      allowInsecureHttp,
       makeActive: input.makeActive ?? false
     };
   }
@@ -1522,6 +1570,7 @@ export class WalletController {
         chainId: sanitized.chainId,
         rpcUrl: sanitized.rpcUrl,
         dashboardUrl: sanitized.dashboardUrl,
+        allowInsecureHttp: sanitized.allowInsecureHttp,
         builtin: false
       },
       {
@@ -1529,6 +1578,7 @@ export class WalletController {
         name: sanitized.name,
         rpcUrl: sanitized.rpcUrl,
         dashboardUrl: sanitized.dashboardUrl,
+        allowInsecureHttp: sanitized.allowInsecureHttp,
         builtin: false
       }
     );
@@ -2477,6 +2527,8 @@ export class WalletController {
     const setupRpcUrl = trimOptionalString(input.rpcUrl) ?? DEFAULT_RPC_URL;
     const setupDashboardUrl =
       trimOptionalString(input.dashboardUrl) ?? DEFAULT_DASHBOARD_URL;
+    const setupAllowInsecureHttp = input.allowInsecureHttp === true;
+    assertRpcTransportAllowed(setupRpcUrl, setupAllowInsecureHttp);
     const localPreset = createLocalNetworkPreset();
     const useLocalPreset =
       setupRpcUrl === localPreset.rpcUrl &&
@@ -2491,6 +2543,7 @@ export class WalletController {
             chainId: trimOptionalString(input.expectedChainId),
             rpcUrl: setupRpcUrl,
             dashboardUrl: setupDashboardUrl,
+            allowInsecureHttp: setupAllowInsecureHttp,
             builtin: false
           },
           {
@@ -2498,6 +2551,7 @@ export class WalletController {
             name: trimOptionalString(input.networkName) ?? "Custom network",
             rpcUrl: setupRpcUrl,
             dashboardUrl: setupDashboardUrl,
+            allowInsecureHttp: setupAllowInsecureHttp,
             builtin: false
           }
         );
@@ -2599,9 +2653,13 @@ export class WalletController {
   async exportWallet(password: string): Promise<WalletBackup> {
     const state = this.requireStoredWallet(await this.loadWalletState());
     const accounts = this.requireAccounts(state);
-    const sessionKey = await this.sessionKeyForState(state, password);
+    await this.restoreUnlockedSession();
+    const sessionKey = this.unlockedSessionKey;
+    if (!sessionKey) {
+      throw new ProviderUnauthorizedError("wallet is locked");
+    }
 
-    const backup: WalletBackup = {
+    const backup: WalletBackupPayload = {
       version: 1,
       type: state.seedSource,
       accounts: accounts.map((a) => ({ index: a.index, name: a.name })),
@@ -2632,19 +2690,20 @@ export class WalletController {
       backup.shieldedStateSnapshots = shieldedStateSnapshots;
     }
 
-    return backup;
+    return encryptWalletBackupPayload(backup, password);
   }
 
   async importWalletBackup(backup: WalletBackup, password: string): Promise<PopupState> {
+    const decryptedBackup = await decryptWalletBackup(backup, password);
     // Derive or use the provided private key
     let primaryKey: string;
     let mnemonic: string | undefined;
 
-    if (backup.type === "mnemonic" && backup.mnemonic) {
-      mnemonic = backup.mnemonic;
+    if (decryptedBackup.type === "mnemonic" && decryptedBackup.mnemonic) {
+      mnemonic = decryptedBackup.mnemonic;
       primaryKey = await derivePrivateKeyFromMnemonic(mnemonic, 0);
-    } else if (backup.privateKey) {
-      primaryKey = backup.privateKey;
+    } else if (decryptedBackup.privateKey) {
+      primaryKey = decryptedBackup.privateKey;
     } else {
       throw new Error("backup must contain a mnemonic or private key");
     }
@@ -2656,7 +2715,7 @@ export class WalletController {
       : undefined;
 
     // Build accounts list
-    const accountEntries = backup.accounts;
+    const accountEntries = decryptedBackup.accounts;
     if (!accountEntries || accountEntries.length === 0) {
       throw new Error("backup must contain at least one account");
     }
@@ -2677,7 +2736,7 @@ export class WalletController {
     }
 
     const activeAccount =
-      accounts.find((account) => account.index === backup.activeAccountIndex) ??
+      accounts.find((account) => account.index === decryptedBackup.activeAccountIndex) ??
       accounts[0];
     if (!activeAccount) {
       throw new Error("backup must contain at least one account");
@@ -2698,23 +2757,33 @@ export class WalletController {
 
     // Merge network presets
     const presets = [...DEFAULT_NETWORK_PRESETS];
-    for (const p of backup.networkPresets ?? []) {
+    for (const p of decryptedBackup.networkPresets ?? []) {
       if (!presets.some((existing) => existing.id === p.id)) {
-        presets.push(p);
+        assertRpcTransportAllowed(p.rpcUrl, p.allowInsecureHttp);
+        presets.push(
+          normalizePresetInputValue(p, {
+            id: p.id,
+            name: p.name,
+            rpcUrl: p.rpcUrl,
+            dashboardUrl: p.dashboardUrl,
+            allowInsecureHttp: p.allowInsecureHttp,
+            builtin: p.builtin
+          })
+        );
       }
     }
 
     const activePreset =
-      presets.find((preset) => preset.id === backup.activeNetworkId) ??
+      presets.find((preset) => preset.id === decryptedBackup.activeNetworkId) ??
       presets[0];
     if (!activePreset) {
       throw new Error("backup must contain at least one network preset");
     }
-    const watchedAssets = backup.watchedAssets?.length
-      ? backup.watchedAssets
+    const watchedAssets = decryptedBackup.watchedAssets?.length
+      ? decryptedBackup.watchedAssets
       : [{ contract: "currency", name: "Xian", symbol: "XIAN" }];
     const shieldedWalletSnapshots = await this.importShieldedWalletSnapshots(
-      backup.shieldedStateSnapshots,
+      decryptedBackup.shieldedStateSnapshots,
       sessionKey,
       nowIso
     );
@@ -2724,7 +2793,7 @@ export class WalletController {
       encryptedPrivateKey: activeAccount.encryptedPrivateKey,
       encryptedMnemonic,
       walletEncryptionSalt,
-      seedSource: backup.type,
+      seedSource: decryptedBackup.type,
       mnemonicWordCount: mnemonic ? mnemonic.split(" ").length : undefined,
       accounts,
       activeAccountIndex: activeAccount.index,
@@ -2733,7 +2802,7 @@ export class WalletController {
       activeNetworkId: activePreset.id,
       networkPresets: presets,
       watchedAssets,
-      assetNetworkStates: backup.assetNetworkStates,
+      assetNetworkStates: decryptedBackup.assetNetworkStates,
       shieldedWalletSnapshots,
       trustedDappPolicies: [],
       connectedDappMetadata: {},
@@ -2786,6 +2855,7 @@ export class WalletController {
     snapshotId: string,
     password: string
   ): Promise<{ label: string; stateSnapshot: string }> {
+    void password;
     const state = this.requireStoredWallet(await this.loadWalletState());
     const record = this.storedShieldedWalletSnapshots(state).find(
       (item) => item.id === snapshotId
@@ -2793,7 +2863,11 @@ export class WalletController {
     if (!record) {
       throw new Error("shielded wallet snapshot not found");
     }
-    const sessionKey = await this.sessionKeyForState(state, password);
+    await this.restoreUnlockedSession();
+    const sessionKey = this.unlockedSessionKey;
+    if (!sessionKey) {
+      throw new ProviderUnauthorizedError("wallet is locked");
+    }
     return {
       label: record.label,
       stateSnapshot: await decryptSecretTextWithSessionKey(
@@ -3039,6 +3113,7 @@ export class WalletController {
         trimOptionalString(input.expectedChainId) ?? activePreset.chainId,
       rpcUrl: input.rpcUrl.trim() || DEFAULT_RPC_URL,
       dashboardUrl: input.dashboardUrl?.trim() || DEFAULT_DASHBOARD_URL,
+      allowInsecureHttp: input.allowInsecureHttp === true,
       makeActive: true
     });
     await this.store.saveState(nextState);
@@ -3191,6 +3266,15 @@ export class WalletController {
   ): Promise<ProviderRequestStartResult> {
     const existing = await this.store.loadRequestState(requestId);
     if (existing) {
+      if (existing.origin !== origin) {
+        return {
+          status: "rejected",
+          error: {
+            name: "Error",
+            message: "request id is already in use by a different origin"
+          }
+        };
+      }
       if (existing.status === "pending") {
         return {
           status: "pending",
@@ -3256,10 +3340,15 @@ export class WalletController {
 
   async getProviderRequestStatus(
     requestId: string,
-    options?: { consume?: boolean }
+    options?: { consume?: boolean; origin?: string }
   ): Promise<ProviderRequestStatusResult> {
     const state = await this.store.loadRequestState(requestId);
     if (!state) {
+      return {
+        status: "not_found"
+      };
+    }
+    if (options?.origin && state.origin !== options.origin) {
       return {
         status: "not_found"
       };
