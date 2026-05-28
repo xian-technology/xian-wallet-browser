@@ -881,10 +881,19 @@ export class WalletController {
       return false;
     }
 
-    this.unlockedPrivateKey = session.privateKey;
-    this.unlockedSigner = new Ed25519Signer(session.privateKey);
-    this.unlockedMnemonic = session.mnemonic ?? null;
-    this.unlockedSessionKey = session.sessionKey;
+    if (!this.unlockedPrivateKey || !this.unlockedSessionKey) {
+      await this.clearUnlockedSession();
+      return false;
+    }
+
+    if (!this.unlockedSigner) {
+      this.unlockedSigner = new Ed25519Signer(this.unlockedPrivateKey);
+    }
+    if (this.unlockedSigner.address !== session.publicKey) {
+      await this.clearUnlockedSession();
+      return false;
+    }
+
     this.unlockedSessionExpiresAt = session.expiresAt;
     return true;
   }
@@ -897,23 +906,20 @@ export class WalletController {
       : now + UNLOCKED_SESSION_TIMEOUT_MS;
   }
 
-  private async persistUnlockedSession(
-    privateKey: string,
-    expiresAt?: number
-  ): Promise<void> {
+  private async persistUnlockedSession(expiresAt?: number): Promise<void> {
+    if (!this.unlockedSigner || !this.unlockedSessionKey) {
+      throw new ProviderUnauthorizedError("wallet is locked");
+    }
     const resolvedExpiresAt =
       expiresAt ?? (await this.resolveUnlockedSessionExpiry());
     const currentSession = await this.store.loadUnlockedSession();
     const nextExpiresAt =
-      currentSession?.privateKey === privateKey &&
-      currentSession.sessionKey === this.unlockedSessionKey &&
+      currentSession?.publicKey === this.unlockedSigner.address &&
       currentSession.expiresAt > resolvedExpiresAt
         ? currentSession.expiresAt
         : resolvedExpiresAt;
     const session: StoredUnlockedSession = {
-      privateKey,
-      mnemonic: this.unlockedMnemonic ?? undefined,
-      sessionKey: this.unlockedSessionKey as string,
+      publicKey: this.unlockedSigner.address,
       expiresAt: nextExpiresAt
     };
     await this.store.saveUnlockedSession(session);
@@ -951,7 +957,7 @@ export class WalletController {
     if (!this.unlockedSigner) {
       this.unlockedSigner = new Ed25519Signer(this.unlockedPrivateKey);
     }
-    await this.persistUnlockedSession(this.unlockedPrivateKey);
+    await this.persistUnlockedSession();
     return this.unlockedSigner;
   }
 
@@ -2518,7 +2524,7 @@ export class WalletController {
     this.unlockedSigner = signer;
     this.unlockedMnemonic = secret.mnemonic ?? null;
     this.unlockedSessionKey = sessionKey;
-    await this.persistUnlockedSession(secret.privateKey);
+    await this.persistUnlockedSession();
 
     await this.invalidatePendingRequests(
       new ProviderUnauthorizedError("wallet was replaced")
@@ -2634,7 +2640,7 @@ export class WalletController {
       }
     }
 
-    await this.persistUnlockedSession(privateKey);
+    await this.persistUnlockedSession();
     void this.notifyUnlockedOrigins(state);
 
     return this.getPopupState();
@@ -2749,7 +2755,7 @@ export class WalletController {
     this.unlockedSigner = signer;
     this.unlockedMnemonic = mnemonic ?? null;
     this.unlockedSessionKey = sessionKey;
-    await this.persistUnlockedSession(activePrivateKey);
+    await this.persistUnlockedSession();
 
     await this.invalidatePendingRequests(
       new ProviderUnauthorizedError("wallet was replaced")
@@ -2969,13 +2975,14 @@ export class WalletController {
 
     this.unlockedPrivateKey = privateKey;
     this.unlockedSigner = signer;
-    await this.persistUnlockedSession(privateKey);
+    await this.persistUnlockedSession();
     await this.emitSelectedAccountChangedForConnectedOrigins(state);
 
     return this.getPopupState();
   }
 
   async switchAccount(index: number): Promise<PopupState> {
+    const wasUnlocked = await this.restoreUnlockedSession();
     const state = this.requireStoredWallet(await this.loadWalletState());
     const accounts = this.requireAccounts(state);
     const target = accounts.find((a) => a.index === index);
@@ -2990,12 +2997,12 @@ export class WalletController {
     await this.store.saveState(state);
 
     // If unlocked, switch the in-memory signer
-    if (this.unlockedMnemonic) {
+    if (wasUnlocked && this.unlockedMnemonic) {
       const privateKey = await derivePrivateKeyFromMnemonic(this.unlockedMnemonic, index);
       this.unlockedPrivateKey = privateKey;
       this.unlockedSigner = new Ed25519Signer(privateKey);
-      await this.persistUnlockedSession(privateKey);
-    } else if (this.unlockedPrivateKey) {
+      await this.persistUnlockedSession();
+    } else if (wasUnlocked && this.unlockedPrivateKey) {
       // No mnemonic in session — clear unlock (requires re-auth)
       await this.clearUnlockedSession();
     }
@@ -3023,6 +3030,7 @@ export class WalletController {
   }
 
   async removeAccount(index: number): Promise<PopupState> {
+    const wasUnlocked = await this.restoreUnlockedSession();
     const state = this.requireStoredWallet(await this.loadWalletState());
     if (index === 0) {
       throw new Error("cannot remove the primary account");
@@ -3042,15 +3050,15 @@ export class WalletController {
       state.encryptedPrivateKey = nextActiveAccount.encryptedPrivateKey;
       state.activeAccountIndex = nextActiveAccount.index;
 
-      if (this.unlockedMnemonic) {
+      if (wasUnlocked && this.unlockedMnemonic) {
         const privateKey = await derivePrivateKeyFromMnemonic(
           this.unlockedMnemonic,
           nextActiveAccount.index
         );
         this.unlockedPrivateKey = privateKey;
         this.unlockedSigner = new Ed25519Signer(privateKey);
-        await this.persistUnlockedSession(privateKey);
-      } else if (this.unlockedPrivateKey) {
+        await this.persistUnlockedSession();
+      } else if (wasUnlocked && this.unlockedPrivateKey) {
         await this.clearUnlockedSession();
       }
     }

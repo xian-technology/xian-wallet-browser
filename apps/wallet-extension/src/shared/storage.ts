@@ -320,17 +320,14 @@ async function sessionStorageRemove(key: string): Promise<void> {
 function normalizeUnlockedSession(value: unknown): StoredUnlockedSession | null {
   if (
     !isRecord(value) ||
-    typeof value.privateKey !== "string" ||
-    typeof value.sessionKey !== "string" ||
+    typeof value.publicKey !== "string" ||
     typeof value.expiresAt !== "number"
   ) {
     return null;
   }
 
   return {
-    privateKey: value.privateKey,
-    mnemonic: typeof value.mnemonic === "string" ? value.mnemonic : undefined,
-    sessionKey: value.sessionKey,
+    publicKey: value.publicKey,
     expiresAt: value.expiresAt
   };
 }
@@ -578,7 +575,12 @@ export async function clearWalletState(): Promise<void> {
 }
 
 export async function loadUnlockedSession(): Promise<StoredUnlockedSession | null> {
-  return normalizeUnlockedSession(await sessionStorageGet<unknown>(SESSION_STORAGE_KEY));
+  const raw = await sessionStorageGet<unknown>(SESSION_STORAGE_KEY);
+  const normalized = normalizeUnlockedSession(raw);
+  if (raw !== undefined && normalized === null) {
+    await clearUnlockedSession();
+  }
+  return normalized;
 }
 
 export async function saveUnlockedSession(

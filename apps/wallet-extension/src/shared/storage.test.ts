@@ -235,24 +235,33 @@ describe("wallet-extension storage", () => {
 
   it("round-trips unlocked session state through chrome.storage.session", async () => {
     await saveUnlockedSession({
-      privateKey: "11".repeat(32),
-      sessionKey: "session-key",
+      publicKey: "22".repeat(32),
       expiresAt: 12345
     });
 
     expect(sessionStorage[SESSION_STORAGE_KEY]).toEqual({
-      privateKey: "11".repeat(32),
-      sessionKey: "session-key",
+      publicKey: "22".repeat(32),
       expiresAt: 12345
     });
     expect(await loadUnlockedSession()).toEqual({
-      privateKey: "11".repeat(32),
-      sessionKey: "session-key",
+      publicKey: "22".repeat(32),
       expiresAt: 12345
     });
 
     await clearUnlockedSession();
     expect(await loadUnlockedSession()).toBeNull();
+  });
+
+  it("clears legacy unlocked sessions that contain raw secrets", async () => {
+    sessionStorage[SESSION_STORAGE_KEY] = {
+      privateKey: "11".repeat(32),
+      mnemonic: "test test test",
+      sessionKey: "session-key",
+      expiresAt: 12345
+    };
+
+    expect(await loadUnlockedSession()).toBeNull();
+    expect(sessionStorage[SESSION_STORAGE_KEY]).toBeUndefined();
   });
 
   it("persists the preferred wallet shell mode", async () => {

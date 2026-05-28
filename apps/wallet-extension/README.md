@@ -12,8 +12,8 @@ It includes:
 - a background worker that keeps key custody away from the page
 - versioned extension storage with migration handling
 - encrypted private-key and recovery-phrase storage in `chrome.storage.local`
-- five-minute unlocked session persistence in `chrome.storage.session` so MV3
-  worker suspension does not immediately relock the wallet
+- metadata-only unlocked session tracking in `chrome.storage.session`; decrypted
+  keys stay in background memory and a worker restart relocks the wallet
 - a popup split into overview, connected-app, and security workflows
 - an approval window that leads with structured summaries and warnings before
   exposing raw payloads

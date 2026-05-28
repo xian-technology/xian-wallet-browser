@@ -1180,7 +1180,8 @@ describe("@xian-tech/wallet-core controller", () => {
 
   it("treats stalled chain id lookups as unreachable in popup state", async () => {
     const store = createStore();
-    const setupController = new WalletController({
+    const client = createClient();
+    const controller = new WalletController({
       wallet: {
         id: "xian-wallet",
         name: "Xian Wallet",
@@ -1188,31 +1189,20 @@ describe("@xian-tech/wallet-core controller", () => {
       },
       version: "0.1.0-test",
       store,
-      createClient: () => createClient(),
+      createClient: () => client,
       onApprovalRequested: vi.fn(async () => undefined)
     });
 
-    await setupController.createOrImportWallet({
+    await controller.createOrImportWallet({
       password: "secret",
       privateKey: PRIVATE_KEY
     });
 
     vi.useFakeTimers();
     try {
-      const controller = new WalletController({
-        wallet: {
-          id: "xian-wallet",
-          name: "Xian Wallet",
-          rdns: "org.xian.wallet"
-        },
-        version: "0.1.0-test",
-        store,
-        createClient: () => ({
-          ...createClient(),
-          getChainId: vi.fn(() => new Promise<string>(() => undefined))
-        }),
-        onApprovalRequested: vi.fn(async () => undefined)
-      });
+      vi.mocked(client.getChainId).mockImplementation(
+        () => new Promise<string>(() => undefined)
+      );
 
       const popupPromise = controller.getPopupState();
       await vi.runOnlyPendingTimersAsync();
@@ -1283,7 +1273,7 @@ describe("@xian-tech/wallet-core controller", () => {
     });
   });
 
-  it("keeps the wallet unlocked across controller restarts for five minutes, then expires the session", async () => {
+  it("keeps unlocked secrets in memory only and locks after controller restart", async () => {
     const store = createStore();
     const client = createClient();
     const baseNow = 1_000_000;
@@ -1301,15 +1291,18 @@ describe("@xian-tech/wallet-core controller", () => {
       now: vi.fn(() => baseNow)
     });
 
-    await controllerA.createOrImportWallet({
+    const created = await controllerA.createOrImportWallet({
       password: "secret",
       privateKey: PRIVATE_KEY
     });
 
     expect(store.currentSession()).toMatchObject({
-      privateKey: PRIVATE_KEY,
+      publicKey: created.popupState.publicKey,
       expiresAt: baseNow + 5 * 60 * 1000
     });
+    expect(store.currentSession()).not.toHaveProperty("privateKey");
+    expect(store.currentSession()).not.toHaveProperty("mnemonic");
+    expect(store.currentSession()).not.toHaveProperty("sessionKey");
 
     const controllerB = new WalletController({
       wallet: {
@@ -1324,8 +1317,9 @@ describe("@xian-tech/wallet-core controller", () => {
       now: vi.fn(() => baseNow + 60_000)
     });
 
-    const popupWhileSessionActive = await controllerB.getPopupState();
-    expect(popupWhileSessionActive.unlocked).toBe(true);
+    const popupAfterRestart = await controllerB.getPopupState();
+    expect(popupAfterRestart.unlocked).toBe(false);
+    expect(store.currentSession()).toBeNull();
 
     const controllerC = new WalletController({
       wallet: {
@@ -1419,9 +1413,10 @@ describe("@xian-tech/wallet-core controller", () => {
     const store = createStore();
     const client = createClient();
     const baseNow = 1_000_000;
+    let now = baseNow;
     let autoLockEnabled = false;
-    const getUnlockedSessionExpiry = vi.fn((now: number) =>
-      autoLockEnabled ? now + UNLOCKED_SESSION_TIMEOUT_MS : Number.MAX_SAFE_INTEGER
+    const getUnlockedSessionExpiry = vi.fn((currentNow: number) =>
+      autoLockEnabled ? currentNow + UNLOCKED_SESSION_TIMEOUT_MS : Number.MAX_SAFE_INTEGER
     );
 
     const controllerA = new WalletController({
@@ -1434,50 +1429,35 @@ describe("@xian-tech/wallet-core controller", () => {
       store,
       createClient: () => client,
       onApprovalRequested: vi.fn(async () => undefined),
-      now: vi.fn(() => baseNow),
+      now: vi.fn(() => now),
       getUnlockedSessionExpiry
     });
 
-    await controllerA.createOrImportWallet({
+    const created = await controllerA.createOrImportWallet({
       password: "secret",
       privateKey: PRIVATE_KEY
     });
 
     expect(store.currentSession()).toMatchObject({
-      privateKey: PRIVATE_KEY,
+      publicKey: created.popupState.publicKey,
       expiresAt: Number.MAX_SAFE_INTEGER
     });
 
-    const controllerB = new WalletController({
-      wallet: {
-        id: "xian-wallet",
-        name: "Xian Wallet",
-        rdns: "org.xian.wallet"
-      },
-      version: "0.1.0-test",
-      store,
-      createClient: () => client,
-      onApprovalRequested: vi.fn(async () => undefined),
-      now: vi.fn(() => baseNow + 10 * 60 * 1000),
-      getUnlockedSessionExpiry
-    });
-
-    expect((await controllerB.getPopupState()).unlocked).toBe(true);
-
+    now = baseNow + 10 * 60 * 1000;
     autoLockEnabled = true;
 
-    await controllerB.sendDirectTransaction({
+    await controllerA.sendDirectTransaction({
       contract: "currency",
       function: "transfer",
       kwargs: { to: "bob", amount: "5" }
     });
 
     expect(store.currentSession()).toMatchObject({
-      privateKey: PRIVATE_KEY,
+      publicKey: created.popupState.publicKey,
       expiresAt: Number.MAX_SAFE_INTEGER
     });
 
-    await controllerB.lockWallet();
+    await controllerA.lockWallet();
 
     const relockNow = baseNow + 11 * 60 * 1000;
     const controllerC = new WalletController({
@@ -1497,9 +1477,10 @@ describe("@xian-tech/wallet-core controller", () => {
     await controllerC.unlockWallet("secret");
 
     expect(store.currentSession()).toMatchObject({
-      privateKey: PRIVATE_KEY,
       expiresAt: relockNow + UNLOCKED_SESSION_TIMEOUT_MS
     });
+    expect(store.currentSession()).not.toHaveProperty("privateKey");
+    expect(store.currentSession()).not.toHaveProperty("sessionKey");
   });
 
   it("stores shielded snapshots, includes them in wallet backups, and restores them on import", async () => {
@@ -1766,8 +1747,9 @@ describe("@xian-tech/wallet-core controller", () => {
     expect(restored.publicKey).toBe(accountTwo.publicKey);
     expect(restored.activeNetworkId).toBe("mainnet-preset");
     expect(store.currentSession()).toMatchObject({
-      sessionKey: expect.any(String)
+      publicKey: restored.publicKey
     });
+    expect(store.currentSession()).not.toHaveProperty("sessionKey");
 
     await expect(controller.addAccount()).resolves.toMatchObject({
       activeAccountIndex: 2
