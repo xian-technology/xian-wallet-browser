@@ -5,3 +5,4 @@ test-results/
 playwright-report/
 *.tsbuildinfo
 .DS_Store
+xian-wallet-browser-v*.zip
