@@ -1,6 +1,6 @@
 {
   "name": "@xian-tech/wallet-core",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/xian-technology/xian-wallet-browser.git",
