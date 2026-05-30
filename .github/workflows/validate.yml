@@ -49,7 +49,7 @@ jobs:
       - name: Install Playwright Chromium
         timeout-minutes: 10
         working-directory: xian-wallet-browser
-        run: npx playwright install chromium
+        run: npm exec --workspace xian-wallet-extension -- playwright install chromium
 
       - name: Run browser wallet visual checks
         timeout-minutes: 10
