@@ -11,6 +11,10 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.59.1-noble
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
     steps:
       - name: Check out xian-wallet-browser
         uses: actions/checkout@v6
@@ -45,11 +49,6 @@ jobs:
           npm install
           npm audit --audit-level=critical --omit=dev
           npm run validate
-
-      - name: Install Playwright Chromium
-        timeout-minutes: 10
-        working-directory: xian-wallet-browser
-        run: timeout 600s npm exec --yes --workspace xian-wallet-extension -- playwright install chromium
 
       - name: Run browser wallet visual checks
         timeout-minutes: 10
