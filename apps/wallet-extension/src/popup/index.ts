@@ -86,6 +86,7 @@ import {
 import {
   escapeAttribute,
   escapeHtml,
+  formatBalance,
   formatTimestamp,
   generateQrSvg,
   isValidXianAddress,
@@ -1401,26 +1402,6 @@ function renderHomeTab(state: PopupRuntimeState): string {
       <button class="send-footer-link" data-toggle-manage-assets>${managingAssets ? "Done" : "Manage assets"}</button>
     </div>
   `;
-}
-
-function formatBalance(
-  raw: string | null | undefined,
-  decimals: number | undefined
-): string {
-  if (raw == null || raw === "") {
-    return "—";
-  }
-  const num = Number(raw);
-  if (!Number.isFinite(num)) {
-    return raw;
-  }
-  const dp = decimals ?? 8;
-  // Avoid trailing zeros beyond meaningful precision
-  const formatted = num.toLocaleString("en-US", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: dp
-  });
-  return formatted;
 }
 
 function renderAssetItem(asset: DisplayedAsset, state: PopupRuntimeState): string {

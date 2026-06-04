@@ -28,6 +28,82 @@ export function formatTimestamp(value: number): string {
   return new Date(value).toLocaleString();
 }
 
+function normalizeDecimalParts(value: string):
+  | { negative: boolean; integer: string; fraction: string }
+  | null {
+  const match = /^([+-])?(?:(\d+)(?:\.(\d*))?|\.(\d+))(?:[eE]([+-]?\d+))?$/.exec(
+    value
+  );
+  if (!match) {
+    return null;
+  }
+
+  const integerPart = match[2] ?? "";
+  const fractionPart = match[3] ?? match[4] ?? "";
+  const exponent = match[5] ? Number.parseInt(match[5], 10) : 0;
+  if (!Number.isSafeInteger(exponent) || Math.abs(exponent) > 1000) {
+    return null;
+  }
+  const digits = `${integerPart}${fractionPart}`;
+  const decimalIndex = integerPart.length + exponent;
+
+  let integer: string;
+  let fraction: string;
+  if (decimalIndex <= 0) {
+    integer = "0";
+    fraction = `${"0".repeat(Math.abs(decimalIndex))}${digits}`;
+  } else if (decimalIndex >= digits.length) {
+    integer = `${digits}${"0".repeat(decimalIndex - digits.length)}`;
+    fraction = "";
+  } else {
+    integer = digits.slice(0, decimalIndex);
+    fraction = digits.slice(decimalIndex);
+  }
+
+  integer = integer.replace(/^0+(?=\d)/, "") || "0";
+  return {
+    negative: match[1] === "-",
+    integer,
+    fraction
+  };
+}
+
+function groupIntegerDigits(value: string): string {
+  return value.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+export function formatBalance(
+  raw: string | null | undefined,
+  decimals: number | undefined
+): string {
+  const value = raw?.trim();
+  if (!value) {
+    return "—";
+  }
+
+  const parts = normalizeDecimalParts(value);
+  if (!parts) {
+    return raw ?? "—";
+  }
+
+  const decimalPlaces =
+    typeof decimals === "number" && Number.isInteger(decimals)
+      ? Math.min(Math.max(decimals, 0), 18)
+      : 8;
+  const fraction =
+    decimalPlaces > 0
+      ? parts.fraction.slice(0, decimalPlaces).replace(/0+$/, "")
+      : "";
+  const hasValue =
+    parts.integer !== "0" || [...fraction].some((digit) => digit !== "0");
+  const sign = parts.negative && hasValue ? "-" : "";
+  const groupedInteger = groupIntegerDigits(parts.integer);
+
+  return fraction
+    ? `${sign}${groupedInteger}.${fraction}`
+    : `${sign}${groupedInteger}`;
+}
+
 export function isValidXianAddress(addr: string): boolean {
   return /^[0-9a-fA-F]{64}$/.test(addr);
 }
