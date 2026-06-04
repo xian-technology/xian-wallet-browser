@@ -83,11 +83,9 @@ export function renderTokenIcon(options: {
 
   const style = escapeAttribute(styleParts.join("; "));
   if (src) {
-    const errorFallback =
-      "this.onerror=null;this.hidden=true;this.parentElement.style.background=this.parentElement.dataset.fallbackBg||'';this.nextElementSibling.hidden=false";
     return `
-      <div class="${className}" style="${style}" data-fallback-bg="${escapeAttribute(fallbackBackground)}">
-        <img src="${escapeAttribute(src)}" alt="" width="${imageSize}" height="${imageSize}"${imageStyle ? ` style="${escapeAttribute(imageStyle)}"` : ""} onerror="${escapeAttribute(errorFallback)}" />
+      <div class="${className}" style="${style}" data-token-icon-frame data-fallback-bg="${escapeAttribute(fallbackBackground)}">
+        <img data-token-icon-image src="${escapeAttribute(src)}" alt="" width="${imageSize}" height="${imageSize}"${imageStyle ? ` style="${escapeAttribute(imageStyle)}"` : ""} />
         <span hidden>${escapeHtml(letter)}</span>
       </div>
     `;

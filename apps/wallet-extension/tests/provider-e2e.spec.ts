@@ -419,6 +419,124 @@ test("locks the wallet when the header lock button is clicked", async () => {
   }
 });
 
+test("keeps settings position when actions re-render and updates auto-lock expiry", async () => {
+  const { context, extensionId, userDataDir } = await launchExtension();
+
+  try {
+    const popup = await openExtensionPage(context, extensionId, "popup.html");
+    await createWalletInPopup(popup, "correct horse battery");
+
+    const content = popup.locator(".wallet-content");
+    const before = await content.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      return element.scrollTop;
+    });
+    expect(before).toBeGreaterThan(100);
+
+    await popup.locator("[data-remove-wallet]").click();
+    await expect(popup.locator("[data-confirm-remove]")).toBeVisible();
+    await expect
+      .poll(() => content.evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(before - 120);
+
+    await popup.locator("[data-cancel-remove]").click();
+    await popup.locator("[data-toggle-auto-lock]").click();
+    await expect(popup.locator("[data-toggle-auto-lock]")).toContainText("Disabled");
+
+    await expect
+      .poll(() =>
+        sendRuntimeMessage<{
+          unlocked: boolean;
+          sessionExpiresAt?: number;
+        }>(popup, {
+          type: "wallet_get_popup_state"
+        })
+      )
+      .toMatchObject({
+        unlocked: true,
+        sessionExpiresAt: Number.MAX_SAFE_INTEGER
+      });
+  } finally {
+    await cleanupExtension(context, userDataDir);
+  }
+});
+
+test("filters advanced methods by export decorator and formats structured review arguments", async () => {
+  const rpc = await startMockRpcServer({
+    contractMethods: {
+      currency: [
+        {
+          name: "transfer",
+          arguments: [
+            { name: "amount", type: "float" },
+            { name: "to", type: "str" }
+          ]
+        },
+        {
+          name: "balance_of",
+          arguments: [{ name: "address", type: "str" }]
+        },
+        {
+          name: "private_helper",
+          arguments: []
+        }
+      ]
+    },
+    contractSources: {
+      currency: `
+@export
+def transfer(amount: float, to: str):
+    pass
+
+@export(typecheck=False)
+def balance_of(address: str):
+    return 0
+
+def private_helper():
+    return "hidden"
+`
+    }
+  });
+  const { context, extensionId, userDataDir } = await launchExtension();
+
+  try {
+    const popup = await openExtensionPage(context, extensionId, "popup.html");
+    await createWalletInPopup(popup, "correct horse battery");
+    await sendRuntimeMessage(popup, {
+      type: "wallet_update_settings",
+      networkName: "Mock local node",
+      expectedChainId: rpc.chainId,
+      rpcUrl: rpc.url,
+      dashboardUrl: rpc.url
+    });
+
+    await popup.getByRole("button", { name: "Home" }).click();
+    await popup.locator("[data-go-send]").click();
+    await popup.locator("[data-switch-advanced]").click();
+    await popup.locator("#send-contract").fill("currency");
+    await popup.locator("#send-contract").blur();
+
+    const functionSelect = popup.locator("#send-function");
+    await expect(functionSelect).toContainText("transfer");
+    await expect(functionSelect).toContainText("balance_of");
+    await expect(functionSelect).not.toContainText("private_helper");
+
+    await functionSelect.selectOption("transfer");
+    await popup.locator(".arg-value").nth(0).fill("1.25");
+    await popup.locator(".arg-value").nth(1).fill("bob");
+    await popup.locator("[data-chi-mode='manual']").check();
+    await popup.locator("#send-chi").fill("50000");
+    await popup.locator("[data-review-tx]").click();
+
+    await expect(popup.getByText("Arguments")).toBeVisible();
+    await expect(popup.getByText("1.25")).toBeVisible();
+    await expect(popup.getByText("[object Object]")).toHaveCount(0);
+  } finally {
+    await cleanupExtension(context, userDataDir);
+    await rpc.close();
+  }
+});
+
 test("rejects or dismisses pending approvals and returns provider errors to the page", async () => {
   const dapp = await startDappServer();
   const { context, extensionId, userDataDir } = await launchExtension();

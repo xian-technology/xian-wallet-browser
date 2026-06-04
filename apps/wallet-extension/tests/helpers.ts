@@ -182,6 +182,12 @@ export async function waitForInjectedProvider(page: Page): Promise<void> {
 
 export async function startMockRpcServer(options?: {
   chainId?: string;
+  contractIrs?: Record<string, string | null>;
+  contractMethods?: Record<
+    string,
+    Array<{ name: string; arguments?: Array<{ name: string; type: string }> }>
+  >;
+  contractSources?: Record<string, string | null>;
   nextNonce?: number;
   txHash?: string;
 }) {
@@ -222,6 +228,48 @@ export async function startMockRpcServer(options?: {
               response: {
                 code: 0,
                 value: base64(String(nextNonce))
+              }
+            }
+          });
+          return;
+        }
+        if (queryPath.startsWith("/contract_methods/")) {
+          const contract = queryPath.slice("/contract_methods/".length);
+          json(response, 200, {
+            result: {
+              response: {
+                code: 0,
+                value: base64(
+                  JSON.stringify({
+                    methods: options?.contractMethods?.[contract] ?? []
+                  })
+                )
+              }
+            }
+          });
+          return;
+        }
+        if (queryPath.startsWith("/contract_source/")) {
+          const contract = queryPath.slice("/contract_source/".length);
+          const source = options?.contractSources?.[contract] ?? null;
+          json(response, 200, {
+            result: {
+              response: {
+                code: 0,
+                value: source == null ? null : base64(source)
+              }
+            }
+          });
+          return;
+        }
+        if (queryPath.startsWith("/contract_ir/")) {
+          const contract = queryPath.slice("/contract_ir/".length);
+          const ir = options?.contractIrs?.[contract] ?? null;
+          json(response, 200, {
+            result: {
+              response: {
+                code: 0,
+                value: ir == null ? null : base64(ir)
               }
             }
           });

@@ -147,7 +147,6 @@ const shieldedHistoryStatus = new Map<
   | { loading: false; status: ShieldedSnapshotHistoryRuntimeResult }
   | { loading: false; error: string }
 >();
-
 /* ── Send tab state ────────────────────────────────────────── */
 
 type TxArgType = "str" | "int" | "float" | "bool" | "dict" | "list" | "datetime" | "timedelta" | "Any";
@@ -834,12 +833,27 @@ async function addTokenToWallet(
 /* ── Render dispatch ───────────────────────────────────────── */
 
 function render(state: PopupRuntimeState | null): void {
+  const securityScrollTop =
+    activeTab === "security"
+      ? root.querySelector<HTMLElement>(".wallet-content")?.scrollTop
+      : undefined;
+
   if (!state || !state.hasWallet) {
     renderSetup(state);
   } else if (!state.unlocked) {
     renderLocked(state);
   } else {
     renderUnlocked(state);
+    if (typeof securityScrollTop === "number" && activeTab === "security") {
+      const walletContent =
+        root.querySelector<HTMLElement>(".wallet-content");
+      if (walletContent) {
+        walletContent.scrollTop = securityScrollTop;
+        requestAnimationFrame(() => {
+          walletContent.scrollTop = securityScrollTop;
+        });
+      }
+    }
   }
   renderToast();
   scheduleAutoLockRefresh(state);
@@ -1746,6 +1760,45 @@ function bindAppFaviconFallbacks(): void {
     };
     const showPlaceholder = () => {
       frame.classList.remove("is-loaded");
+    };
+
+    image.addEventListener("load", () => {
+      if (image.naturalWidth > 0) {
+        showImage();
+      } else {
+        showPlaceholder();
+      }
+    });
+    image.addEventListener("error", showPlaceholder);
+
+    if (image.complete) {
+      if (image.naturalWidth > 0) {
+        showImage();
+      } else {
+        showPlaceholder();
+      }
+    }
+  }
+}
+
+function bindTokenIconFallbacks(): void {
+  for (const image of root.querySelectorAll<HTMLImageElement>(
+    "[data-token-icon-image]"
+  )) {
+    const frame = image.closest<HTMLElement>("[data-token-icon-frame]");
+    const placeholder = image.nextElementSibling as HTMLElement | null;
+    if (!frame || !placeholder) {
+      continue;
+    }
+
+    const showImage = () => {
+      image.hidden = false;
+      placeholder.hidden = true;
+    };
+    const showPlaceholder = () => {
+      image.hidden = true;
+      frame.style.background = frame.dataset.fallbackBg ?? "";
+      placeholder.hidden = false;
     };
 
     image.addEventListener("load", () => {
@@ -2962,7 +3015,7 @@ function renderFunctionSelect(): string {
     <label>
       Function
       <select id="send-function" ${disabled}>
-        <option value="">${contractMethodsLoading ? "Loading..." : hasContract ? "No functions loaded" : "Enter contract first"}</option>
+        <option value="">${contractMethodsLoading ? "Loading..." : hasContract ? "No transaction functions loaded" : "Enter contract first"}</option>
         ${sendFunction ? `<option value="${escapeAttribute(sendFunction)}" selected>${escapeHtml(sendFunction)}</option>` : ""}
       </select>
     </label>
@@ -3043,6 +3096,18 @@ function renderSendReview(): string {
   const xianCost = sendChiRate ? chiNum / sendChiRate : null;
   const chiLabel = chiNum.toLocaleString()
     + (xianCost != null ? ` (~${xianCost.toLocaleString(undefined, { maximumFractionDigits: 8 })} XIAN)` : "");
+  const argumentRows = entries
+    .map(([k, v]) => {
+      const formatted = formatTxArgValue(v);
+      const longValue = formatted.length > 60;
+      return `
+        <div class="s-row" style="${longValue ? "align-items: flex-start" : ""}">
+          <span class="s-row-key">${escapeHtml(k)}</span>
+          <span class="s-row-val mono" style="${longValue ? "text-align: right; word-break: break-all; white-space: normal; max-width: 200px" : "max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap"}" title="${escapeAttribute(formatted)}">${escapeHtml(formatted)}</span>
+        </div>
+      `;
+    })
+    .join("");
 
   return `
     <div class="settings-wrap">
@@ -3065,16 +3130,18 @@ function renderSendReview(): string {
             <span class="s-row-key">Chi</span>
             <span class="s-row-val">${escapeHtml(chiLabel)}</span>
           </div>
-          ${entries
-            .map(
-              ([k, v]) => `
-                <div class="s-row">
-                  <span class="s-row-key">${escapeHtml(k)}</span>
-                  <span class="s-row-val mono">${escapeHtml(String(v))}</span>
+          ${
+            argumentRows
+              ? `
+                <div class="s-row" style="align-items: flex-start">
+                  <span class="s-row-key">Arguments</span>
+                  <div class="s-row-val" style="display: flex; flex-direction: column; gap: 8px; width: 100%">
+                    ${argumentRows}
+                  </div>
                 </div>
               `
-            )
-            .join("")}
+              : ""
+          }
         </div>
       </div>
 
@@ -3712,6 +3779,7 @@ function bindSetupEvents(): void {
 }
 
 function bindUnlockedEvents(state: PopupRuntimeState): void {
+  bindTokenIconFallbacks();
   bindAppFaviconFallbacks();
 
   for (const button of root.querySelectorAll<HTMLButtonElement>(
@@ -4233,9 +4301,13 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           type: "wallet_get_contract_methods",
           contract: contractName
         });
+        if (!contractMethods.some((method) => method.name === sendFunction)) {
+          sendFunction = "";
+          sendArgs = [];
+        }
         contractMethodsLoading = false;
         if (contractMethods.length === 0) {
-          contractMethodsError = "No functions found for this contract.";
+          contractMethodsError = "No transaction functions found for this contract.";
         }
       } catch (error) {
         contractMethodsLoading = false;
@@ -4773,12 +4845,12 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     .querySelector<HTMLElement>("[data-toggle-auto-lock]")
     ?.addEventListener("click", async () => {
       autoLockEnabled = !autoLockEnabled;
-      await sendRuntimeMessage<null>({
+      currentState = await sendRuntimeMessage<PopupRuntimeState>({
         type: "wallet_set_auto_lock",
         enabled: autoLockEnabled
       });
       setFlash(autoLockEnabled ? "Auto-lock enabled." : "Auto-lock disabled.", "success");
-      render(state);
+      render(currentState);
     });
 
   root

@@ -105,6 +105,7 @@ export interface WalletSerializedError {
 export interface StoredUnlockedSession {
   publicKey: string;
   expiresAt: number;
+  sessionKey?: string;
 }
 
 export type StoredProviderRequestStatus =

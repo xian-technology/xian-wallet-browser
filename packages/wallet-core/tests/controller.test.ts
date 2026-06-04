@@ -844,6 +844,212 @@ describe("@xian-tech/wallet-core controller", () => {
     );
   });
 
+  it("filters contract methods to exported functions when source metadata is available", async () => {
+    const store = createStore();
+    const client = createClient();
+    client.getContractMethods = vi.fn(async () => [
+      {
+        name: "transfer",
+        arguments: [
+          { name: "amount", type: "float" },
+          { name: "to", type: "str" }
+        ]
+      },
+      {
+        name: "balance_of",
+        arguments: [{ name: "address", type: "str" }]
+      },
+      {
+        name: "private_helper",
+        arguments: []
+      }
+    ]);
+    client.getContractSource = vi.fn(async () => `
+@export
+def transfer(amount: float, to: str):
+    pass
+
+@export(typecheck=False)
+def balance_of(address: str):
+    return 0
+
+def private_helper():
+    return "hidden"
+`);
+
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+
+    await expect(controller.getContractMethods("currency")).resolves.toEqual([
+      {
+        name: "transfer",
+        arguments: [
+          { name: "amount", type: "float" },
+          { name: "to", type: "str" }
+        ]
+      },
+      {
+        name: "balance_of",
+        arguments: [{ name: "address", type: "str" }]
+      }
+    ]);
+  });
+
+  it("filters contract methods to exported functions when IR metadata is available", async () => {
+    const store = createStore();
+    const client = createClient();
+    client.getContractMethods = vi.fn(async () => [
+      {
+        name: "seed",
+        arguments: [{ name: "vk", type: "str" }]
+      },
+      {
+        name: "transfer",
+        arguments: [
+          { name: "amount", type: "float" },
+          { name: "to", type: "str" }
+        ]
+      },
+      {
+        name: "balance_of",
+        arguments: [{ name: "address", type: "str" }]
+      },
+      {
+        name: "private_helper",
+        arguments: []
+      }
+    ]);
+    client.getContractIr = vi.fn(async () =>
+      JSON.stringify({
+        vm_profile: "xian_vm_v1",
+        functions: [
+          { name: "seed", visibility: "construct" },
+          { name: "transfer", visibility: "export" },
+          { name: "balance_of", decorators: [{ name: "export" }] },
+          { name: "private_helper", visibility: "private" }
+        ]
+      })
+    );
+    client.getContractSource = vi.fn(async () => {
+      throw new Error("source should not be needed when IR has export metadata");
+    });
+
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+
+    await expect(controller.getContractMethods("currency")).resolves.toEqual([
+      {
+        name: "transfer",
+        arguments: [
+          { name: "amount", type: "float" },
+          { name: "to", type: "str" }
+        ]
+      },
+      {
+        name: "balance_of",
+        arguments: [{ name: "address", type: "str" }]
+      }
+    ]);
+    expect(client.getContractSource).not.toHaveBeenCalled();
+  });
+
+  it("falls back to source metadata when contract IR has no export flags", async () => {
+    const store = createStore();
+    const client = createClient();
+    client.getContractMethods = vi.fn(async () => [
+      {
+        name: "seed",
+        arguments: []
+      },
+      {
+        name: "transfer",
+        arguments: [
+          { name: "amount", type: "float" },
+          { name: "to", type: "str" }
+        ]
+      },
+      {
+        name: "private_helper",
+        arguments: []
+      }
+    ]);
+    client.getContractIr = vi.fn(async () =>
+      JSON.stringify({
+        vm_profile: "xian_vm_v1",
+        functions: [
+          { name: "seed", parameters: [] },
+          { name: "transfer", parameters: [] },
+          { name: "private_helper", parameters: [] }
+        ]
+      })
+    );
+    client.getContractSource = vi.fn(async () => `
+@construct
+def seed():
+    pass
+
+@export
+def transfer(amount: float, to: str):
+    pass
+
+def private_helper():
+    return "hidden"
+`);
+
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+
+    await expect(controller.getContractMethods("currency")).resolves.toEqual([
+      {
+        name: "transfer",
+        arguments: [
+          { name: "amount", type: "float" },
+          { name: "to", type: "str" }
+        ]
+      }
+    ]);
+    expect(client.getContractSource).toHaveBeenCalledWith("currency");
+  });
+
   it("saves network presets and switches chains through configured presets", async () => {
     const store = createStore();
     const onProviderEvent = vi.fn(async () => undefined);
@@ -1273,7 +1479,7 @@ describe("@xian-tech/wallet-core controller", () => {
     });
   });
 
-  it("keeps unlocked secrets in memory only and locks after controller restart", async () => {
+  it("restores a valid unlocked session after controller restart and locks after expiry", async () => {
     const store = createStore();
     const client = createClient();
     const baseNow = 1_000_000;
@@ -1302,7 +1508,7 @@ describe("@xian-tech/wallet-core controller", () => {
     });
     expect(store.currentSession()).not.toHaveProperty("privateKey");
     expect(store.currentSession()).not.toHaveProperty("mnemonic");
-    expect(store.currentSession()).not.toHaveProperty("sessionKey");
+    expect(store.currentSession()).toHaveProperty("sessionKey", expect.any(String));
 
     const controllerB = new WalletController({
       wallet: {
@@ -1318,8 +1524,12 @@ describe("@xian-tech/wallet-core controller", () => {
     });
 
     const popupAfterRestart = await controllerB.getPopupState();
-    expect(popupAfterRestart.unlocked).toBe(false);
-    expect(store.currentSession()).toBeNull();
+    expect(popupAfterRestart.unlocked).toBe(true);
+    expect(popupAfterRestart.publicKey).toBe(created.popupState.publicKey);
+    expect(store.currentSession()).toMatchObject({
+      publicKey: created.popupState.publicKey,
+      expiresAt: baseNow + 5 * 60 * 1000
+    });
 
     const controllerC = new WalletController({
       wallet: {
@@ -1480,7 +1690,8 @@ describe("@xian-tech/wallet-core controller", () => {
       expiresAt: relockNow + UNLOCKED_SESSION_TIMEOUT_MS
     });
     expect(store.currentSession()).not.toHaveProperty("privateKey");
-    expect(store.currentSession()).not.toHaveProperty("sessionKey");
+    expect(store.currentSession()).not.toHaveProperty("mnemonic");
+    expect(store.currentSession()).toHaveProperty("sessionKey", expect.any(String));
   });
 
   it("stores shielded snapshots, includes them in wallet backups, and restores them on import", async () => {
@@ -1749,7 +1960,9 @@ describe("@xian-tech/wallet-core controller", () => {
     expect(store.currentSession()).toMatchObject({
       publicKey: restored.publicKey
     });
-    expect(store.currentSession()).not.toHaveProperty("sessionKey");
+    expect(store.currentSession()).not.toHaveProperty("privateKey");
+    expect(store.currentSession()).not.toHaveProperty("mnemonic");
+    expect(store.currentSession()).toHaveProperty("sessionKey", expect.any(String));
 
     await expect(controller.addAccount()).resolves.toMatchObject({
       activeAccountIndex: 2

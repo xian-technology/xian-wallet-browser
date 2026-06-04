@@ -645,15 +645,16 @@ chrome.runtime.onMessage.addListener(
             return;
           case "wallet_set_auto_lock":
             await saveAutoLock(message.enabled);
-            // If disabling auto-lock, extend current session to far future
-            if (!message.enabled) {
+            {
               const session = await loadUnlockedSession();
               if (session) {
-                session.expiresAt = DISABLED_AUTO_LOCK_EXPIRES_AT;
+                session.expiresAt = message.enabled
+                  ? Date.now() + UNLOCKED_SESSION_TIMEOUT_MS
+                  : DISABLED_AUTO_LOCK_EXPIRES_AT;
                 await saveUnlockedSession(session);
               }
             }
-            sendResponse(ok(null));
+            sendResponse(ok(await getPopupRuntimeState()));
             return;
           case "contacts_get":
             sendResponse(ok(await loadContacts()));

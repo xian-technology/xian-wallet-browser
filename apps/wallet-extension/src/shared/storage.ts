@@ -325,11 +325,23 @@ function normalizeUnlockedSession(value: unknown): StoredUnlockedSession | null 
   ) {
     return null;
   }
+  if ("privateKey" in value || "mnemonic" in value) {
+    return null;
+  }
+  if ("sessionKey" in value && typeof value.sessionKey !== "string") {
+    return null;
+  }
 
-  return {
+  const sessionKey =
+    typeof value.sessionKey === "string" ? value.sessionKey : undefined;
+  const session: StoredUnlockedSession = {
     publicKey: value.publicKey,
     expiresAt: value.expiresAt
   };
+  if (sessionKey) {
+    session.sessionKey = sessionKey;
+  }
+  return session;
 }
 
 function normalizeShellMode(value: unknown): WalletShellMode {

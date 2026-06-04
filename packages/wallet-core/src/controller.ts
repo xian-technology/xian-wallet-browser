@@ -133,6 +133,8 @@ export interface WalletNetworkClient {
     kwargs: Record<string, unknown>;
   }): Promise<{ estimated: number }>;
   getContractMethods(contract: string): Promise<{ name: string; arguments: { name: string; type: string }[] }[]>;
+  getContractSource?(contract: string): Promise<string | null>;
+  getContractIr?(contract: string): Promise<string | null>;
   buildTx(intent: {
     sender: string;
     contract: string;
@@ -303,6 +305,31 @@ function isMissingContractResult(value: unknown): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value != null;
+}
+
+function readExportDecoratorFlag(value: unknown): boolean | null {
+  if (typeof value === "string") {
+    return value === "export";
+  }
+  if (Array.isArray(value)) {
+    let sawDecorator = false;
+    for (const entry of value) {
+      const flag = readExportDecoratorFlag(entry);
+      if (flag == null) {
+        continue;
+      }
+      sawDecorator = true;
+      if (flag) {
+        return true;
+      }
+    }
+    return sawDecorator ? false : null;
+  }
+  if (isRecord(value)) {
+    const name = value.name ?? value.id;
+    return typeof name === "string" ? name === "export" : null;
+  }
+  return null;
 }
 
 function normalizeAssetNetworkStates(value: unknown): WalletAssetNetworkStates {
@@ -491,6 +518,98 @@ function normalizeConnectedDappMetadata(
     }
   }
   return metadata;
+}
+
+function readExportedFunctionNamesFromIr(
+  contractIr: string | null
+): Set<string> | null {
+  if (!contractIr) {
+    return null;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(contractIr);
+  } catch {
+    return null;
+  }
+
+  if (!isRecord(parsed) || !Array.isArray(parsed.functions)) {
+    return null;
+  }
+
+  const exported = new Set<string>();
+  let sawExportMetadata = false;
+  for (const entry of parsed.functions) {
+    if (!isRecord(entry) || typeof entry.name !== "string") {
+      continue;
+    }
+    if (entry.name.startsWith("__")) {
+      continue;
+    }
+
+    let isExported = false;
+    if (typeof entry.visibility === "string") {
+      sawExportMetadata = true;
+      isExported = entry.visibility === "export";
+    }
+
+    for (const decoratorValue of [entry.decorator, entry.decorators]) {
+      const decoratorFlag = readExportDecoratorFlag(decoratorValue);
+      if (decoratorFlag == null) {
+        continue;
+      }
+      sawExportMetadata = true;
+      isExported = isExported || decoratorFlag;
+    }
+
+    if (isExported) {
+      exported.add(entry.name);
+    }
+  }
+  return sawExportMetadata ? exported : null;
+}
+
+function readExportedFunctionNamesFromSource(
+  source: string | null
+): Set<string> | null {
+  if (!source) {
+    return null;
+  }
+
+  const exported = new Set<string>();
+  let pendingExport = false;
+
+  for (const line of source.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+    if (/^@export(?:\s*(?:\(|$))/.test(trimmed)) {
+      pendingExport = true;
+      continue;
+    }
+    if (trimmed.startsWith("@")) {
+      pendingExport = false;
+      continue;
+    }
+
+    const match = /^(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/.exec(
+      trimmed
+    );
+    if (match) {
+      const name = match[1]!;
+      if (pendingExport && !name.startsWith("__")) {
+        exported.add(name);
+      }
+      pendingExport = false;
+      continue;
+    }
+
+    pendingExport = false;
+  }
+
+  return exported;
 }
 
 function normalizeTrackedAsset(
@@ -881,6 +1000,39 @@ export class WalletController {
       return false;
     }
 
+    if ((!this.unlockedPrivateKey || !this.unlockedSessionKey) && session.sessionKey) {
+      const state = await this.loadWalletState();
+      if (!state || state.publicKey !== session.publicKey) {
+        await this.clearUnlockedSession();
+        return false;
+      }
+      try {
+        const privateKey = await decryptPrivateKeyWithSessionKey(
+          state.encryptedPrivateKey,
+          session.sessionKey
+        );
+        const signer = new Ed25519Signer(privateKey);
+        if (signer.address !== session.publicKey) {
+          await this.clearUnlockedSession();
+          return false;
+        }
+        this.unlockedPrivateKey = privateKey;
+        this.unlockedSigner = signer;
+        this.unlockedSessionKey = session.sessionKey;
+        if (state.encryptedMnemonic) {
+          this.unlockedMnemonic = await decryptMnemonicWithSessionKey(
+            state.encryptedMnemonic,
+            session.sessionKey
+          ).catch(() => null);
+        } else {
+          this.unlockedMnemonic = null;
+        }
+      } catch {
+        await this.clearUnlockedSession();
+        return false;
+      }
+    }
+
     if (!this.unlockedPrivateKey || !this.unlockedSessionKey) {
       await this.clearUnlockedSession();
       return false;
@@ -920,7 +1072,8 @@ export class WalletController {
         : resolvedExpiresAt;
     const session: StoredUnlockedSession = {
       publicKey: this.unlockedSigner.address,
-      expiresAt: nextExpiresAt
+      expiresAt: nextExpiresAt,
+      sessionKey: this.unlockedSessionKey
     };
     await this.store.saveUnlockedSession(session);
     this.unlockedSessionExpiresAt = nextExpiresAt;
@@ -2395,7 +2548,24 @@ export class WalletController {
     contract: string
   ): Promise<{ name: string; arguments: { name: string; type: string }[] }[]> {
     const state = this.requireStoredWallet(await this.loadWalletState());
-    return this.currentClient(state).getContractMethods(contract);
+    const client = this.currentClient(state);
+    const methods = await client.getContractMethods(contract);
+    let exportedNames: Set<string> | null = null;
+
+    if (client.getContractIr) {
+      const contractIr = await client.getContractIr(contract).catch(() => null);
+      exportedNames = readExportedFunctionNamesFromIr(contractIr);
+    }
+    if (!exportedNames && client.getContractSource) {
+      const contractSource = await client
+        .getContractSource(contract)
+        .catch(() => null);
+      exportedNames = readExportedFunctionNamesFromSource(contractSource);
+    }
+
+    return exportedNames
+      ? methods.filter((method) => exportedNames.has(method.name))
+      : methods;
   }
 
   private async fetchAssetBalanceSnapshot(

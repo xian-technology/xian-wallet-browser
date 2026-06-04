@@ -236,16 +236,19 @@ describe("wallet-extension storage", () => {
   it("round-trips unlocked session state through chrome.storage.session", async () => {
     await saveUnlockedSession({
       publicKey: "22".repeat(32),
-      expiresAt: 12345
+      expiresAt: 12345,
+      sessionKey: "session-key"
     });
 
     expect(sessionStorage[SESSION_STORAGE_KEY]).toEqual({
       publicKey: "22".repeat(32),
-      expiresAt: 12345
+      expiresAt: 12345,
+      sessionKey: "session-key"
     });
     expect(await loadUnlockedSession()).toEqual({
       publicKey: "22".repeat(32),
-      expiresAt: 12345
+      expiresAt: 12345,
+      sessionKey: "session-key"
     });
 
     await clearUnlockedSession();
