@@ -1694,8 +1694,8 @@ function renderOriginItem(
   const displayName = metadata?.name?.trim() || hostname;
   const displaySubtitle =
     displayName === hostname ? origin : `${hostname} · ${origin}`;
-  const letter = escapeHtml(displayName.charAt(0).toUpperCase());
-  const fallback = `this.replaceWith(Object.assign(document.createElement('div'),{className:'token-icon',style:'background:${assetGradient(origin)}',textContent:'${letter}'}))`;
+  const letter = escapeHtml((displayName.charAt(0) || "?").toUpperCase());
+  const fallbackBackground = assetGradient(origin);
   const faviconUrl =
     metadata?.iconUrl ??
     `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=64`;
@@ -1706,7 +1706,10 @@ function renderOriginItem(
   return `
     <div class="app-group">
       <div class="app-item">
-        <img class="app-favicon" src="${escapeAttribute(faviconUrl)}" alt="" width="32" height="32" onerror="${escapeAttribute(fallback)}" />
+        <div class="app-favicon-frame" style="--app-favicon-bg: ${escapeAttribute(fallbackBackground)}">
+          <span class="app-favicon-placeholder" aria-hidden="true">${letter}</span>
+          <img class="app-favicon" data-app-favicon src="${escapeAttribute(faviconUrl)}" alt="" width="32" height="32" />
+        </div>
         <div class="app-item-info">
           <div class="app-item-host">${escapeHtml(displayName)}</div>
           <div class="app-item-url">${escapeHtml(displaySubtitle)}</div>
@@ -1729,6 +1732,39 @@ function renderOriginItem(
       }
     </div>
   `;
+}
+
+function bindAppFaviconFallbacks(): void {
+  for (const image of root.querySelectorAll<HTMLImageElement>("[data-app-favicon]")) {
+    const frame = image.closest<HTMLElement>(".app-favicon-frame");
+    if (!frame) {
+      continue;
+    }
+
+    const showImage = () => {
+      frame.classList.add("is-loaded");
+    };
+    const showPlaceholder = () => {
+      frame.classList.remove("is-loaded");
+    };
+
+    image.addEventListener("load", () => {
+      if (image.naturalWidth > 0) {
+        showImage();
+      } else {
+        showPlaceholder();
+      }
+    });
+    image.addEventListener("error", showPlaceholder);
+
+    if (image.complete) {
+      if (image.naturalWidth > 0) {
+        showImage();
+      } else {
+        showPlaceholder();
+      }
+    }
+  }
 }
 
 function renderTrustedDappPolicy(policy: PopupRuntimeState["trustedDappPolicies"][number]): string {
@@ -3676,6 +3712,8 @@ function bindSetupEvents(): void {
 }
 
 function bindUnlockedEvents(state: PopupRuntimeState): void {
+  bindAppFaviconFallbacks();
+
   for (const button of root.querySelectorAll<HTMLButtonElement>(
     "[data-tab]"
   )) {
