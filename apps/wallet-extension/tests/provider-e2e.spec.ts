@@ -88,6 +88,22 @@ async function setUnlockedSessionExpiry(
   }, expiresAt);
 }
 
+async function expectNoHorizontalOverflow(page: Page): Promise<void> {
+  const overflow = await page.evaluate(() => {
+    const viewportWidth = window.innerWidth;
+    const scrollWidth = Math.max(
+      document.documentElement.scrollWidth,
+      document.body.scrollWidth
+    );
+    return { viewportWidth, scrollWidth };
+  });
+
+  expect(
+    overflow.scrollWidth,
+    `expected scroll width ${overflow.scrollWidth}px to fit inside viewport ${overflow.viewportWidth}px`
+  ).toBeLessThanOrEqual(overflow.viewportWidth);
+}
+
 async function startInjectedProviderRequest(
   page: Page,
   requestKey: string,
@@ -437,6 +453,26 @@ test("reconciles a stale open popup to the locked screen when the session change
         hasWallet: true,
         unlocked: false
       });
+  } finally {
+    await cleanupExtension(context, userDataDir);
+  }
+});
+
+test("keeps home and receive views inside the compact wallet width", async () => {
+  const { context, extensionId, userDataDir } = await launchExtension();
+
+  try {
+    const popup = await openExtensionPage(context, extensionId, "popup.html");
+    await popup.setViewportSize({ width: 360, height: 600 });
+    await createWalletInPopup(popup, "correct horse battery");
+
+    await popup.getByRole("button", { name: "Home" }).click();
+    await expect(popup.locator("[data-go-send]")).toBeVisible();
+    await expectNoHorizontalOverflow(popup);
+
+    await popup.locator("[data-show-receive]").click();
+    await expect(popup.getByText("Your Xian address")).toBeVisible();
+    await expectNoHorizontalOverflow(popup);
   } finally {
     await cleanupExtension(context, userDataDir);
   }

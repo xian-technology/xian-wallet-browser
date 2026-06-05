@@ -54,7 +54,7 @@
 
 body {
   margin: 0;
-  min-width: 380px;
+  min-width: 360px;
   background: var(--bg-0);
 }
 
@@ -2231,17 +2231,90 @@ textarea {
    ═══════════════════════════════════════════════════════════ */
 
 @media (max-width: 400px) {
+  .wallet-header {
+    gap: 8px;
+    padding: 8px 10px;
+  }
+
+  .header-left,
+  .header-right {
+    min-width: 0;
+  }
+
+  .header-left {
+    gap: 8px;
+  }
+
+  .header-account {
+    max-width: 118px;
+    min-width: 0;
+    overflow: hidden;
+    padding: 4px 6px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .header-account svg {
+    flex: 0 0 auto;
+  }
+
+  .header-account-label {
+    max-width: 92px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .header-network {
+    max-width: 116px;
+    overflow: hidden;
+    padding: 4px 8px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .quick-actions {
-    gap: 20px;
+    gap: 14px;
+    padding: 10px 10px 14px;
   }
 
   .quick-action-circle {
-    width: 42px;
-    height: 42px;
+    width: 40px;
+    height: 40px;
   }
 
-  .wallet-header {
-    padding: 8px 12px;
+  .quick-action-circle svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .balance-hero {
+    padding: 18px 12px 8px;
+  }
+
+  .receive-view {
+    padding: 14px 12px;
+  }
+
+  .qr-frame {
+    padding: 14px;
+  }
+
+  .qr-frame svg {
+    width: 188px;
+    height: 188px;
+  }
+
+  .s-card-head {
+    padding: 13px 14px 9px;
+  }
+
+  .s-card-body {
+    padding: 0 14px 13px;
+  }
+
+  .s-row {
+    gap: 8px;
   }
 
   .token-list,
