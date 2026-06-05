@@ -713,15 +713,12 @@ main {
 }
 
 .receive-address {
-  width: 100%;
+  width: min(100%, 232px);
   font-family: var(--font-mono);
   font-size: 13px;
   font-weight: 600;
   text-align: center;
-  padding: 14px 12px;
-  border-radius: 12px;
-  background: var(--bg-2);
-  border: 1px solid var(--line);
+  padding: 2px 0 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
