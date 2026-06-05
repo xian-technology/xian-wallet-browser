@@ -563,6 +563,36 @@ test("locks the wallet when the header lock button is clicked", async () => {
   }
 });
 
+test("returns to setup after removing the wallet from settings", async () => {
+  const { context, extensionId, userDataDir } = await launchExtension();
+
+  try {
+    const popup = await openExtensionPage(context, extensionId, "popup.html");
+    await createWalletInPopup(popup, "correct horse battery");
+
+    await popup.getByRole("button", { name: "Settings" }).click();
+    await popup.locator("[data-remove-wallet]").click();
+    await popup.locator("[data-confirm-remove]").click();
+
+    await expect(
+      popup.getByRole("button", { name: "Create wallet" })
+    ).toBeVisible();
+    await expect(popup.getByRole("button", { name: "Unlock" })).toHaveCount(0);
+    await expect
+      .poll(() =>
+        sendRuntimeMessage<{ hasWallet: boolean; unlocked: boolean }>(popup, {
+          type: "wallet_get_popup_state"
+        })
+      )
+      .toMatchObject({
+        hasWallet: false,
+        unlocked: false
+      });
+  } finally {
+    await cleanupExtension(context, userDataDir);
+  }
+});
+
 test("imports a wallet backup from file pickers", async ({}, testInfo) => {
   const first = await launchExtension();
   let backup: Record<string, unknown> | null = null;

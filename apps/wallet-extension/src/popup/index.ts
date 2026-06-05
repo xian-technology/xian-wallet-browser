@@ -33,6 +33,7 @@ import {
   loadDexAvailability,
   saveLocalActivityTx,
   saveDexAvailability,
+  STORAGE_KEY,
   SESSION_STORAGE_KEY
 } from "../shared/storage";
 
@@ -319,6 +320,49 @@ function resetTradeForm(): void {
   tradeQuoteForReview = null;
   tradeKwargsForReview = null;
   tradeApprovalNotice = null;
+}
+
+function resetNoWalletUiState(): void {
+  activeTab = "home";
+  setupMode = "create";
+  generatedMnemonic = null;
+  revealedMnemonic = null;
+  revealedPrivateKey = null;
+  networkDraft = null;
+  balancesLoading = false;
+  balanceGeneration++;
+  selectedAsset = null;
+  tokenMeta = null;
+  tokenMetaLoading = false;
+  tokenMetaGeneration++;
+  showReceive = false;
+  managingAssets = false;
+  activeApprovalId = null;
+  showAccountMenu = false;
+  renamingAccountIndex = null;
+  confirmDeleteAccountIndex = null;
+  confirmDeleteContactId = null;
+  confirmRemoveSelectedAsset = false;
+  confirmWalletRemoval = false;
+  showImportBackupDialog = false;
+  contacts = [];
+  contactsLoaded = false;
+  pendingUnavailableTokenContract = null;
+  transactionFlashGeneration++;
+  dexAvailabilityStatus = "unknown";
+  dexAvailabilityNetworkKey = null;
+  dexAvailabilityError = null;
+  dexAvailabilityProbe = null;
+  tradeSnapshot = null;
+  tradeSnapshotLoading = false;
+  tradeSnapshotError = null;
+  tradeSnapshotNetworkKey = null;
+  resetSendState();
+  resetTradeForm();
+  resetActivityState();
+  activityStateKey = null;
+  activityRequestId++;
+  activityPollGeneration++;
 }
 
 function dexNetworkKey(state: PopupRuntimeState): string {
@@ -755,6 +799,9 @@ async function reconcileLockedState(): Promise<boolean> {
       const state = await sendRuntimeMessage<PopupRuntimeState>({
         type: "wallet_get_popup_state"
       });
+      if (currentState && !currentState.hasWallet && state.hasWallet) {
+        return false;
+      }
       if (!state.unlocked) {
         await applyPopupState(state);
         return true;
@@ -1123,6 +1170,21 @@ async function refresh(nextFlash?: FlashMessage | null): Promise<void> {
   await applyPopupState(state);
 }
 
+async function removeWalletAndApplyState(shellMode: WalletShellMode): Promise<void> {
+  const removedState = await sendRuntimeMessage<PopupState>({
+    type: "wallet_remove"
+  });
+  confirmWalletRemoval = false;
+  flash = {
+    tone: "info",
+    message: "Wallet removed."
+  };
+  await applyPopupState({
+    ...removedState,
+    shellMode
+  });
+}
+
 async function applyPopupState(state: PopupRuntimeState): Promise<void> {
   const nextActivityKey =
     state.unlocked && state.publicKey ? activityKey(state, state.publicKey) : null;
@@ -1151,6 +1213,9 @@ async function applyPopupState(state: PopupRuntimeState): Promise<void> {
   if (!state.hasWallet || !state.unlocked) {
     revealedMnemonic = null;
     networkDraft = null;
+  }
+  if (!state.hasWallet) {
+    resetNoWalletUiState();
   }
   if (!state.unlocked) {
     balanceGeneration++;
@@ -1802,10 +1867,7 @@ function renderLocked(state: PopupRuntimeState): void {
     .querySelector<HTMLElement>("[data-lock-confirm-remove]")
     ?.addEventListener("click", () => {
       void withErrorFlash(async () => {
-        confirmWalletRemoval = false;
-        await sendRuntimeMessage<PopupState>({ type: "wallet_remove" });
-        resetSendState();
-        await refresh({ tone: "info", message: "Wallet removed." });
+        await removeWalletAndApplyState(state.shellMode);
       });
     });
 }
@@ -2856,6 +2918,17 @@ function isWalletTransactionSubmittedMessage(
     message !== null &&
     (message as { type?: unknown }).type === "wallet_transaction_submitted"
   );
+}
+
+function walletStorageWasRemoved(change: unknown): boolean {
+  if (typeof change !== "object" || change === null) {
+    return false;
+  }
+  const storageChange = change as {
+    oldValue?: { wallet?: unknown } | null;
+    newValue?: { wallet?: unknown } | null;
+  };
+  return Boolean(storageChange.oldValue?.wallet) && !storageChange.newValue?.wallet;
 }
 
 async function handleWalletTransactionSubmitted(
@@ -6241,15 +6314,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     .querySelector<HTMLElement>("[data-confirm-remove]")
     ?.addEventListener("click", () => {
       void withErrorFlash(async () => {
-        await sendRuntimeMessage<PopupState>({
-          type: "wallet_remove"
-        });
-        confirmWalletRemoval = false;
-        resetSendState();
-        await refresh({
-          tone: "info",
-          message: "Wallet removed."
-        });
+        await removeWalletAndApplyState(state.shellMode);
       });
     });
 
@@ -6693,6 +6758,14 @@ chrome.runtime.onMessage.addListener(
 
 chrome.storage.onChanged.addListener(
   (changes: Record<string, unknown>, areaName: string) => {
+    if (
+      areaName === "local" &&
+      STORAGE_KEY in changes &&
+      walletStorageWasRemoved(changes[STORAGE_KEY])
+    ) {
+      void refresh(null);
+      return;
+    }
     if (areaName === "session" && SESSION_STORAGE_KEY in changes) {
       void reconcileLockedState();
     }
