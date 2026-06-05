@@ -116,19 +116,34 @@ export async function sendRuntimeMessage<T>(
 
 export async function waitForApprovalPage(
   context: BrowserContext,
-  existingPages: Set<Page>
+  existingPages: Set<Page>,
+  approvalId?: string
 ): Promise<Page> {
+  const matchesApprovalUrl = (candidate: Page): boolean => {
+    if (!candidate.url().includes("approval.html")) {
+      return false;
+    }
+    if (!approvalId) {
+      return true;
+    }
+    return new URL(candidate.url()).searchParams.get("approvalId") === approvalId;
+  };
   const approvalPage =
     context.pages().find(
-      (candidate) =>
-        !existingPages.has(candidate) || candidate.url().includes("approval.html")
+      (candidate) => !existingPages.has(candidate) && matchesApprovalUrl(candidate)
+    ) ??
+    context.pages().find(
+      (candidate) => !existingPages.has(candidate) && !candidate.isClosed()
     ) ??
     (await context.waitForEvent("page", {
-      predicate: (candidate) =>
-        !existingPages.has(candidate) || candidate.url().includes("approval.html")
+      predicate: (candidate) => !existingPages.has(candidate)
     }));
 
-  await approvalPage.waitForURL(/approval\.html/);
+  await approvalPage.waitForURL(
+    (url) =>
+      url.pathname.endsWith("/approval.html") &&
+      (!approvalId || url.searchParams.get("approvalId") === approvalId)
+  );
   await approvalPage.waitForLoadState("domcontentloaded");
   return approvalPage;
 }
@@ -188,6 +203,8 @@ export async function startMockRpcServer(options?: {
     Array<{ name: string; arguments?: Array<{ name: string; type: string }> }>
   >;
   contractSources?: Record<string, string | null>;
+  chiRate?: number | string | null;
+  chiEstimate?: number | null;
   nextNonce?: number;
   txHash?: string;
 }) {
@@ -228,6 +245,34 @@ export async function startMockRpcServer(options?: {
               response: {
                 code: 0,
                 value: base64(String(nextNonce))
+              }
+            }
+          });
+          return;
+        }
+        if (queryPath === "/get/chi_cost.S:value") {
+          json(response, 200, {
+            result: {
+              response: {
+                code: 0,
+                value:
+                  options?.chiRate == null
+                    ? null
+                    : base64(String(options.chiRate))
+              }
+            }
+          });
+          return;
+        }
+        if (queryPath.startsWith("/simulate_tx/")) {
+          json(response, 200, {
+            result: {
+              response: {
+                code: 0,
+                value:
+                  options?.chiEstimate == null
+                    ? null
+                    : base64(JSON.stringify({ chi_used: options.chiEstimate }))
               }
             }
           });

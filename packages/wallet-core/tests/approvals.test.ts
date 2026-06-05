@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildApprovalView } from "../src/approvals";
+import { buildApprovalView, formatChiWithXianCost } from "../src/approvals";
 import type { PendingApprovalRecord } from "../src/types";
 
 function makeRecord(
@@ -17,6 +17,12 @@ function makeRecord(
 }
 
 describe("@xian-tech/wallet-core approvals", () => {
+  it("formats chi with the same approximate XIAN cost label used by send review", () => {
+    expect(formatChiWithXianCost(500, 25)).toBe("500 (~20 XIAN)");
+    expect(formatChiWithXianCost(16, 25)).toBe("16 (~0.64 XIAN)");
+    expect(formatChiWithXianCost(16, null)).toBe("16");
+  });
+
   it("builds a structured connect approval view", () => {
     const view = buildApprovalView(
       makeRecord("connect", {
@@ -60,17 +66,22 @@ describe("@xian-tech/wallet-core approvals", () => {
       }),
       {
         account: "abc123",
-        chainId: "xian-testnet-5"
+        chainId: "xian-testnet-5",
+        chiRate: 25
       }
     );
 
     expect(view.approveLabel).toBe("Approve call");
     expect(view.payloadLabel).toBe("Raw call intent");
     expect(view.highlights).toContain("currency.transfer");
+    expect(
+      view.details?.find((detail) => detail.label === "Contract")?.monospace
+    ).toBeUndefined();
     expect(view.details).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ label: "Contract", value: "currency" }),
         expect.objectContaining({ label: "Function", value: "transfer" }),
+        expect.objectContaining({ label: "Chi", value: "500 (~20 XIAN)" }),
         expect.objectContaining({ label: "Arguments", value: "2 field(s)" })
       ])
     );

@@ -35,6 +35,58 @@ function stringifyValue(value: unknown): string {
   return prettyJson(value);
 }
 
+function numericValue(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "bigint") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (typeof value === "string" && /^-?\d+(?:\.\d+)?$/.test(value.trim())) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function formatNumericValue(value: number): string {
+  return value.toLocaleString(undefined, {
+    maximumFractionDigits: 8
+  });
+}
+
+export function formatChiWithXianCost(
+  value: unknown,
+  chiRate: number | null | undefined
+): string | null {
+  if (
+    value == null ||
+    value === "" ||
+    (typeof value === "number" && Number.isNaN(value))
+  ) {
+    return null;
+  }
+
+  const chi = numericValue(value);
+  const formattedChi =
+    chi == null ? stringifyValue(value) : formatNumericValue(chi);
+  if (
+    typeof chiRate !== "number" ||
+    !Number.isFinite(chiRate) ||
+    chiRate <= 0 ||
+    chi == null
+  ) {
+    return formattedChi;
+  }
+
+  const xianCost = chi / chiRate;
+  if (!Number.isFinite(xianCost)) {
+    return formattedChi;
+  }
+  return `${formattedChi} (~${formatNumericValue(xianCost)} XIAN)`;
+}
+
 function compactDetail(
   label: string,
   value: unknown,
@@ -132,6 +184,7 @@ export function buildApprovalView(
   options?: {
     account?: string;
     chainId?: string;
+    chiRate?: number | null;
   }
 ): ApprovalView {
   const payload = payloadForRequest(approval.request);
@@ -218,7 +271,10 @@ export function buildApprovalView(
             compactDetail("Function", txPayload.function),
             compactDetail("Network", txPayload.chain_id ?? options?.chainId),
             compactDetail("Nonce", txPayload.nonce),
-            compactDetail("Chi", txPayload.chi_supplied)
+            compactDetail(
+              "Chi",
+              formatChiWithXianCost(txPayload.chi_supplied, options?.chiRate)
+            )
           ]),
           highlights: [
             `${stringifyValue(txPayload.contract ?? "unknown")}.${stringifyValue(
@@ -261,9 +317,13 @@ export function buildApprovalView(
             compactDetail("Function", txPayload.function),
             compactDetail("Network", txPayload.chain_id ?? options?.chainId),
             compactDetail("Nonce", txPayload.nonce),
-            compactDetail("Chi", txPayload.chi_supplied, {
-              tone: "warning"
-            })
+            compactDetail(
+              "Chi",
+              formatChiWithXianCost(txPayload.chi_supplied, options?.chiRate),
+              {
+                tone: "warning"
+              }
+            )
           ]),
           highlights: [
             "This request can broadcast immediately after approval."
@@ -303,12 +363,15 @@ export function buildApprovalView(
             "The wallet will prepare, sign, and broadcast this intent on your behalf using the active account and latest nonce.",
           approveLabel: "Approve call",
           details: compactDetails([
-            compactDetail("Contract", intent.contract, { monospace: true }),
+            compactDetail("Contract", intent.contract),
             compactDetail("Function", intent.function),
             compactDetail("Network", intent.chainId ?? options?.chainId),
             compactDetail(
               "Chi",
-              intent.chiSupplied ?? intent.chi,
+              formatChiWithXianCost(
+                intent.chiSupplied ?? intent.chi,
+                options?.chiRate
+              ),
               { tone: "warning" }
             ),
             compactDetail(

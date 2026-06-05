@@ -171,6 +171,8 @@ async function readLocalActivityTxs(
 test("approves connect and send-call requests through the injected provider bridge", async () => {
   const rpc = await startMockRpcServer({
     chainId: "xian-local",
+    chiRate: 25,
+    chiEstimate: 500,
     nextNonce: 12,
     txHash: "ABC123"
   });
@@ -234,14 +236,19 @@ test("approves connect and send-call requests through the injected provider brid
             kwargs: {
               to: "bob",
               amount: "5"
-            },
-            chi: 500
+            }
           }
         }
       ]
     });
     const sendApproval = await waitForApprovalPage(context, sendExistingPages);
     await expect(sendApproval.getByText("Send contract call")).toBeVisible();
+    await expect(sendApproval.getByText("500 (~20 XIAN)")).toBeVisible();
+    await expect(
+      sendApproval
+        .locator(".detail-row", { hasText: "Contract" })
+        .locator("strong")
+    ).not.toHaveClass(/code/);
     await sendApproval.locator("#trust-toggle").check({ force: true });
     const sendClose = sendApproval.waitForEvent("close");
     await sendApproval.getByRole("button", { name: "Approve call" }).click();
@@ -260,6 +267,7 @@ test("approves connect and send-call requests through the injected provider brid
     expect(rpc.requests).toEqual(
       expect.arrayContaining([
         "GET /genesis",
+        expect.stringContaining("POST /abci_query?path=%22%2Fsimulate_tx%2F"),
         expect.stringContaining("POST /abci_query?path=%22%2Fget_next_nonce%2F"),
         expect.stringContaining("POST /broadcast_tx_sync?tx=%22")
       ])
@@ -419,6 +427,61 @@ test("locks the wallet when the header lock button is clicked", async () => {
   }
 });
 
+test("imports a wallet backup from the setup screen", async () => {
+  const first = await launchExtension();
+  let backup: Record<string, unknown> | null = null;
+
+  try {
+    const popup = await openExtensionPage(
+      first.context,
+      first.extensionId,
+      "popup.html"
+    );
+    await createWalletInPopup(popup, "correct horse battery");
+    backup = await sendRuntimeMessage<Record<string, unknown>>(popup, {
+      type: "wallet_export",
+      password: "backup password"
+    });
+  } finally {
+    await cleanupExtension(first.context, first.userDataDir);
+  }
+  if (!backup) {
+    throw new Error("backup export did not complete");
+  }
+
+  const second = await launchExtension();
+
+  try {
+    const popup = await openExtensionPage(
+      second.context,
+      second.extensionId,
+      "popup.html"
+    );
+    await expect(
+      popup.getByRole("button", { name: "Create wallet" })
+    ).toBeVisible();
+
+    await popup.getByRole("button", { name: "Backup" }).click();
+    await popup.getByLabel("Backup password").fill("backup password");
+    await popup.getByLabel("Backup JSON").fill(JSON.stringify(backup));
+    await popup.getByRole("button", { name: "Import backup" }).click();
+
+    await expect(popup.getByRole("button", { name: "Lock wallet" })).toBeVisible();
+    await expect
+      .poll(() =>
+        sendRuntimeMessage<{ hasWallet: boolean; unlocked: boolean }>(popup, {
+          type: "wallet_get_popup_state"
+        })
+      )
+      .toMatchObject({
+        hasWallet: true,
+        unlocked: true
+      });
+  } finally {
+    await cleanupExtension(second.context, second.userDataDir);
+  }
+});
+
 test("keeps settings position when actions re-render and updates auto-lock expiry", async () => {
   const { context, extensionId, userDataDir } = await launchExtension();
 
@@ -528,8 +591,22 @@ def private_helper():
     await popup.locator("#send-chi").fill("50000");
     await popup.locator("[data-review-tx]").click();
 
-    await expect(popup.getByText("Arguments")).toBeVisible();
-    await expect(popup.getByText("1.25")).toBeVisible();
+    await expect(popup.getByText("Transaction summary")).toBeVisible();
+    const summary = popup.locator(".s-card", { hasText: "Transaction summary" });
+    await expect(summary.locator(".s-row-key")).toHaveText([
+      "Contract",
+      "Function",
+      "amount",
+      "to",
+      "Chi"
+    ]);
+    await expect(summary.locator(".s-row-key", { hasText: "Arguments" })).toHaveCount(0);
+    await expect(
+      summary.locator(".s-row").filter({ hasText: "amount" }).getByText("1.25")
+    ).toBeVisible();
+    await expect(
+      summary.locator(".s-row").filter({ hasText: "to" }).getByText("bob")
+    ).toBeVisible();
     await expect(popup.getByText("[object Object]")).toHaveCount(0);
   } finally {
     await cleanupExtension(context, userDataDir);

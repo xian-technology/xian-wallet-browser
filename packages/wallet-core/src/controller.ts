@@ -2062,19 +2062,82 @@ export class WalletController {
     };
   }
 
+  private async requestWithEstimatedSendCallChi(
+    request: XianProviderRequest,
+    account: string | undefined
+  ): Promise<XianProviderRequest> {
+    if (request.method !== "xian_sendCall" || !account) {
+      return request;
+    }
+
+    const firstParam = firstParamObject(request.params);
+    const intent = isRecord(firstParam.intent) ? firstParam.intent : null;
+    if (
+      !intent ||
+      intent.chi != null ||
+      intent.chiSupplied != null ||
+      typeof intent.contract !== "string" ||
+      typeof intent.function !== "string"
+    ) {
+      return request;
+    }
+
+    const kwargs = isRecord(intent.kwargs) ? intent.kwargs : {};
+    try {
+      const state = this.requireStoredWallet(await this.loadWalletState());
+      const estimated = await this.currentClient(state).estimateChi({
+        sender: account,
+        contract: intent.contract,
+        function: intent.function,
+        kwargs
+      });
+      if (!Number.isFinite(estimated.estimated) || estimated.estimated <= 0) {
+        return request;
+      }
+
+      const nextFirstParam = {
+        ...firstParam,
+        intent: {
+          ...intent,
+          kwargs,
+          chi: estimated.estimated
+        }
+      };
+
+      return {
+        ...request,
+        params: Array.isArray(request.params)
+          ? [nextFirstParam, ...request.params.slice(1)]
+          : nextFirstParam
+      };
+    } catch {
+      return request;
+    }
+  }
+
   private async createApprovalRequest(
     requestState: StoredProviderRequest,
     account: string | undefined,
     chainId: string | undefined
   ): Promise<ProviderRequestStartResult> {
+    const request = await this.requestWithEstimatedSendCallChi(
+      requestState.request,
+      account
+    );
     const record: PendingApprovalRecord = {
       id: this.createId(),
       origin: requestState.origin,
       kind: approvalKindFromMethod(requestState.request.method),
-      request: requestState.request,
+      request,
       createdAt: this.now()
     };
-    const view = buildApprovalView(record, { account, chainId });
+    const chiRate =
+      record.kind === "signTransaction" ||
+      record.kind === "sendTransaction" ||
+      record.kind === "sendCall"
+        ? await this.getChiRate()
+        : null;
+    const view = buildApprovalView(record, { account, chainId, chiRate });
     const approval: PersistedApproval = {
       id: record.id,
       requestId: requestState.requestId,
@@ -2085,6 +2148,7 @@ export class WalletController {
     await this.store.saveApprovalState(approval);
     await this.store.saveRequestState({
       ...requestState,
+      request,
       updatedAt: this.now(),
       status: "pending",
       approvalId: record.id

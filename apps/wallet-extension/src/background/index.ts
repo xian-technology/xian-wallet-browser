@@ -473,8 +473,20 @@ chrome.windows.onRemoved.addListener((windowId: number) => {
     return;
   }
 
-  approvalWindowIds.delete(windowId);
-  void controller.dismissApproval(approvalId).then(() => updateApprovalBadge());
+  void (async () => {
+    try {
+      await chrome.windows.get(windowId);
+      return;
+    } catch {
+      // The removed window is still gone; dismiss the matching approval below.
+    }
+    if (approvalWindowIds.get(windowId) !== approvalId) {
+      return;
+    }
+    approvalWindowIds.delete(windowId);
+    await controller.dismissApproval(approvalId);
+    await updateApprovalBadge();
+  })();
 });
 
 chrome.runtime.onMessage.addListener(
@@ -485,7 +497,12 @@ chrome.runtime.onMessage.addListener(
   ) => {
     void (async () => {
       try {
-        await syncApprovalWindows();
+        if (
+          message.type !== "approval_get" &&
+          message.type !== "approval_resolve"
+        ) {
+          await syncApprovalWindows();
+        }
 
         switch (message.type) {
           case "wallet_get_popup_state":

@@ -404,6 +404,89 @@ describe("@xian-tech/wallet-core controller", () => {
     );
   });
 
+  it("estimates missing send-call chi before showing and executing approvals", async () => {
+    const store = createStore();
+    const client = createClient();
+    vi.mocked(client.estimateChi).mockResolvedValue({ estimated: 500 });
+    client.getChiRate = vi.fn(async () => 25);
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined),
+      createId: vi
+        .fn()
+        .mockReturnValueOnce("approval-connect")
+        .mockReturnValueOnce("approval-send")
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+
+    await controller.startProviderRequest("request-connect", ORIGIN, {
+      method: "xian_requestAccounts"
+    });
+    await controller.resolveApproval("approval-connect", true);
+
+    await expect(
+      controller.startProviderRequest("request-send", ORIGIN, {
+        method: "xian_sendCall",
+        params: [
+          {
+            intent: {
+              contract: "submission",
+              function: "submit_contract",
+              kwargs: { name: "demo", code: "print(1)" }
+            }
+          }
+        ]
+      })
+    ).resolves.toEqual({
+      status: "pending",
+      approvalId: "approval-send"
+    });
+
+    expect(client.estimateChi).toHaveBeenCalledWith({
+      sender: store.current()?.publicKey,
+      contract: "submission",
+      function: "submit_contract",
+      kwargs: { name: "demo", code: "print(1)" }
+    });
+    await expect(controller.getApprovalView("approval-send")).resolves.toEqual(
+      expect.objectContaining({
+        title: "Send contract call",
+        details: expect.arrayContaining([
+          expect.objectContaining({
+            label: "Contract",
+            value: "submission",
+            monospace: undefined
+          }),
+          expect.objectContaining({
+            label: "Chi",
+            value: "500 (~20 XIAN)"
+          })
+        ])
+      })
+    );
+
+    await controller.resolveApproval("approval-send", true);
+    expect(client.buildTx).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contract: "submission",
+        function: "submit_contract",
+        kwargs: { name: "demo", code: "print(1)" },
+        chi: 500
+      })
+    );
+  });
+
   it("includes pending approval views in popup state and can disconnect origins", async () => {
     const store = createStore();
     const client = createClient();

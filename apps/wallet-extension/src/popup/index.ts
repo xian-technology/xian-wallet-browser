@@ -1,7 +1,9 @@
 import { XianClient, type WatchSubscription } from "@xian-tech/client";
 import {
+  formatChiWithXianCost,
   truncateAddress,
   type ApprovalView,
+  type WalletBackup,
   type PopupState,
   type WalletDetectedAsset
 } from "@xian-tech/wallet-core";
@@ -44,7 +46,7 @@ document.body.appendChild(toastRoot);
 /* ── Types ─────────────────────────────────────────────────── */
 
 type PopupTab = "home" | "send" | "activity" | "apps" | "security";
-type SetupMode = "create" | "importMnemonic" | "importPrivateKey";
+type SetupMode = "create" | "importMnemonic" | "importPrivateKey" | "importBackup";
 type FlashTone = "info" | "success" | "danger" | "warning";
 
 interface NetworkDraft {
@@ -509,7 +511,7 @@ async function withErrorFlash<T>(action: () => Promise<T>): Promise<T | undefine
     return await action();
   } catch (error) {
     setFlash(formatError(error), "danger");
-    if (currentState) render(currentState);
+    render(currentState);
     return undefined;
   }
 }
@@ -959,6 +961,37 @@ function renderImportBackupDialog(): string {
   `;
 }
 
+function parseWalletBackupJson(text: string): WalletBackup {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    throw new Error("Paste backup JSON first.");
+  }
+
+  let backup: unknown;
+  try {
+    backup = JSON.parse(trimmed);
+  } catch {
+    throw new Error("Invalid backup JSON.");
+  }
+
+  if (!backup || typeof backup !== "object") {
+    throw new Error("Invalid backup JSON.");
+  }
+
+  const candidate = backup as {
+    version?: unknown;
+    type?: unknown;
+  };
+  if (
+    candidate.version !== 2 &&
+    (candidate.version !== 1 || typeof candidate.type !== "string")
+  ) {
+    throw new Error("Invalid backup JSON.");
+  }
+
+  return backup as WalletBackup;
+}
+
 /* ═══════════════════════════════════════════════════════════
    SETUP SCREEN
    ═══════════════════════════════════════════════════════════ */
@@ -967,6 +1000,7 @@ function renderSetup(state: PopupRuntimeState | null): void {
   const createSelected = setupMode === "create";
   const mnemonicSelected = setupMode === "importMnemonic";
   const privateKeySelected = setupMode === "importPrivateKey";
+  const backupSelected = setupMode === "importBackup";
   const defaultRpc = state?.rpcUrl ?? "";
   const defaultDashboard = state?.dashboardUrl ?? "";
 
@@ -989,11 +1023,14 @@ function renderSetup(state: PopupRuntimeState | null): void {
           <button type="button" class="tab-button ${privateKeySelected ? "is-active" : ""}" data-setup-mode="importPrivateKey">
             Key
           </button>
+          <button type="button" class="tab-button ${backupSelected ? "is-active" : ""}" data-setup-mode="importBackup">
+            Backup
+          </button>
         </div>
 
         <form id="setup-form" class="stack">
           <label>
-            Password
+            ${backupSelected ? "Backup password" : "Password"}
             <input id="setup-password" type="password" required autocomplete="new-password" />
           </label>
 
@@ -1030,31 +1067,42 @@ function renderSetup(state: PopupRuntimeState | null): void {
               : ""
           }
 
-          <details class="disclosure">
-            <summary>Network settings</summary>
-            <div class="stack">
-              <label>
-                Network label
-                <input id="setup-network-name" value="Local node" />
-              </label>
-              <label>
-                Expected chain ID
-                <input id="setup-expected-chain-id" placeholder="Optional, e.g. xian-1" />
-              </label>
-              <label>
-                RPC URL
-                <input id="setup-rpc-url" value="${escapeAttribute(defaultRpc)}" />
-              </label>
-              <label>
-                Dashboard URL
-                <input id="setup-dashboard-url" value="${escapeAttribute(defaultDashboard)}" />
-              </label>
-              <label class="inline-check">
-                <input id="setup-allow-insecure-http" type="checkbox" />
-                <span>Allow HTTP data transfers</span>
-              </label>
-            </div>
-          </details>
+          ${
+            backupSelected
+              ? `
+                  <label>
+                    Backup JSON
+                    <textarea id="setup-backup-json" class="mono" placeholder="Paste encrypted backup JSON" rows="8" spellcheck="false" required></textarea>
+                  </label>
+                `
+              : `
+                  <details class="disclosure">
+                    <summary>Network settings</summary>
+                    <div class="stack">
+                      <label>
+                        Network label
+                        <input id="setup-network-name" value="Local node" />
+                      </label>
+                      <label>
+                        Expected chain ID
+                        <input id="setup-expected-chain-id" placeholder="Optional, e.g. xian-1" />
+                      </label>
+                      <label>
+                        RPC URL
+                        <input id="setup-rpc-url" value="${escapeAttribute(defaultRpc)}" />
+                      </label>
+                      <label>
+                        Dashboard URL
+                        <input id="setup-dashboard-url" value="${escapeAttribute(defaultDashboard)}" />
+                      </label>
+                      <label class="inline-check">
+                        <input id="setup-allow-insecure-http" type="checkbox" />
+                        <span>Allow HTTP data transfers</span>
+                      </label>
+                    </div>
+                  </details>
+                `
+          }
 
           <button type="submit" class="full-width">
             ${
@@ -1062,7 +1110,9 @@ function renderSetup(state: PopupRuntimeState | null): void {
                 ? "Create wallet"
                 : mnemonicSelected
                   ? "Import recovery seed"
-                  : "Import private key"
+                  : privateKeySelected
+                    ? "Import private key"
+                    : "Import backup"
             }
           </button>
         </form>
@@ -3074,17 +3124,14 @@ function renderSendReview(): string {
   const chiNum = sendEstimate
     ? sendEstimate.estimated
     : Number(sendManualChi);
-  const xianCost = sendChiRate ? chiNum / sendChiRate : null;
-  const chiLabel = chiNum.toLocaleString()
-    + (xianCost != null ? ` (~${xianCost.toLocaleString(undefined, { maximumFractionDigits: 8 })} XIAN)` : "");
+  const chiLabel = formatChiWithXianCost(chiNum, sendChiRate) ?? "Not provided";
   const argumentRows = entries
     .map(([k, v]) => {
       const formatted = formatTxArgValue(v);
-      const longValue = formatted.length > 60;
       return `
-        <div class="s-row" style="${longValue ? "align-items: flex-start" : ""}">
+        <div class="s-row">
           <span class="s-row-key">${escapeHtml(k)}</span>
-          <span class="s-row-val mono" style="${longValue ? "text-align: right; word-break: break-all; white-space: normal; max-width: 200px" : "max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap"}" title="${escapeAttribute(formatted)}">${escapeHtml(formatted)}</span>
+          <span class="s-row-val" title="${escapeAttribute(formatted)}">${escapeHtml(formatted)}</span>
         </div>
       `;
     })
@@ -3101,28 +3148,17 @@ function renderSendReview(): string {
         <div class="s-card-body">
           <div class="s-row">
             <span class="s-row-key">Contract</span>
-            <span class="s-row-val mono">${escapeHtml(sendContract)}</span>
+            <span class="s-row-val">${escapeHtml(sendContract)}</span>
           </div>
           <div class="s-row">
             <span class="s-row-key">Function</span>
             <span class="s-row-val">${escapeHtml(sendFunction)}</span>
           </div>
+          ${argumentRows}
           <div class="s-row">
             <span class="s-row-key">Chi</span>
             <span class="s-row-val">${escapeHtml(chiLabel)}</span>
           </div>
-          ${
-            argumentRows
-              ? `
-                <div class="s-row" style="align-items: flex-start">
-                  <span class="s-row-key">Arguments</span>
-                  <div class="s-row-val" style="display: flex; flex-direction: column; gap: 8px; width: 100%">
-                    ${argumentRows}
-                  </div>
-                </div>
-              `
-              : ""
-          }
         </div>
       </div>
 
@@ -3718,6 +3754,24 @@ function bindSetupEvents(): void {
     ?.addEventListener("submit", (event) => {
       event.preventDefault();
       void withErrorFlash(async () => {
+        if (setupMode === "importBackup") {
+          const backup = parseWalletBackupJson(value("#setup-backup-json"));
+          await sendRuntimeMessage<PopupState>({
+            type: "wallet_import_backup",
+            backup,
+            password: value("#setup-password")
+          });
+          generatedMnemonic = null;
+          revealedMnemonic = null;
+          activeTab = "home";
+          resetSendState();
+          await refresh({
+            tone: "success",
+            message: "Wallet imported."
+          });
+          return;
+        }
+
         const result = await sendRuntimeMessage<WalletCreateRuntimeResult>({
           type: "wallet_create",
           password: value("#setup-password"),
@@ -5101,21 +5155,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       }
 
       void withErrorFlash(async () => {
-        const text = value("#import-backup-json").trim();
-        if (!text) {
-          setFlash("Paste backup JSON first.", "warning");
-          render(state);
-          return;
-        }
-        const backup = JSON.parse(text);
-        if (
-          !backup ||
-          (backup.version !== 2 && (backup.version !== 1 || !backup.type))
-        ) {
-          setFlash("Invalid backup JSON.", "danger");
-          render(state);
-          return;
-        }
+        const backup = parseWalletBackupJson(value("#import-backup-json"));
         await sendRuntimeMessage<PopupState>({
           type: "wallet_import_backup",
           backup,

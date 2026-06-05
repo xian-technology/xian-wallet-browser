@@ -31,7 +31,11 @@ async function startApprovedRequest(
   }
   expect(start.approvalId).toBeTruthy();
 
-  const approvalPage = await waitForApprovalPage(context, existingPages);
+  const approvalPage = await waitForApprovalPage(
+    context,
+    existingPages,
+    start.approvalId
+  );
   await sendRuntimeMessage(page, {
     type: "approval_resolve",
     approvalId: start.approvalId,
@@ -72,10 +76,14 @@ test("captures popup and approval visuals for the wallet extension", async ({}, 
     });
 
     await closeApprovalPages(context);
+    await popup.waitForTimeout(500);
 
     const existingPages = new Set(context.pages());
 
-    const providerStart = await sendRuntimeMessage<{ status: string }>(popup, {
+    const providerStart = await sendRuntimeMessage<{
+      status: string;
+      approvalId?: string;
+    }>(popup, {
       type: "provider_request",
       origin: "https://swap.example",
       requestId: "visual-send-call",
@@ -102,14 +110,15 @@ test("captures popup and approval visuals for the wallet extension", async ({}, 
         `expected pending send-call approval, received ${JSON.stringify(providerStart)}`
       );
     }
+    if (!providerStart.approvalId) {
+      throw new Error("expected send-call approval id");
+    }
 
-    const approvalPage =
-      context.pages().find(
-        (candidate) =>
-          !existingPages.has(candidate) || candidate.url().includes("approval.html")
-      ) ?? (await context.waitForEvent("page"));
-    await approvalPage.waitForURL(/approval\.html/);
-    await approvalPage.waitForLoadState("domcontentloaded");
+    const approvalPage = await waitForApprovalPage(
+      context,
+      existingPages,
+      providerStart.approvalId
+    );
     await expect(approvalPage.getByText("Send contract call")).toBeVisible();
     await approvalPage.screenshot({
       path: testInfo.outputPath("approval-send-call.png"),
