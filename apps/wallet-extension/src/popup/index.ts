@@ -29,7 +29,8 @@ import {
 } from "../runtime-input";
 import {
   loadLocalActivityTxs,
-  saveLocalActivityTx
+  saveLocalActivityTx,
+  SESSION_STORAGE_KEY
 } from "../shared/storage";
 
 const appRoot = document.querySelector<HTMLElement>("#app");
@@ -141,6 +142,7 @@ let showImportBackupDialog = false;
 let showSaveRecipient = false;
 let autoLockEnabled = DEFAULT_AUTO_LOCK;
 let autoLockRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let lockStateCheck: Promise<boolean> | null = null;
 let balanceWatchClient: XianClient | null = null;
 let balanceWatchClientKey: string | null = null;
 const balanceSubscriptions = new Map<string, WatchSubscription>();
@@ -434,6 +436,58 @@ async function syncBalanceSubscriptions(): Promise<void> {
   }
 }
 
+function popupSessionExpired(state: PopupRuntimeState): boolean {
+  if (!state.unlocked) {
+    return false;
+  }
+  const expiresAt = state.sessionExpiresAt;
+  return (
+    typeof expiresAt === "number" &&
+    Number.isFinite(expiresAt) &&
+    expiresAt < Number.MAX_SAFE_INTEGER &&
+    expiresAt <= Date.now()
+  );
+}
+
+async function reconcileLockedState(): Promise<boolean> {
+  if (currentState?.hasWallet && !currentState.unlocked) {
+    return true;
+  }
+  if (lockStateCheck) {
+    return lockStateCheck;
+  }
+
+  const check = (async () => {
+    try {
+      const state = await sendRuntimeMessage<PopupRuntimeState>({
+        type: "wallet_get_popup_state"
+      });
+      if (!state.unlocked) {
+        await applyPopupState(state);
+        return true;
+      }
+      if (
+        currentState?.publicKey &&
+        currentState.publicKey === state.publicKey
+      ) {
+        currentState.sessionExpiresAt = state.sessionExpiresAt;
+      }
+    } catch {
+      // A failed lock-state probe should not be treated as a locked wallet.
+    }
+    return false;
+  })();
+
+  lockStateCheck = check;
+  try {
+    return await check;
+  } finally {
+    if (lockStateCheck === check) {
+      lockStateCheck = null;
+    }
+  }
+}
+
 function applyReceiptStateWrites(execution: unknown): void {
   if (
     !currentState ||
@@ -626,6 +680,7 @@ async function applyPopupState(state: PopupRuntimeState): Promise<void> {
     networkDraft = null;
   }
   if (!state.unlocked) {
+    balanceGeneration++;
     generatedMnemonic = null;
     resetSendState();
     resetActivityState();
@@ -683,11 +738,17 @@ async function refreshDetectedAssets(): Promise<void> {
     await clearBalanceSubscriptions();
     return;
   }
+  if (await reconcileLockedState()) {
+    return;
+  }
 
   try {
     const detectedAssets = await sendRuntimeMessage<WalletDetectedAsset[]>({
       type: "wallet_get_detected_assets"
     });
+    if (await reconcileLockedState()) {
+      return;
+    }
     if (!currentState) {
       return;
     }
@@ -719,12 +780,20 @@ async function refreshBalances(): Promise<void> {
     balancesLoading = false;
     return;
   }
+  if (await reconcileLockedState()) {
+    balancesLoading = false;
+    return;
+  }
   const gen = ++balanceGeneration;
   try {
     const snapshot = await sendRuntimeMessage<WalletAssetBalanceRuntimeResult>({
       type: "wallet_get_asset_balances"
     });
     if (gen !== balanceGeneration) {
+      return;
+    }
+    if (await reconcileLockedState()) {
+      balancesLoading = false;
       return;
     }
     if (currentState) {
@@ -840,6 +909,10 @@ function render(state: PopupRuntimeState | null): void {
     activeTab === "security"
       ? root.querySelector<HTMLElement>(".wallet-content")?.scrollTop
       : undefined;
+
+  if (state?.hasWallet && popupSessionExpired(state)) {
+    void reconcileLockedState();
+  }
 
   if (!state || !state.hasWallet) {
     renderSetup(state);
@@ -2793,14 +2866,18 @@ async function reviewSimpleSend(
   if (simpleReviewLoading) {
     return;
   }
-  if (!simpleTo) {
-    setFlash("Recipient address is required.", "warning");
-    render(state);
+  if (await reconcileLockedState()) {
     return;
   }
-  if (simpleTo === state.publicKey) {
+  const activeState = currentState?.unlocked ? currentState : state;
+  if (!simpleTo) {
+    setFlash("Recipient address is required.", "warning");
+    render(activeState);
+    return;
+  }
+  if (simpleTo === activeState.publicKey) {
     setFlash("You can't send tokens to your own address.", "warning");
-    render(state);
+    render(activeState);
     return;
   }
   if (
@@ -2808,14 +2885,14 @@ async function reviewSimpleSend(
     !isRecognizedXianRecipient(simpleTo)
   ) {
     pendingUnrecognizedRecipient = simpleTo;
-    render(state);
+    render(activeState);
     return;
   }
 
   const amount = parseRuntimeNumberInput(simpleAmount);
   if (amount == null || !isPositiveRuntimeAmount(amount)) {
     setFlash("Enter a valid amount.", "warning");
-    render(state);
+    render(activeState);
     return;
   }
 
@@ -2827,7 +2904,7 @@ async function reviewSimpleSend(
   simpleReviewLoading = true;
   const requestId = ++simpleReviewRequestId;
   clearFlash();
-  render(state);
+  render(activeState);
 
   const timeout = setTimeout(() => {
     if (requestId !== simpleReviewRequestId) {
@@ -2836,7 +2913,7 @@ async function reviewSimpleSend(
     simpleReviewRequestId++;
     simpleReviewLoading = false;
     setFlash("Estimation timed out. Try again.", "warning");
-    render(state);
+    render(activeState);
   }, 15000);
 
   try {
@@ -2852,18 +2929,26 @@ async function reviewSimpleSend(
     if (requestId !== simpleReviewRequestId) {
       return;
     }
+    if (await reconcileLockedState()) {
+      clearTimeout(timeout);
+      simpleReviewLoading = false;
+      return;
+    }
     clearTimeout(timeout);
     simpleReviewLoading = false;
     sendStep = "review";
-    render(state);
+    render(currentState?.unlocked ? currentState : activeState);
   } catch (error) {
     if (requestId !== simpleReviewRequestId) {
       return;
     }
     clearTimeout(timeout);
     simpleReviewLoading = false;
+    if (await reconcileLockedState()) {
+      return;
+    }
     setFlash(formatError(error), "danger");
-    render(state);
+    render(currentState?.unlocked ? currentState : activeState);
   }
 }
 
@@ -4424,6 +4509,9 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     .querySelector<HTMLElement>("[data-review-tx]")
     ?.addEventListener("click", async () => {
       captureSendFormState();
+      if (await reconcileLockedState()) {
+        return;
+      }
 
       if (!sendContract || !sendFunction) {
         setFlash("Contract and function are required.", "warning");
@@ -4444,12 +4532,18 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
             }),
             sendRuntimeMessage<number | null>({ type: "wallet_get_chi_rate" }),
           ]);
+          if (await reconcileLockedState()) {
+            return;
+          }
           sendStep = "review";
           clearFlash();
-          render(state);
+          render(currentState?.unlocked ? currentState : state);
         } catch (error) {
+          if (await reconcileLockedState()) {
+            return;
+          }
           setFlash(formatError(error), "danger");
-          render(state);
+          render(currentState?.unlocked ? currentState : state);
         }
       } else {
         if (
@@ -4463,7 +4557,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         sendEstimate = null;
         sendStep = "review";
         clearFlash();
-        render(state);
+        render(currentState?.unlocked ? currentState : state);
       }
     });
 
@@ -4479,6 +4573,9 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     .querySelector<HTMLElement>("[data-send-tx]")
     ?.addEventListener("click", async () => {
       if (!sendParsedKwargs) {
+        return;
+      }
+      if (await reconcileLockedState()) {
         return;
       }
 
@@ -4533,11 +4630,14 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           }
           refreshActivityAfterTransaction(state, txHash);
         }
-        render(state);
+        render(currentState?.unlocked ? currentState : state);
       } catch (error) {
         sendStep = "review";
+        if (await reconcileLockedState()) {
+          return;
+        }
         setFlash(formatError(error), "danger");
-        render(state);
+        render(currentState?.unlocked ? currentState : state);
       }
     });
 
@@ -4643,11 +4743,17 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
   root
     .querySelector<HTMLElement>("[data-max-amount]")
     ?.addEventListener("click", () => {
-      const tokenSelect = root.querySelector<HTMLSelectElement>("#simple-token");
-      if (tokenSelect) simpleToken = tokenSelect.value;
-      const raw = state.assetBalances[simpleToken] ?? "0";
-      simpleAmount = raw;
-      render(state);
+      void (async () => {
+        if (await reconcileLockedState()) {
+          return;
+        }
+        const activeState = currentState?.unlocked ? currentState : state;
+        const tokenSelect = root.querySelector<HTMLSelectElement>("#simple-token");
+        if (tokenSelect) simpleToken = tokenSelect.value;
+        const raw = activeState.assetBalances[simpleToken] ?? "0";
+        simpleAmount = raw;
+        render(activeState);
+      })();
     });
 
   {
@@ -5350,6 +5456,14 @@ chrome.runtime.onMessage.addListener(
     }
     if (isWalletTransactionSubmittedMessage(message)) {
       void handleWalletTransactionSubmitted(message);
+    }
+  }
+);
+
+chrome.storage.onChanged.addListener(
+  (changes: Record<string, unknown>, areaName: string) => {
+    if (areaName === "session" && SESSION_STORAGE_KEY in changes) {
+      void reconcileLockedState();
     }
   }
 );

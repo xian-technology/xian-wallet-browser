@@ -49,6 +49,43 @@ async function readProviderEventLog(
   );
 }
 
+async function setUnlockedSessionExpiry(
+  page: Page,
+  expiresAt: number
+): Promise<void> {
+  await page.evaluate((nextExpiresAt) => {
+    const sessionKey = "xianWalletShellSession";
+    return new Promise<void>((resolve, reject) => {
+      chrome.storage.session.get([sessionKey], (result) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        const session = result[sessionKey] as { expiresAt?: number } | undefined;
+        if (!session) {
+          reject(new Error("missing unlocked session"));
+          return;
+        }
+        chrome.storage.session.set(
+          {
+            [sessionKey]: {
+              ...session,
+              expiresAt: nextExpiresAt
+            }
+          },
+          () => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
+            resolve();
+          }
+        );
+      });
+    });
+  }, expiresAt);
+}
+
 async function startInjectedProviderRequest(
   page: Page,
   requestKey: string,
@@ -343,37 +380,7 @@ test("switches an open popup to the locked screen when the unlocked session expi
     await createWalletInPopup(popup, "correct horse battery");
     await expect(popup.getByRole("button", { name: "Settings" })).toBeVisible();
 
-    await popup.evaluate(() => {
-      const sessionKey = "xianWalletShellSession";
-      return new Promise<void>((resolve, reject) => {
-        chrome.storage.session.get([sessionKey], (result) => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-            return;
-          }
-          const session = result[sessionKey] as { expiresAt?: number } | undefined;
-          if (!session) {
-            reject(new Error("missing unlocked session"));
-            return;
-          }
-          chrome.storage.session.set(
-            {
-              [sessionKey]: {
-                ...session,
-                expiresAt: Date.now() + 250
-              }
-            },
-            () => {
-              if (chrome.runtime.lastError) {
-                reject(new Error(chrome.runtime.lastError.message));
-                return;
-              }
-              resolve();
-            }
-          );
-        });
-      });
-    });
+    await setUnlockedSessionExpiry(popup, Date.now() + 250);
 
     await popup.reload();
 
@@ -386,6 +393,38 @@ test("switches an open popup to the locked screen when the unlocked session expi
     await expect(
       popup.getByRole("button", { name: "Settings" })
     ).toHaveCount(0);
+    await expect
+      .poll(() =>
+        sendRuntimeMessage<{ hasWallet: boolean; unlocked: boolean }>(popup, {
+          type: "wallet_get_popup_state"
+        })
+      )
+      .toMatchObject({
+        hasWallet: true,
+        unlocked: false
+      });
+  } finally {
+    await cleanupExtension(context, userDataDir);
+  }
+});
+
+test("reconciles a stale open popup to the locked screen when the session changes", async () => {
+  const { context, extensionId, userDataDir } = await launchExtension();
+
+  try {
+    const popup = await openExtensionPage(context, extensionId, "popup.html");
+    await createWalletInPopup(popup, "correct horse battery");
+
+    await popup.getByRole("button", { name: "Home" }).click();
+    await expect(popup.locator("[data-go-send]")).toBeVisible();
+
+    await setUnlockedSessionExpiry(popup, Date.now() - 1_000);
+
+    await expect(
+      popup.getByRole("button", { name: "Unlock" })
+    ).toBeVisible({ timeout: 3_000 });
+    await expect(popup.getByText("Wallet is locked.")).toBeVisible();
+    await expect(popup.locator("[data-max-amount]")).toHaveCount(0);
     await expect
       .poll(() =>
         sendRuntimeMessage<{ hasWallet: boolean; unlocked: boolean }>(popup, {
