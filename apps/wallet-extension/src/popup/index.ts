@@ -1102,7 +1102,11 @@ function renderImportBackupDialog(): string {
       <div class="app-dialog app-dialog-wide" role="dialog" aria-modal="true" aria-labelledby="import-backup-title">
         <div class="app-dialog-icon">${ICONS.arrowDown}</div>
         <h3 id="import-backup-title" class="app-dialog-title">Import Backup</h3>
-        <p class="app-dialog-copy">Paste the encrypted wallet backup JSON.</p>
+        <p class="app-dialog-copy">Choose an encrypted wallet backup file or paste the backup JSON.</p>
+        <label class="backup-file-picker">
+          Backup file
+          <input id="import-backup-file" type="file" accept=".json,application/json" />
+        </label>
         <textarea
           id="import-backup-json"
           class="app-dialog-textarea mono"
@@ -1148,6 +1152,44 @@ function parseWalletBackupJson(text: string): WalletBackup {
   }
 
   return backup as WalletBackup;
+}
+
+async function loadBackupFileIntoTextarea(
+  fileInput: HTMLInputElement,
+  textareaSelector: string
+): Promise<void> {
+  const file = fileInput.files?.[0];
+  if (!file) {
+    return;
+  }
+
+  const text = await file.text();
+  parseWalletBackupJson(text);
+  const textarea = root.querySelector<HTMLTextAreaElement>(textareaSelector);
+  if (!textarea) {
+    throw new Error("Backup import field is not available.");
+  }
+  textarea.value = text.trim();
+  setFlash(`Loaded ${file.name}.`, "success");
+}
+
+function bindBackupFileChooser(inputSelector: string, textareaSelector: string): void {
+  root
+    .querySelector<HTMLInputElement>(inputSelector)
+    ?.addEventListener("change", (event) => {
+      const input = event.currentTarget;
+      if (!(input instanceof HTMLInputElement)) {
+        return;
+      }
+      void withErrorFlash(async () => {
+        try {
+          await loadBackupFileIntoTextarea(input, textareaSelector);
+        } catch (error) {
+          input.value = "";
+          throw error;
+        }
+      });
+    });
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -1230,6 +1272,10 @@ function renderSetup(state: PopupRuntimeState | null): void {
               ? `
                   <label>
                     Backup JSON
+                    <span class="backup-file-picker">
+                      <span>Backup file</span>
+                      <input id="setup-backup-file" type="file" accept=".json,application/json" />
+                    </span>
                     <textarea id="setup-backup-json" class="mono" placeholder="Paste encrypted backup JSON" rows="8" spellcheck="false" required></textarea>
                   </label>
                 `
@@ -3951,6 +3997,8 @@ function networkStatusLabel(state: PopupRuntimeState): string {
    ═══════════════════════════════════════════════════════════ */
 
 function bindSetupEvents(): void {
+  bindBackupFileChooser("#setup-backup-file", "#setup-backup-json");
+
   for (const button of root.querySelectorAll<HTMLButtonElement>(
     "[data-setup-mode]"
   )) {
@@ -5342,6 +5390,8 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       showImportBackupDialog = false;
       render(state);
     });
+
+  bindBackupFileChooser("#import-backup-file", "#import-backup-json");
 
   root
     .querySelector<HTMLElement>("[data-confirm-import-backup]")

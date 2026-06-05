@@ -1,3 +1,5 @@
+import { writeFile } from "node:fs/promises";
+
 import { expect, test, type Page } from "@playwright/test";
 
 import {
@@ -466,7 +468,7 @@ test("locks the wallet when the header lock button is clicked", async () => {
   }
 });
 
-test("imports a wallet backup from the setup screen", async () => {
+test("imports a wallet backup from file pickers", async ({}, testInfo) => {
   const first = await launchExtension();
   let backup: Record<string, unknown> | null = null;
 
@@ -481,12 +483,26 @@ test("imports a wallet backup from the setup screen", async () => {
       type: "wallet_export",
       password: "backup password"
     });
+
+    const backupFilePath = testInfo.outputPath("xian-wallet-backup.json");
+    await writeFile(backupFilePath, JSON.stringify(backup, null, 2), "utf8");
+
+    await popup.getByRole("button", { name: "Settings" }).click();
+    await popup.locator("#backup-password").fill("backup password");
+    await popup.locator("[data-import-trigger]").click();
+    await popup.locator("#import-backup-file").setInputFiles(backupFilePath);
+    await expect(popup.locator("#import-backup-json")).toHaveValue(
+      JSON.stringify(backup, null, 2)
+    );
+    await popup.locator("[data-confirm-import-backup]").click();
+    await expect(popup.getByRole("button", { name: "Lock wallet" })).toBeVisible();
   } finally {
     await cleanupExtension(first.context, first.userDataDir);
   }
   if (!backup) {
     throw new Error("backup export did not complete");
   }
+  const backupFilePath = testInfo.outputPath("xian-wallet-backup.json");
 
   const second = await launchExtension();
 
@@ -502,7 +518,10 @@ test("imports a wallet backup from the setup screen", async () => {
 
     await popup.getByRole("button", { name: "Backup" }).click();
     await popup.getByLabel("Backup password").fill("backup password");
-    await popup.getByLabel("Backup JSON").fill(JSON.stringify(backup));
+    await popup.locator("#setup-backup-file").setInputFiles(backupFilePath);
+    await expect(popup.locator("#setup-backup-json")).toHaveValue(
+      JSON.stringify(backup, null, 2)
+    );
     await popup.getByRole("button", { name: "Import backup" }).click();
 
     await expect(popup.getByRole("button", { name: "Lock wallet" })).toBeVisible();
