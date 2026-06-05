@@ -478,6 +478,65 @@ test("keeps home and receive views inside the compact wallet width", async () =>
   }
 });
 
+test("shows linked notifications instead of a result panel after direct wallet send", async () => {
+  const rpc = await startMockRpcServer({
+    chainId: "xian-local",
+    chiRate: 25,
+    chiEstimate: 500,
+    nextNonce: 12,
+    txHash: "DIRECT123"
+  });
+  const { context, extensionId, userDataDir } = await launchExtension();
+
+  try {
+    const popup = await openExtensionPage(context, extensionId, "popup.html");
+    await createWalletInPopup(popup, "correct horse battery");
+    await sendRuntimeMessage(popup, {
+      type: "wallet_update_settings",
+      networkName: "Mock local node",
+      expectedChainId: rpc.chainId,
+      rpcUrl: rpc.url,
+      dashboardUrl: rpc.url
+    });
+    await popup.reload();
+
+    await popup.locator("[data-go-send]").click();
+    await popup.locator("#simple-to").fill("b".repeat(64));
+    await popup.locator("#simple-amount").fill("1");
+    await popup.getByRole("button", { name: "Review" }).click();
+
+    await expect(popup.getByText("Transaction summary")).toBeVisible();
+    await popup.getByRole("button", { name: "Send Transaction" }).click();
+
+    const toast = popup.locator(".flash-toast");
+    const expectedTxHref = `${rpc.url}/explorer/tx/DIRECT123`;
+    await expect(toast).toContainText("Transaction sent.");
+    await expect(
+      toast.getByRole("link", { name: /View transaction/ })
+    ).toHaveAttribute("href", expectedTxHref);
+    await expect(popup.getByText("TX Hash")).toHaveCount(0);
+    await expect(
+      popup.getByRole("button", { name: "New Transaction" })
+    ).toHaveCount(0);
+    await expect(popup.locator("[data-go-send]")).toBeVisible();
+
+    await expect(toast).toContainText("Transaction finalized.", {
+      timeout: 4_000
+    });
+    await expect(
+      toast.getByRole("link", { name: /View transaction/ })
+    ).toHaveAttribute("href", expectedTxHref);
+    expect(rpc.requests).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("POST /broadcast_tx_commit?tx=%22")
+      ])
+    );
+  } finally {
+    await cleanupExtension(context, userDataDir);
+    await rpc.close();
+  }
+});
+
 test("locks the wallet when the header lock button is clicked", async () => {
   const { context, extensionId, userDataDir } = await launchExtension();
 
@@ -582,6 +641,8 @@ test("keeps settings position when actions re-render and updates auto-lock expir
   try {
     const popup = await openExtensionPage(context, extensionId, "popup.html");
     await createWalletInPopup(popup, "correct horse battery");
+    await popup.getByRole("button", { name: "Settings" }).click();
+    await expect(popup.locator("[data-remove-wallet]")).toBeVisible();
 
     const content = popup.locator(".wallet-content");
     const before = await content.evaluate((element) => {

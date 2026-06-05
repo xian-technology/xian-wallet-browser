@@ -67,6 +67,9 @@ import type {
   WalletControllerStore,
   WalletCreateResult,
   WalletDetectedAsset,
+  WalletDexPairInfo,
+  WalletDexSnapshot,
+  WalletDexTokenInfo,
   WalletAssetBalanceSnapshot,
   WalletAssetNetworkState,
   WalletAssetNetworkStates,
@@ -89,10 +92,26 @@ const SAFE_CHAIN_ID_LOOKUP_TIMEOUT_MS = 2_000;
 const TRUSTED_DAPP_POLICY_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_DAPP_METADATA_TEXT_LENGTH = 120;
 const MAX_DAPP_ICON_URL_LENGTH = 2048;
+const DEX_ROUTER_CONTRACT = "con_dex";
+const DEX_PAIRS_CONTRACT = "con_pairs";
+const DEFAULT_DEX_FEE_BPS = 30;
+const ZERO_DEX_FEE_BPS = 0;
+const DEX_MAX_HOPS = 3;
+const DEX_REQUIRED_SWAP_EXPORTS = new Set([
+  "swapExactTokensForTokens",
+  "swapExactTokensForTokensSupportingFeeOnTransferTokens"
+]);
 
 export interface WalletNetworkClient {
   getChainId(): Promise<string>;
   getChiRate?(): Promise<number | string | bigint | null>;
+  getState?(contract: string, variable: string, keys?: string[]): Promise<unknown>;
+  call?(request: {
+    sender: string;
+    contract: string;
+    function: string;
+    kwargs: Record<string, unknown>;
+  }): Promise<unknown>;
   getBalance(address: string, options?: { contract?: string }): Promise<unknown>;
   getTokenBalances(
     address: string,
@@ -295,6 +314,24 @@ function messageFromUnknown(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function numberFromUnknown(value: unknown, fallback = 0): number {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : fallback;
+  }
+  if (typeof value === "bigint") {
+    return Number(value);
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return fallback;
+    }
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+  return fallback;
 }
 
 function isMissingContractResult(value: unknown): boolean {
@@ -2606,6 +2643,214 @@ export class WalletController {
       chi: intent.chi
     });
     return this.sendPreparedTransaction(state, tx, { mode: "commit" });
+  }
+
+  async getDexSnapshot(): Promise<WalletDexSnapshot> {
+    const state = this.requireStoredWallet(await this.loadWalletState());
+    const client = this.currentClient(state);
+
+    if (typeof client.getState !== "function") {
+      return {
+        available: false,
+        contract: DEX_ROUTER_CONTRACT,
+        pairsContract: DEX_PAIRS_CONTRACT,
+        reason: "Current network client does not support DEX state reads.",
+        tradeFeeBps: DEFAULT_DEX_FEE_BPS,
+        maxHops: DEX_MAX_HOPS,
+        pairs: [],
+        tokens: []
+      };
+    }
+
+    const methods = await this.getContractMethods(DEX_ROUTER_CONTRACT);
+    const methodNames = new Set(methods.map((method) => method.name));
+    const hasSwapExport = [...DEX_REQUIRED_SWAP_EXPORTS].some((name) =>
+      methodNames.has(name)
+    );
+    if (!hasSwapExport) {
+      return {
+        available: false,
+        contract: DEX_ROUTER_CONTRACT,
+        pairsContract: DEX_PAIRS_CONTRACT,
+        reason: `${DEX_ROUTER_CONTRACT} is not deployed on this network.`,
+        tradeFeeBps: DEFAULT_DEX_FEE_BPS,
+        maxHops: DEX_MAX_HOPS,
+        pairs: [],
+        tokens: []
+      };
+    }
+
+    const pairs = await this.readDexPairs(client);
+    const tokenContracts = new Set<string>();
+    for (const asset of state.watchedAssets) {
+      tokenContracts.add(asset.contract);
+    }
+    for (const pair of pairs) {
+      tokenContracts.add(pair.token0);
+      tokenContracts.add(pair.token1);
+    }
+
+    const [tradeFeeBps, tokens] = await Promise.all([
+      this.readDexTradeFeeBps(client, state.publicKey),
+      Promise.all(
+        [...tokenContracts].map((contract) =>
+          this.readDexTokenInfo(state, client, contract)
+        )
+      )
+    ]);
+
+    return {
+      available: true,
+      contract: DEX_ROUTER_CONTRACT,
+      pairsContract: DEX_PAIRS_CONTRACT,
+      tradeFeeBps,
+      maxHops: DEX_MAX_HOPS,
+      pairs,
+      tokens
+    };
+  }
+
+  private async readDexPairs(
+    client: WalletNetworkClient
+  ): Promise<WalletDexPairInfo[]> {
+    if (typeof client.getState !== "function") {
+      return [];
+    }
+    const countRaw = await client
+      .getState(DEX_PAIRS_CONTRACT, "pairs_num")
+      .catch(() => 0);
+    const count = Math.max(0, Math.floor(numberFromUnknown(countRaw)));
+    if (count <= 0) {
+      return [];
+    }
+
+    const pairs = await Promise.all(
+      Array.from({ length: count }, (_, index) =>
+        this.readDexPair(client, index + 1).catch(() => null)
+      )
+    );
+    return pairs.filter((pair): pair is WalletDexPairInfo => pair != null);
+  }
+
+  private async readDexPair(
+    client: WalletNetworkClient,
+    id: number
+  ): Promise<WalletDexPairInfo | null> {
+    if (typeof client.getState !== "function") {
+      return null;
+    }
+    const key = String(id);
+    const [
+      token0,
+      token1,
+      reserve0,
+      reserve1,
+      totalSupply,
+      blockTimestampLast,
+      creationTime
+    ] = await Promise.all([
+      client.getState(DEX_PAIRS_CONTRACT, "pairs", [key, "token0"]),
+      client.getState(DEX_PAIRS_CONTRACT, "pairs", [key, "token1"]),
+      client.getState(DEX_PAIRS_CONTRACT, "pairs", [key, "reserve0"]),
+      client.getState(DEX_PAIRS_CONTRACT, "pairs", [key, "reserve1"]),
+      client.getState(DEX_PAIRS_CONTRACT, "pairs", [key, "totalSupply"]),
+      client.getState(DEX_PAIRS_CONTRACT, "pairs", [key, "blockTimestampLast"]),
+      client.getState(DEX_PAIRS_CONTRACT, "pairs", [key, "creationTime"])
+    ]);
+
+    if (typeof token0 !== "string" || typeof token1 !== "string") {
+      return null;
+    }
+
+    return {
+      id,
+      token0,
+      token1,
+      reserve0: numberFromUnknown(reserve0),
+      reserve1: numberFromUnknown(reserve1),
+      totalSupply: numberFromUnknown(totalSupply),
+      blockTimestampLast:
+        blockTimestampLast == null ? null : String(blockTimestampLast),
+      creationTime: creationTime == null ? null : String(creationTime)
+    };
+  }
+
+  private async readDexTradeFeeBps(
+    client: WalletNetworkClient,
+    account: string
+  ): Promise<number> {
+    if (typeof client.call !== "function") {
+      return DEFAULT_DEX_FEE_BPS;
+    }
+    try {
+      const result = await client.call({
+        sender: account,
+        contract: DEX_ROUTER_CONTRACT,
+        function: "getTradeFeeBps",
+        kwargs: { account }
+      });
+      const bps = numberFromUnknown(result, DEFAULT_DEX_FEE_BPS);
+      return bps === ZERO_DEX_FEE_BPS ? ZERO_DEX_FEE_BPS : DEFAULT_DEX_FEE_BPS;
+    } catch {
+      return DEFAULT_DEX_FEE_BPS;
+    }
+  }
+
+  private async readDexTokenInfo(
+    state: StoredWalletState,
+    client: WalletNetworkClient,
+    contract: string
+  ): Promise<WalletDexTokenInfo> {
+    const [metadata, precisionRaw, balanceRaw, allowanceRaw, feeOnTransferRaw] =
+      await Promise.all([
+        this.resolveTokenMetadataForState(state, contract).catch(() => ({
+          contract,
+          name: null,
+          symbol: null,
+          logoUrl: null,
+          logoSvg: null
+        })),
+        client.getState
+          ? client.getState(contract, "metadata", ["precision"]).catch(() => null)
+          : Promise.resolve(null),
+        client.getBalance(state.publicKey, { contract }).catch(() => 0),
+        client.getState
+          ? client
+              .getState(contract, "approvals", [
+                state.publicKey,
+                DEX_ROUTER_CONTRACT
+              ])
+              .catch(() => 0)
+          : Promise.resolve(0),
+        client.getState
+          ? client
+              .getState(DEX_ROUTER_CONTRACT, "fee_on_transfer_tokens", [
+                contract
+              ])
+              .catch(() => false)
+          : Promise.resolve(false)
+      ]);
+
+    const watched = state.watchedAssets.find(
+      (asset) => asset.contract === contract
+    );
+    const precision = Number.isInteger(numberFromUnknown(precisionRaw, NaN))
+      ? numberFromUnknown(precisionRaw)
+      : typeof watched?.decimals === "number"
+        ? watched.decimals
+        : null;
+
+    return {
+      contract,
+      name: metadata.name,
+      symbol: metadata.symbol,
+      logoUrl: metadata.logoUrl,
+      logoSvg: metadata.logoSvg,
+      precision,
+      balance: numberFromUnknown(balanceRaw),
+      allowance: numberFromUnknown(allowanceRaw),
+      feeOnTransfer: feeOnTransferRaw === true
+    };
   }
 
   async getContractMethods(

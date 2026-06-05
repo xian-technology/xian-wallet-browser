@@ -15,6 +15,7 @@ import {
   type WalletAssetBalanceRuntimeResult,
   type ShieldedSnapshotHistoryRuntimeResult,
   type WalletCreateRuntimeResult,
+  type WalletDexSnapshotRuntimeResult,
   type WalletTransactionSubmittedRuntimeMessage
 } from "../shared/messages";
 import {
@@ -29,7 +30,9 @@ import {
 } from "../runtime-input";
 import {
   loadLocalActivityTxs,
+  loadDexAvailability,
   saveLocalActivityTx,
+  saveDexAvailability,
   SESSION_STORAGE_KEY
 } from "../shared/storage";
 
@@ -46,9 +49,10 @@ document.body.appendChild(toastRoot);
 
 /* ── Types ─────────────────────────────────────────────────── */
 
-type PopupTab = "home" | "send" | "activity" | "apps" | "security";
+type PopupTab = "home" | "send" | "trade" | "activity" | "apps" | "security";
 type SetupMode = "create" | "importMnemonic" | "importPrivateKey" | "importBackup";
 type FlashTone = "info" | "success" | "danger" | "warning";
+type FlashIcon = "info" | "success" | "danger" | "warning" | "none";
 
 interface NetworkDraft {
   id?: string;
@@ -63,6 +67,14 @@ interface NetworkDraft {
 interface FlashMessage {
   message: string;
   tone: FlashTone;
+  detail?: string;
+  icon?: FlashIcon;
+  action?: {
+    label: string;
+    href: string;
+    title?: string;
+  };
+  durationMs?: number;
 }
 
 /* ── Icons (Feather-style SVGs) ────────────────────────────── */
@@ -107,6 +119,22 @@ import {
   formatTxArgValue,
   formatTxTimestamp,
 } from "./tx-classify";
+import {
+  DEFAULT_DEADLINE_MINUTES,
+  DEFAULT_SLIPPAGE_BPS,
+  DEX_ROUTER,
+  blockedIntermediateToken,
+  buildDexQuote,
+  deadlineFromNow,
+  minReceived,
+  runtimeFixedFromNumber,
+  runtimeFixedFromString,
+  sortedDexTokens,
+  tokenByContract,
+  tokenSymbol,
+  useSupportingFeeRoute,
+  type DexQuote
+} from "./dex";
 
 /* ── State ─────────────────────────────────────────────────── */
 
@@ -139,7 +167,6 @@ let confirmDeleteContactId: string | null = null;
 let confirmRemoveSelectedAsset = false;
 let confirmWalletRemoval = false;
 let showImportBackupDialog = false;
-let showSaveRecipient = false;
 let autoLockEnabled = DEFAULT_AUTO_LOCK;
 let autoLockRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let lockStateCheck: Promise<boolean> | null = null;
@@ -156,7 +183,7 @@ const shieldedHistoryStatus = new Map<
 
 type TxArgType = "str" | "int" | "float" | "bool" | "dict" | "list" | "datetime" | "timedelta" | "Any";
 type SendMode = "simple" | "advanced";
-type SendStep = "draft" | "review" | "sending" | "result";
+type SendStep = "draft" | "review" | "sending";
 
 interface TxArg {
   id: string;
@@ -171,6 +198,22 @@ type ContractMethod = {
   name: string;
   arguments: { name: string; type: string }[];
 };
+
+interface SendTransactionResult {
+  submitted: boolean;
+  accepted: boolean | null;
+  finalized: boolean;
+  txHash?: string;
+  message?: unknown;
+  receipt?: unknown;
+}
+
+interface TransactionFlashLabels {
+  sent?: string;
+  finalized?: string;
+  accepted?: string;
+  failed?: string;
+}
 
 let sendMode: SendMode = "simple";
 let sendStep: SendStep = "draft";
@@ -204,18 +247,39 @@ let sendManualChi = "";
 let sendParsedKwargs: Record<string, unknown> | null = null;
 let sendEstimate: { estimated: number } | null = null;
 let sendChiRate: number | null = null;
-let sendResult: {
-  submitted: boolean;
-  accepted: boolean | null;
-  finalized: boolean;
-  txHash?: string;
-  message?: unknown;
-} | null = null;
+let sendResult: SendTransactionResult | null = null;
 let argIdCounter = 0;
 let contractMethods: ContractMethod[] = [];
 let contractMethodsLoading = false;
 let contractMethodsError: string | null = null;
 let contractMethodsFor: string | null = null;
+let transactionFlashGeneration = 0;
+
+/* ── Trade state ───────────────────────────────────────────── */
+
+type DexAvailabilityStatus = "unknown" | "checking" | "available" | "unavailable";
+type TradeStep = "form" | "review" | "approving" | "swapping";
+
+let dexAvailabilityStatus: DexAvailabilityStatus = "unknown";
+let dexAvailabilityNetworkKey: string | null = null;
+let dexAvailabilityError: string | null = null;
+let dexAvailabilityProbe: Promise<void> | null = null;
+
+let tradeStep: TradeStep = "form";
+let tradeSnapshot: WalletDexSnapshotRuntimeResult | null = null;
+let tradeSnapshotLoading = false;
+let tradeSnapshotError: string | null = null;
+let tradeSnapshotNetworkKey: string | null = null;
+let tradeFromToken = "currency";
+let tradeToToken = "";
+let tradeAmount = "";
+let tradeSlippageBps = DEFAULT_SLIPPAGE_BPS;
+let tradeDeadlineMinutes = DEFAULT_DEADLINE_MINUTES;
+let tradeEstimate: { estimated: number } | null = null;
+let tradeChiRate: number | null = null;
+let tradeQuoteForReview: DexQuote | null = null;
+let tradeKwargsForReview: Record<string, unknown> | null = null;
+let tradeApprovalNotice: string | null = null;
 
 function resetSendState(): void {
   sendMode = "simple";
@@ -227,7 +291,6 @@ function resetSendState(): void {
   pendingUnrecognizedRecipient = null;
   simpleReviewLoading = false;
   simpleReviewRequestId++;
-  showSaveRecipient = false;
   showContactPicker = false;
   editingContacts = false;
   pendingContact = null;
@@ -244,6 +307,151 @@ function resetSendState(): void {
   contractMethodsLoading = false;
   contractMethodsError = null;
   contractMethodsFor = null;
+}
+
+function resetTradeForm(): void {
+  tradeStep = "form";
+  tradeFromToken = "currency";
+  tradeToToken = "";
+  tradeAmount = "";
+  tradeEstimate = null;
+  tradeChiRate = null;
+  tradeQuoteForReview = null;
+  tradeKwargsForReview = null;
+  tradeApprovalNotice = null;
+}
+
+function dexNetworkKey(state: PopupRuntimeState): string {
+  return [
+    state.activeNetworkId ?? "network",
+    state.resolvedChainId ?? state.chainId ?? state.configuredChainId ?? "",
+    state.rpcUrl
+  ].join("|");
+}
+
+function resetDexAvailabilityForNetwork(state: PopupRuntimeState): void {
+  const networkKey = dexNetworkKey(state);
+  if (dexAvailabilityNetworkKey !== networkKey) {
+    dexAvailabilityNetworkKey = networkKey;
+    dexAvailabilityStatus = "unknown";
+    dexAvailabilityError = null;
+    dexAvailabilityProbe = null;
+    tradeSnapshot = null;
+    tradeSnapshotNetworkKey = null;
+    tradeSnapshotError = null;
+    tradeSnapshotLoading = false;
+    resetTradeForm();
+  }
+}
+
+async function ensureDexAvailability(state: PopupRuntimeState): Promise<void> {
+  const networkKey = dexNetworkKey(state);
+  resetDexAvailabilityForNetwork(state);
+  if (
+    dexAvailabilityStatus === "available" ||
+    dexAvailabilityStatus === "checking"
+  ) {
+    return dexAvailabilityProbe ?? undefined;
+  }
+
+  const cached = await loadDexAvailability(networkKey).catch(() => null);
+  if (cached?.contract === DEX_ROUTER) {
+    dexAvailabilityStatus = "available";
+    dexAvailabilityError = null;
+    render(currentState?.unlocked ? currentState : state);
+    return;
+  }
+
+  dexAvailabilityStatus = "checking";
+  dexAvailabilityError = null;
+  dexAvailabilityProbe = (async () => {
+    try {
+      const snapshot = await sendRuntimeMessage<WalletDexSnapshotRuntimeResult>({
+        type: "wallet_get_dex_snapshot"
+      });
+      if (dexAvailabilityNetworkKey !== networkKey) {
+        return;
+      }
+      if (snapshot.available) {
+        dexAvailabilityStatus = "available";
+        dexAvailabilityError = null;
+        tradeSnapshot = snapshot;
+        tradeSnapshotNetworkKey = networkKey;
+        await saveDexAvailability({
+          networkKey,
+          contract: DEX_ROUTER,
+          checkedAt: new Date().toISOString()
+        });
+      } else {
+        dexAvailabilityStatus = "unavailable";
+        dexAvailabilityError = snapshot.reason ?? "DEX is not deployed on this network.";
+      }
+    } catch (error) {
+      if (dexAvailabilityNetworkKey !== networkKey) {
+        return;
+      }
+      dexAvailabilityStatus = "unavailable";
+      dexAvailabilityError = formatError(error);
+    } finally {
+      if (dexAvailabilityNetworkKey === networkKey) {
+        dexAvailabilityProbe = null;
+        render(currentState?.unlocked ? currentState : state);
+      }
+    }
+  })();
+  render(state);
+  return dexAvailabilityProbe;
+}
+
+async function loadTradeSnapshot(
+  state: PopupRuntimeState,
+  options: { force?: boolean } = {}
+): Promise<void> {
+  const networkKey = dexNetworkKey(state);
+  resetDexAvailabilityForNetwork(state);
+  if (tradeSnapshotLoading && !options.force) {
+    return;
+  }
+  if (
+    !options.force &&
+    tradeSnapshot &&
+    tradeSnapshotNetworkKey === networkKey
+  ) {
+    return;
+  }
+
+  tradeSnapshotLoading = true;
+  tradeSnapshotError = null;
+  render(state);
+  try {
+    const snapshot = await sendRuntimeMessage<WalletDexSnapshotRuntimeResult>({
+      type: "wallet_get_dex_snapshot"
+    });
+    if (dexAvailabilityNetworkKey !== networkKey) {
+      return;
+    }
+    tradeSnapshot = snapshot;
+    tradeSnapshotNetworkKey = networkKey;
+    tradeSnapshotError = snapshot.available
+      ? null
+      : snapshot.reason ?? "DEX is not deployed on this network.";
+    dexAvailabilityStatus = snapshot.available ? "available" : "unavailable";
+    dexAvailabilityError = tradeSnapshotError;
+    if (snapshot.available) {
+      await saveDexAvailability({
+        networkKey,
+        contract: DEX_ROUTER,
+        checkedAt: new Date().toISOString()
+      });
+    }
+  } catch (error) {
+    tradeSnapshotError = formatError(error);
+  } finally {
+    if (dexAvailabilityNetworkKey === networkKey) {
+      tradeSnapshotLoading = false;
+      render(currentState?.unlocked ? currentState : state);
+    }
+  }
 }
 
 function captureSendFormState(): void {
@@ -606,12 +814,41 @@ function applyReceiptStateWrites(execution: unknown): void {
 
 /* ── Flash ─────────────────────────────────────────────────── */
 
+function flashIconSvg(icon: FlashIcon | undefined, tone: FlashTone): string {
+  const resolved = icon ?? tone;
+  switch (resolved) {
+    case "success":
+      return ICONS.checkCircle;
+    case "danger":
+      return ICONS.xCircle;
+    case "warning":
+      return ICONS.alertTriangle;
+    case "info":
+      return ICONS.zap;
+    case "none":
+      return "";
+  }
+}
+
 function renderToast(): void {
   if (!flash) {
     toastRoot.innerHTML = "";
     return;
   }
-  const html = `<div class="flash-toast flash-${flash.tone}">${escapeHtml(flash.message)}</div>`;
+  const icon = flashIconSvg(flash.icon, flash.tone);
+  const action = flash.action
+    ? `<a class="flash-action" href="${escapeAttribute(flash.action.href)}" target="_blank" rel="noopener" title="${escapeAttribute(flash.action.title ?? flash.action.href)}">${escapeHtml(flash.action.label)}${ICONS.externalLink}</a>`
+    : "";
+  const html = `
+    <div class="flash-toast flash-${flash.tone}" role="status">
+      ${icon ? `<span class="flash-icon" aria-hidden="true">${icon}</span>` : ""}
+      <span class="flash-content">
+        <span class="flash-message">${escapeHtml(flash.message)}</span>
+        ${flash.detail ? `<span class="flash-detail">${escapeHtml(flash.detail)}</span>` : ""}
+        ${action}
+      </span>
+    </div>
+  `;
   if (toastRoot.innerHTML !== html) {
     toastRoot.innerHTML = html;
   }
@@ -619,17 +856,26 @@ function renderToast(): void {
 
 let flashTimer: ReturnType<typeof setTimeout> | null = null;
 
-function setFlash(message: string, tone: FlashTone = "info"): void {
-  flash = { message, tone };
+function setFlash(
+  message: string,
+  tone: FlashTone = "info",
+  options: Omit<FlashMessage, "message" | "tone"> = {}
+): void {
+  flash = { message, tone, ...options };
   renderToast();
   if (flashTimer) {
     clearTimeout(flashTimer);
+  }
+  const durationMs = options.durationMs ?? (options.action ? 6000 : 3000);
+  if (durationMs <= 0) {
+    flashTimer = null;
+    return;
   }
   flashTimer = setTimeout(() => {
     flash = null;
     flashTimer = null;
     renderToast();
-  }, 3000);
+  }, durationMs);
 }
 
 function clearFlash(): void {
@@ -639,6 +885,148 @@ function clearFlash(): void {
     clearTimeout(flashTimer);
     flashTimer = null;
   }
+}
+
+function transactionExplorerUrl(
+  state: PopupRuntimeState,
+  txHash: string | null | undefined
+): string | null {
+  const trimmedHash = txHash?.trim();
+  const dashboardUrl = state.dashboardUrl?.trim();
+  if (!trimmedHash || !dashboardUrl) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(dashboardUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
+  return `${dashboardUrl.replace(/\/+$/, "")}/explorer/tx/${encodeURIComponent(trimmedHash)}`;
+}
+
+function transactionFlashAction(
+  state: PopupRuntimeState,
+  txHash: string | null | undefined
+): FlashMessage["action"] | undefined {
+  const href = transactionExplorerUrl(state, txHash);
+  if (!href || !txHash) {
+    return undefined;
+  }
+  return {
+    label: "View transaction",
+    href,
+    title: txHash
+  };
+}
+
+function setTransactionFlash(
+  state: PopupRuntimeState,
+  message: string,
+  tone: FlashTone,
+  txHash: string | null | undefined,
+  options: {
+    detail?: string;
+    icon?: FlashIcon;
+    durationMs?: number;
+  } = {}
+): void {
+  setFlash(message, tone, {
+    ...options,
+    action: transactionFlashAction(state, txHash),
+    detail: options.detail ?? (txHash ? truncateHash(txHash) : undefined),
+    durationMs: options.durationMs ?? 6000
+  });
+}
+
+function transactionAccepted(result: SendTransactionResult): boolean {
+  return result.finalized === true || result.accepted === true;
+}
+
+function transactionFinalStatus(
+  result: SendTransactionResult,
+  labels: TransactionFlashLabels = {}
+): {
+  message: string;
+  tone: FlashTone;
+  icon: FlashIcon;
+  detail?: string;
+} | null {
+  if (result.finalized === true) {
+    return {
+      message: labels.finalized ?? "Transaction finalized.",
+      tone: "success",
+      icon: "success"
+    };
+  }
+  if (result.accepted === true) {
+    return {
+      message: labels.accepted ?? "Transaction accepted.",
+      tone: "success",
+      icon: "success"
+    };
+  }
+  if (result.accepted === false || result.submitted === false) {
+    return {
+      message: labels.failed ?? "Transaction failed.",
+      tone: "danger",
+      icon: "danger",
+      detail:
+        typeof result.message === "string" && result.message.trim()
+          ? result.message.trim()
+          : undefined
+    };
+  }
+  return null;
+}
+
+function scheduleTransactionStatusFlash(
+  state: PopupRuntimeState,
+  result: SendTransactionResult,
+  generation: number,
+  delayMs: number,
+  labels: TransactionFlashLabels = {}
+): void {
+  const status = transactionFinalStatus(result, labels);
+  if (!status) {
+    return;
+  }
+  window.setTimeout(() => {
+    if (generation !== transactionFlashGeneration) {
+      return;
+    }
+    setTransactionFlash(state, status.message, status.tone, result.txHash, {
+      icon: status.icon,
+      detail: status.detail
+    });
+  }, delayMs);
+}
+
+function showSubmittedTransactionFlash(
+  state: PopupRuntimeState,
+  result: SendTransactionResult,
+  labels: TransactionFlashLabels = {}
+): {
+  txHash: string | null;
+  generation: number;
+  sentFlashShown: boolean;
+} {
+  const txHash =
+    typeof result.txHash === "string" && result.txHash.trim()
+      ? result.txHash
+      : null;
+  const generation = ++transactionFlashGeneration;
+  const sentFlashShown = result.submitted === true || Boolean(txHash);
+  if (sentFlashShown) {
+    setTransactionFlash(state, labels.sent ?? "Transaction sent.", "info", txHash, {
+      icon: "info"
+    });
+  }
+  return { txHash, generation, sentFlashShown };
 }
 
 /**
@@ -1431,6 +1819,11 @@ function shellModeLabel(mode: WalletShellMode): string {
 }
 
 function renderUnlocked(state: PopupRuntimeState): void {
+  resetDexAvailabilityForNetwork(state);
+  if (activeTab === "home" && dexAvailabilityStatus === "unknown") {
+    void ensureDexAvailability(state);
+  }
+
   const networkTone = toneForNetworkStatus(state.networkStatus);
   const dotClass =
     networkTone === "info"
@@ -1512,6 +1905,8 @@ function renderTabPanel(state: PopupRuntimeState): string {
       return renderHomeTab(state);
     case "send":
       return renderSendTab(state);
+    case "trade":
+      return renderTradeTab(state);
     case "activity":
       return renderActivityTab(state);
     case "apps":
@@ -1608,6 +2003,13 @@ function renderHomeTab(state: PopupRuntimeState): string {
           unavailableCount > 0 ? `${unavailableCount} unavailable` : ""
         ].filter(Boolean).join(" · ")}`
       : "";
+  const tradeEnabled = dexAvailabilityStatus === "available";
+  const tradeChecking = dexAvailabilityStatus === "checking";
+  const tradeTitle = tradeEnabled
+    ? "Trade tokens"
+    : tradeChecking
+      ? "Checking DEX availability"
+      : dexAvailabilityError ?? "DEX is not deployed on this network yet";
 
   return `
     <div class="balance-hero">
@@ -1626,13 +2028,9 @@ function renderHomeTab(state: PopupRuntimeState): string {
         <div class="quick-action-circle">${ICONS.arrowDown}</div>
         <span>Receive</span>
       </button>
-      <button class="quick-action" disabled>
+      <button class="quick-action ${tradeEnabled ? "" : "quick-action-disabled"}" ${tradeEnabled ? "data-go-trade" : "disabled"} title="${escapeAttribute(tradeTitle)}">
         <div class="quick-action-circle">${ICONS.trendingUp}</div>
-        <span>Trade</span>
-      </button>
-      <button class="quick-action" disabled>
-        <div class="quick-action-circle">${ICONS.repeat}</div>
-        <span>Swap</span>
+        <span>${tradeChecking ? "Checking" : "Trade"}</span>
       </button>
     </div>
 
@@ -2336,24 +2734,32 @@ async function fetchActivityTxs(
 function makeLocalActivityTx(
   state: PopupRuntimeState,
   txHash: string,
-  result: NonNullable<typeof sendResult>
+  result: NonNullable<typeof sendResult>,
+  context: {
+    contract: string;
+    function: string;
+    kwargs: Record<string, unknown>;
+  } = {
+    contract: sendContract,
+    function: sendFunction,
+    kwargs: sendParsedKwargs ?? {}
+  }
 ): ActivityTx | null {
   if (!state.publicKey || !txHash.trim()) {
     return null;
   }
-  const kwargs = sendParsedKwargs ?? {};
   return {
     hash: txHash.trim(),
     sender: state.publicKey,
-    contract: sendContract,
-    function: sendFunction,
+    contract: context.contract,
+    function: context.function,
     success: result.finalized || result.accepted === true,
     created_at: new Date().toISOString(),
     payload: {
       sender: state.publicKey,
-      contract: sendContract,
-      function: sendFunction,
-      kwargs
+      contract: context.contract,
+      function: context.function,
+      kwargs: context.kwargs
     },
     result: result.message ? { message: result.message } : undefined,
     local: true,
@@ -2371,9 +2777,14 @@ function upsertActivityTx(tx: ActivityTx): void {
 async function recordLocalActivityTx(
   state: PopupRuntimeState,
   txHash: string,
-  result: NonNullable<typeof sendResult>
+  result: NonNullable<typeof sendResult>,
+  context?: {
+    contract: string;
+    function: string;
+    kwargs: Record<string, unknown>;
+  }
 ): Promise<void> {
-  const tx = makeLocalActivityTx(state, txHash, result);
+  const tx = makeLocalActivityTx(state, txHash, result, context);
   if (!tx || !state.publicKey) {
     return;
   }
@@ -2926,8 +3337,6 @@ function renderSendTab(state: PopupRuntimeState): string {
       return renderSendReview();
     case "sending":
       return renderSendSending();
-    case "result":
-      return renderSendResult(state);
   }
 }
 
@@ -3433,62 +3842,658 @@ function renderSendSending(): string {
   `;
 }
 
-function renderSendResult(state: PopupRuntimeState): string {
-  if (!sendResult) {
-    return renderSendDraft();
+/* ═══════════════════════════════════════════════════════════
+   TRADE TAB
+   ═══════════════════════════════════════════════════════════ */
+
+function formatTradeNumber(value: number, maxDecimals = 6): string {
+  if (!Number.isFinite(value)) return "0";
+  if (value === 0) return "0";
+  const abs = Math.abs(value);
+  const decimals =
+    abs >= 1000
+      ? Math.min(2, maxDecimals)
+      : abs >= 1
+        ? Math.min(4, maxDecimals)
+        : abs >= 0.0001
+          ? Math.min(6, maxDecimals)
+          : Math.min(8, maxDecimals);
+  return value.toLocaleString(undefined, {
+    maximumFractionDigits: decimals,
+    minimumFractionDigits: 0
+  });
+}
+
+function formatTradePercent(value: number, decimals = 2): string {
+  if (!Number.isFinite(value)) return "—";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(decimals)}%`;
+}
+
+function formatBps(bps: number): string {
+  return `${(bps / 100).toFixed(bps % 100 === 0 ? 0 : 2)}%`;
+}
+
+function normalizeTradeSelection(): void {
+  const tokens = sortedDexTokens(tradeSnapshot);
+  if (tokens.length === 0) {
+    return;
   }
-  const ok = sendResult.finalized || sendResult.accepted === true;
-  const explorerBase = state.dashboardUrl
-    ? state.dashboardUrl.replace(/\/+$/, "") + "/explorer/tx/"
-    : null;
-  const hashLink =
-    sendResult.txHash && explorerBase
-      ? `<a href="${escapeAttribute(explorerBase + sendResult.txHash)}" target="_blank" rel="noopener" style="color: var(--accent); text-decoration: none" title="${escapeAttribute(sendResult.txHash)}">${escapeHtml(truncateHash(sendResult.txHash))}</a>`
-      : sendResult.txHash
-        ? `<span title="${escapeAttribute(sendResult.txHash)}">${escapeHtml(truncateHash(sendResult.txHash))}</span>`
-        : null;
+  if (!tokens.some((token) => token.contract === tradeFromToken)) {
+    tradeFromToken =
+      tokens.find((token) => token.contract === "currency")?.contract ??
+      tokens[0]!.contract;
+  }
+  if (
+    !tradeToToken ||
+    tradeToToken === tradeFromToken ||
+    !tokens.some((token) => token.contract === tradeToToken)
+  ) {
+    tradeToToken =
+      tokens.find((token) => token.contract !== tradeFromToken)?.contract ?? "";
+  }
+}
+
+function currentTradeQuote(): {
+  quote: DexQuote | null;
+  error: string | null;
+} {
+  if (!tradeSnapshot?.available) {
+    return { quote: null, error: null };
+  }
+  const amount = Number(tradeAmount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return { quote: null, error: null };
+  }
+  if (!tradeFromToken || !tradeToToken) {
+    return { quote: null, error: "Select both tokens." };
+  }
+  if (tradeFromToken === tradeToToken) {
+    return { quote: null, error: "Tokens must differ." };
+  }
+  const quote = buildDexQuote(
+    tradeSnapshot,
+    tradeFromToken,
+    tradeToToken,
+    amount
+  );
+  return quote
+    ? { quote, error: null }
+    : { quote: null, error: "No route exists between these tokens." };
+}
+
+function renderTradeTokenOptions(selectedContract: string, exclude?: string): string {
+  return sortedDexTokens(tradeSnapshot)
+    .filter((token) => token.contract !== exclude)
+    .map((token) => {
+      const symbol = tokenSymbol(token);
+      return `
+        <option value="${escapeAttribute(token.contract)}" ${token.contract === selectedContract ? "selected" : ""}>
+          ${escapeHtml(symbol)} · ${escapeHtml(token.contract)}
+        </option>
+      `;
+    })
+    .join("");
+}
+
+function renderTradeRoute(quote: DexQuote): string {
+  const contracts = [
+    quote.hops[0]?.fromToken,
+    ...quote.hops.map((hop) => hop.toToken)
+  ].filter((contract): contract is string => Boolean(contract));
+  return contracts
+    .map((contract, index) => {
+      const token = tokenByContract(tradeSnapshot, contract);
+      return `
+        <span class="trade-route-step">
+          <span>${escapeHtml(tokenSymbol(token) || contract.slice(0, 6))}</span>
+          ${index < contracts.length - 1 ? `<span class="trade-route-arrow">›</span>` : ""}
+        </span>
+      `;
+    })
+    .join("");
+}
+
+function renderTradeQuoteSummary(quote: DexQuote): string {
+  if (!tradeSnapshot) {
+    return "";
+  }
+  const fromToken = tokenByContract(tradeSnapshot, tradeFromToken);
+  const toToken = tokenByContract(tradeSnapshot, tradeToToken);
+  const minOut = minReceived(quote, tradeSlippageBps);
+  const priceImpactPct = quote.priceImpact * 100;
+  const priceImpactClass =
+    priceImpactPct >= 5 ? "danger" : priceImpactPct >= 1.5 ? "warning" : "muted";
+  const blocked = blockedIntermediateToken(tradeSnapshot, quote);
+  const useSupporting = useSupportingFeeRoute(tradeSnapshot, quote);
+
+  return `
+    <div class="trade-summary">
+      ${renderSummaryRow("Rate", `1 ${tokenSymbol(fromToken)} ≈ ${formatTradeNumber(quote.amountOut / Math.max(quote.amountIn, 1e-12))} ${tokenSymbol(toToken)}`)}
+      ${renderSummaryRow(`Min received (${formatBps(tradeSlippageBps)} slippage)`, `${formatTradeNumber(minOut)} ${tokenSymbol(toToken)}`)}
+      ${renderSummaryRow("Price impact", formatTradePercent(-priceImpactPct, 2), { title: `${priceImpactPct.toFixed(4)}%` }).replace("s-row-val", `s-row-val ${priceImpactClass}`)}
+      ${renderSummaryRow("DEX fee", formatBps(quote.feeBps))}
+      <div class="s-row">
+        <span class="s-row-key">Route</span>
+        <span class="s-row-val trade-route">${renderTradeRoute(quote)}</span>
+      </div>
+      ${quote.hops.length > 1 ? `<div class="banner banner-info text-sm">${quote.hops.length} hops · best route auto-selected.</div>` : ""}
+      ${useSupporting ? `<div class="banner banner-warning text-sm">Using fee-on-transfer compatible route.</div>` : ""}
+      ${blocked ? `<div class="banner banner-danger text-sm">Route unavailable: intermediate token ${escapeHtml(blocked)} is fee-on-transfer.</div>` : ""}
+      ${priceImpactPct >= 5 ? `<div class="banner banner-danger text-sm">Price impact is high. Consider a smaller trade.</div>` : ""}
+    </div>
+  `;
+}
+
+function renderTradeTab(state: PopupRuntimeState): string {
+  if (tradeStep === "approving") {
+    return renderTradeBusy("Approving token...");
+  }
+  if (tradeStep === "swapping") {
+    return renderTradeBusy("Sending swap...");
+  }
+  if (tradeStep === "review") {
+    return renderTradeReview(state);
+  }
+  return renderTradeForm(state);
+}
+
+function renderTradeForm(state: PopupRuntimeState): string {
+  if (dexAvailabilityStatus !== "available") {
+    void ensureDexAvailability(state);
+    return `
+      <div class="settings-wrap">
+        <button class="detail-back" data-back-home>${ICONS.chevronLeft} Home</button>
+        <div class="s-card">
+          <div class="s-card-head">
+            <div>
+              <h3 class="s-card-title">Trade</h3>
+              <p class="s-card-desc">Swap tokens when the DEX is deployed on this network.</p>
+            </div>
+          </div>
+          <div class="s-card-body stack">
+            ${
+              dexAvailabilityStatus === "checking"
+                ? `<div class="send-centered"><div class="spinner"></div><p class="muted text-sm">Checking DEX availability...</p></div>`
+                : `<div class="banner banner-warning">${escapeHtml(dexAvailabilityError ?? "DEX is not deployed on this network yet.")}</div>`
+            }
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  if (
+    !tradeSnapshotLoading &&
+    (!tradeSnapshot || tradeSnapshotNetworkKey !== dexNetworkKey(state))
+  ) {
+    void loadTradeSnapshot(state);
+  }
+  normalizeTradeSelection();
+
+  const tokens = sortedDexTokens(tradeSnapshot);
+  const fromToken = tokenByContract(tradeSnapshot, tradeFromToken);
+  const toToken = tokenByContract(tradeSnapshot, tradeToToken);
+  const { quote, error: quoteError } = currentTradeQuote();
+  const blocked = tradeSnapshot && quote ? blockedIntermediateToken(tradeSnapshot, quote) : null;
+  const needsApproval =
+    Boolean(fromToken && quote && fromToken.allowance < quote.amountIn);
+  const insufficient =
+    Boolean(fromToken && quote && fromToken.balance < quote.amountIn);
+  const canReview =
+    Boolean(quote && !blocked && !needsApproval && !insufficient);
+  const approvalNotice =
+    tradeApprovalNotice && canReview
+      ? `<div class="banner banner-success text-sm">${escapeHtml(tradeApprovalNotice)}</div>`
+      : "";
+  const primaryLabel = tradeSnapshotLoading
+    ? "Loading markets..."
+    : tokens.length < 2
+      ? "No trade tokens"
+      : !quote
+        ? "Enter amount"
+        : insufficient
+          ? `Insufficient ${tokenSymbol(fromToken)}`
+          : blocked
+            ? "Route unavailable"
+            : needsApproval
+              ? `Approve ${tokenSymbol(fromToken)}`
+              : "Review Swap";
+
+  return `
+    <div class="settings-wrap trade-wrap">
+      <button class="detail-back" data-back-home>${ICONS.chevronLeft} Home</button>
+
+      <div class="s-card trade-card">
+        <div class="s-card-head">
+          <div>
+            <h3 class="s-card-title">Trade</h3>
+            <p class="s-card-desc">Swap through ${escapeHtml(DEX_ROUTER)} on ${escapeHtml(state.activeNetworkName ?? "this network")}.</p>
+          </div>
+          <button class="icon-action" data-refresh-trade title="Refresh markets">${ICONS.repeat}</button>
+        </div>
+        <div class="s-card-body stack">
+          ${tradeSnapshotError ? `<div class="banner banner-warning">${escapeHtml(tradeSnapshotError)}</div>` : ""}
+          ${approvalNotice}
+          <div class="trade-panel">
+            <div class="trade-panel-top">
+              <span class="muted text-sm">From</span>
+              ${fromToken ? `<span class="muted text-sm">Balance: <strong>${escapeHtml(formatTradeNumber(fromToken.balance))}</strong> <button class="send-footer-link trade-max" data-trade-max>MAX</button></span>` : ""}
+            </div>
+            <div class="trade-panel-body">
+              <input id="trade-amount" class="trade-amount-input" type="text" inputmode="decimal" autocomplete="off" value="${escapeAttribute(tradeAmount)}" placeholder="0.00" />
+              <select id="trade-from" class="trade-token-select">${renderTradeTokenOptions(tradeFromToken, tradeToToken)}</select>
+            </div>
+          </div>
+
+          <button class="trade-flip" data-trade-flip title="Flip tokens">${ICONS.repeat}</button>
+
+          <div class="trade-panel">
+            <div class="trade-panel-top">
+              <span class="muted text-sm">To</span>
+              ${toToken ? `<span class="muted text-sm">Balance: <strong>${escapeHtml(formatTradeNumber(toToken.balance))}</strong></span>` : ""}
+            </div>
+            <div class="trade-panel-body">
+              <input class="trade-amount-input" value="${quote ? escapeAttribute(formatTradeNumber(quote.amountOut)) : ""}" placeholder="0.00" readonly />
+              <select id="trade-to" class="trade-token-select">${renderTradeTokenOptions(tradeToToken, tradeFromToken)}</select>
+            </div>
+          </div>
+
+          <div class="trade-settings">
+            <label>
+              Slippage
+              <select id="trade-slippage">
+                ${[50, 100, 300, 500].map((bps) => `<option value="${bps}" ${bps === tradeSlippageBps ? "selected" : ""}>${formatBps(bps)}</option>`).join("")}
+              </select>
+            </label>
+            <label>
+              Deadline
+              <select id="trade-deadline">
+                ${[10, 20, 30, 60].map((minutes) => `<option value="${minutes}" ${minutes === tradeDeadlineMinutes ? "selected" : ""}>${minutes} min</option>`).join("")}
+              </select>
+            </label>
+          </div>
+
+          ${tradeSnapshotLoading ? `<div class="send-centered"><div class="spinner"></div><p class="muted text-sm">Loading markets...</p></div>` : ""}
+          ${quoteError ? `<div class="banner banner-warning text-sm">${escapeHtml(quoteError)}</div>` : ""}
+          ${quote ? renderTradeQuoteSummary(quote) : ""}
+        </div>
+      </div>
+
+      <button class="full-width" ${canReview || needsApproval ? (tradeSnapshotLoading ? "disabled" : "") : "disabled"} ${needsApproval ? "data-approve-trade" : "data-review-trade"}>
+        ${primaryLabel}
+      </button>
+    </div>
+  `;
+}
+
+function renderTradeReview(state: PopupRuntimeState): string {
+  if (!tradeSnapshot || !tradeQuoteForReview || !tradeKwargsForReview) {
+    tradeStep = "form";
+    return renderTradeForm(state);
+  }
+  const fromToken = tokenByContract(tradeSnapshot, tradeFromToken);
+  const toToken = tokenByContract(tradeSnapshot, tradeToToken);
+  const quote = tradeQuoteForReview;
+  const minOut = Number(tradeKwargsForReview.amountOutMin);
+  const chiLabel = tradeEstimate
+    ? formatChiWithXianCost(tradeEstimate.estimated, tradeChiRate) ?? "Not available"
+    : "Not available";
+  const fn =
+    tradeKwargsForReview.path instanceof Array && tradeKwargsForReview.path.length > 0
+      ? tradeSnapshot && useSupportingFeeRoute(tradeSnapshot, quote)
+        ? "swapExactTokensForTokensSupportingFeeOnTransferTokens"
+        : "swapExactTokensForTokens"
+      : "swapExactTokensForTokens";
 
   return `
     <div class="settings-wrap">
-      ${
-        !ok && sendResult.message
-          ? `<div class="banner banner-danger"><strong>Transaction failed</strong><p class="text-sm" style="margin-top: 4px">${escapeHtml(String(sendResult.message))}</p></div>`
-          : ""
-      }
+      <button class="detail-back" data-edit-trade>${ICONS.chevronLeft} Edit</button>
 
-      ${
-        hashLink
-          ? `
-              <div class="s-card">
-                <div class="s-card-body">
-                  <div class="s-row">
-                    <span class="s-row-key">TX Hash</span>
-                    <span class="s-row-val mono" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px">${hashLink}</span>
-                  </div>
-                </div>
-              </div>
-            `
-          : ""
-      }
+      <div class="s-card">
+        <div class="s-card-head">
+          <div><h3 class="s-card-title">Trade summary</h3></div>
+        </div>
+        <div class="s-card-body">
+          ${renderSummaryRow("From", `${formatTradeNumber(quote.amountIn)} ${tokenSymbol(fromToken)}`)}
+          ${renderSummaryRow("To", `~${formatTradeNumber(quote.amountOut)} ${tokenSymbol(toToken)}`)}
+          ${renderSummaryRow("Minimum received", `${formatTradeNumber(minOut)} ${tokenSymbol(toToken)}`)}
+          ${renderSummaryRow("Price impact", formatTradePercent(-(quote.priceImpact * 100), 2))}
+          <div class="s-section-label">Route</div>
+          <div class="s-row">
+            <span class="s-row-key">Path</span>
+            <span class="s-row-val trade-route">${renderTradeRoute(quote)}</span>
+          </div>
+          <div class="s-section-label">Transaction</div>
+          ${renderSummaryRow("Contract", DEX_ROUTER)}
+          ${renderSummaryRow("Function", fn)}
+        </div>
+      </div>
 
-      ${
-        sendMode === "simple" &&
-        ok &&
-        simpleTo &&
-        !contacts.some((c) => c.address === simpleTo)
-          ? showSaveRecipient
-            ? `<div style="display: flex; gap: 6px; align-items: center">
-                 <input id="save-contact-name" class="ide-input" style="flex: 1; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg-0); color: var(--fg); font-size: 13px" placeholder="Contact name" autofocus />
-                 <button class="ghost-sm" data-confirm-save-recipient>Save</button>
-                 <button class="ghost-sm" data-cancel-save-recipient>Cancel</button>
-               </div>`
-            : `<button class="secondary full-width" data-save-recipient>Save recipient as contact</button>`
-          : ""
-      }
+      ${renderTransactionFeeCard(chiLabel)}
 
-      <button class="full-width" data-new-tx>New Transaction</button>
+      <button class="full-width" data-send-trade>Send Swap</button>
     </div>
   `;
+}
+
+function renderTradeBusy(label: string): string {
+  return `
+    <div class="send-centered">
+      <div class="spinner"></div>
+      <p class="muted text-sm">${escapeHtml(label)}</p>
+    </div>
+  `;
+}
+
+function captureTradeFormState(): void {
+  const amount = root.querySelector<HTMLInputElement>("#trade-amount");
+  const from = root.querySelector<HTMLSelectElement>("#trade-from");
+  const to = root.querySelector<HTMLSelectElement>("#trade-to");
+  const slippage = root.querySelector<HTMLSelectElement>("#trade-slippage");
+  const deadline = root.querySelector<HTMLSelectElement>("#trade-deadline");
+  if (amount) tradeAmount = amount.value.trim();
+  if (from) tradeFromToken = from.value;
+  if (to) tradeToToken = to.value;
+  if (slippage) {
+    const parsed = Number(slippage.value);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      tradeSlippageBps = parsed;
+    }
+  }
+  if (deadline) {
+    const parsed = Number(deadline.value);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      tradeDeadlineMinutes = parsed;
+    }
+  }
+}
+
+function renderPreservingTradeAmountFocus(state: PopupRuntimeState): void {
+  const input = root.querySelector<HTMLInputElement>("#trade-amount");
+  const shouldRestore = document.activeElement === input;
+  const start = shouldRestore ? input?.selectionStart ?? input?.value.length ?? null : null;
+  const end = shouldRestore ? input?.selectionEnd ?? input?.value.length ?? null : null;
+
+  render(state);
+
+  if (!shouldRestore) {
+    return;
+  }
+  const nextInput = root.querySelector<HTMLInputElement>("#trade-amount");
+  if (!nextInput) {
+    return;
+  }
+  nextInput.focus({ preventScroll: true });
+  if (start == null || end == null) {
+    return;
+  }
+  const nextLength = nextInput.value.length;
+  try {
+    nextInput.setSelectionRange(
+      Math.min(start, nextLength),
+      Math.min(end, nextLength)
+    );
+  } catch {
+    // Some embedded browser inputs do not support selection restoration.
+  }
+}
+
+function tradeSwapFunction(snapshot: WalletDexSnapshotRuntimeResult, quote: DexQuote): string {
+  return useSupportingFeeRoute(snapshot, quote)
+    ? "swapExactTokensForTokensSupportingFeeOnTransferTokens"
+    : "swapExactTokensForTokens";
+}
+
+function buildTradeSwapKwargs(
+  state: PopupRuntimeState,
+  quote: DexQuote
+): Record<string, unknown> {
+  return {
+    amountIn:
+      runtimeFixedFromString(tradeAmount) ??
+      runtimeFixedFromNumber(quote.amountIn),
+    amountOutMin: runtimeFixedFromNumber(
+      minReceived(quote, tradeSlippageBps),
+      { floor: true }
+    ),
+    path: quote.path,
+    src: tradeFromToken,
+    to: state.publicKey,
+    deadline: deadlineFromNow(tradeDeadlineMinutes)
+  };
+}
+
+async function handleTradeApproval(state: PopupRuntimeState): Promise<void> {
+  captureTradeFormState();
+  if (await reconcileLockedState()) {
+    return;
+  }
+  if (!tradeSnapshot?.available) {
+    setFlash("DEX market data is not loaded.", "warning");
+    render(state);
+    return;
+  }
+  const { quote } = currentTradeQuote();
+  if (!quote) {
+    setFlash("Enter a valid trade amount.", "warning");
+    render(state);
+    return;
+  }
+
+  const kwargs = {
+    amount:
+      runtimeFixedFromString(tradeAmount) ??
+      runtimeFixedFromNumber(quote.amountIn),
+    to: DEX_ROUTER
+  };
+  const notificationState = currentState?.unlocked ? currentState : state;
+  tradeStep = "approving";
+  clearFlash();
+  render(notificationState);
+  try {
+    const result = await sendRuntimeMessage<
+      SendTransactionResult & Record<string, unknown>
+    >({
+      type: "wallet_send_direct_transaction",
+      contract: tradeFromToken,
+      function: "approve",
+      kwargs
+    });
+    const { txHash, generation, sentFlashShown } =
+      showSubmittedTransactionFlash(notificationState, result, {
+        sent: "Approval transaction sent."
+      });
+    const receipt = result.receipt ?? null;
+    const execution =
+      receipt && typeof receipt === "object"
+        ? (receipt as Record<string, unknown>).execution
+        : null;
+    applyReceiptStateWrites(execution);
+
+    if (transactionAccepted(result)) {
+      if (txHash) {
+        void recordLocalActivityTx(notificationState, txHash, result, {
+          contract: tradeFromToken,
+          function: "approve",
+          kwargs
+        });
+      }
+      refreshActivityAfterTransaction(notificationState, txHash);
+      tradeStep = "form";
+      tradeApprovalNotice =
+        "Approval complete. Review and send the swap to complete the trade.";
+      await loadTradeSnapshot(notificationState, { force: true });
+    } else {
+      tradeStep = "form";
+      tradeApprovalNotice = null;
+      render(currentState?.unlocked ? currentState : notificationState);
+    }
+    scheduleTransactionStatusFlash(
+      notificationState,
+      result,
+      generation,
+      sentFlashShown ? 1600 : 0,
+      {
+        finalized: "Approval finalized. Review and send the swap.",
+        accepted: "Approval accepted. Review and send the swap.",
+        failed: "Approval failed."
+      }
+    );
+  } catch (error) {
+    tradeStep = "form";
+    tradeApprovalNotice = null;
+    if (await reconcileLockedState()) {
+      return;
+    }
+    setFlash(formatError(error), "danger");
+    render(currentState?.unlocked ? currentState : notificationState);
+  }
+}
+
+async function handleTradeReview(state: PopupRuntimeState): Promise<void> {
+  captureTradeFormState();
+  if (await reconcileLockedState()) {
+    return;
+  }
+  if (!tradeSnapshot?.available) {
+    await loadTradeSnapshot(state, { force: true });
+  }
+  if (!tradeSnapshot?.available) {
+    setFlash(tradeSnapshotError ?? "DEX market data is not loaded.", "warning");
+    render(currentState?.unlocked ? currentState : state);
+    return;
+  }
+
+  const { quote, error } = currentTradeQuote();
+  if (!quote) {
+    setFlash(error ?? "Enter a valid trade amount.", "warning");
+    render(currentState?.unlocked ? currentState : state);
+    return;
+  }
+  const fromToken = tokenByContract(tradeSnapshot, tradeFromToken);
+  if (fromToken && fromToken.balance < quote.amountIn) {
+    setFlash(`Insufficient ${tokenSymbol(fromToken)} balance.`, "warning");
+    render(currentState?.unlocked ? currentState : state);
+    return;
+  }
+  if (fromToken && fromToken.allowance < quote.amountIn) {
+    setFlash(`Approve ${tokenSymbol(fromToken)} first.`, "warning");
+    render(currentState?.unlocked ? currentState : state);
+    return;
+  }
+  const blocked = blockedIntermediateToken(tradeSnapshot, quote);
+  if (blocked) {
+    setFlash(`Route unavailable: ${blocked} is fee-on-transfer.`, "warning");
+    render(currentState?.unlocked ? currentState : state);
+    return;
+  }
+
+  const fn = tradeSwapFunction(tradeSnapshot, quote);
+  const kwargs = buildTradeSwapKwargs(state, quote);
+  tradeQuoteForReview = quote;
+  tradeKwargsForReview = kwargs;
+  tradeEstimate = null;
+  tradeChiRate = null;
+  clearFlash();
+  try {
+    [tradeEstimate, tradeChiRate] = await Promise.all([
+      sendRuntimeMessage<{ estimated: number }>({
+        type: "wallet_estimate_transaction",
+        contract: DEX_ROUTER,
+        function: fn,
+        kwargs
+      }),
+      sendRuntimeMessage<number | null>({ type: "wallet_get_chi_rate" }),
+    ]);
+    if (await reconcileLockedState()) {
+      return;
+    }
+    tradeStep = "review";
+    render(currentState?.unlocked ? currentState : state);
+  } catch (error) {
+    if (await reconcileLockedState()) {
+      return;
+    }
+    setFlash(formatError(error), "danger");
+    render(currentState?.unlocked ? currentState : state);
+  }
+}
+
+async function handleTradeSend(state: PopupRuntimeState): Promise<void> {
+  if (!tradeSnapshot || !tradeQuoteForReview || !tradeKwargsForReview) {
+    tradeStep = "form";
+    render(state);
+    return;
+  }
+  if (await reconcileLockedState()) {
+    return;
+  }
+
+  const quote = tradeQuoteForReview;
+  const kwargs = tradeKwargsForReview;
+  const fn = tradeSwapFunction(tradeSnapshot, quote);
+  const chi = tradeEstimate?.estimated;
+  const notificationState = currentState?.unlocked ? currentState : state;
+  tradeStep = "swapping";
+  render(notificationState);
+
+  try {
+    const result = await sendRuntimeMessage<
+      SendTransactionResult & Record<string, unknown>
+    >({
+      type: "wallet_send_direct_transaction",
+      contract: DEX_ROUTER,
+      function: fn,
+      kwargs,
+      chi
+    });
+    const { txHash, generation, sentFlashShown } =
+      showSubmittedTransactionFlash(notificationState, result, {
+        sent: "Swap transaction sent."
+      });
+    const receipt = result.receipt ?? null;
+    const execution =
+      receipt && typeof receipt === "object"
+        ? (receipt as Record<string, unknown>).execution
+        : null;
+    applyReceiptStateWrites(execution);
+
+    if (transactionAccepted(result)) {
+      if (txHash) {
+        void recordLocalActivityTx(notificationState, txHash, result, {
+          contract: DEX_ROUTER,
+          function: fn,
+          kwargs
+        });
+      }
+      refreshActivityAfterTransaction(notificationState, txHash);
+      resetTradeForm();
+      activeTab = "home";
+    } else {
+      tradeStep = "review";
+    }
+    void refresh();
+    render(currentState?.unlocked ? currentState : notificationState);
+    scheduleTransactionStatusFlash(
+      notificationState,
+      result,
+      generation,
+      sentFlashShown ? 1600 : 0,
+      {
+        finalized: "Swap finalized.",
+        accepted: "Swap accepted.",
+        failed: "Swap failed."
+      }
+    );
+  } catch (error) {
+    tradeStep = "review";
+    if (await reconcileLockedState()) {
+      return;
+    }
+    setFlash(formatError(error), "danger");
+    render(currentState?.unlocked ? currentState : notificationState);
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -4111,6 +5116,24 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     });
 
   root
+    .querySelector<HTMLElement>("[data-go-trade]")
+    ?.addEventListener("click", () => {
+      clearFlash();
+      activeTab = "trade";
+      tradeStep = "form";
+      render(state);
+      void loadTradeSnapshot(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-back-home]")
+    ?.addEventListener("click", () => {
+      activeTab = "home";
+      clearFlash();
+      render(state);
+    });
+
+  root
     .querySelector<HTMLElement>("[data-show-receive]")
     ?.addEventListener("click", () => {
       clearFlash();
@@ -4124,6 +5147,122 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       showReceive = false;
       clearFlash();
       render(state);
+    });
+
+  /* ── Trade handlers ─────────────────────────────────────── */
+
+  root
+    .querySelector<HTMLElement>("[data-refresh-trade]")
+    ?.addEventListener("click", () => {
+      void loadTradeSnapshot(state, { force: true });
+    });
+
+  root
+    .querySelector<HTMLInputElement>("#trade-amount")
+    ?.addEventListener("input", () => {
+      captureTradeFormState();
+      tradeEstimate = null;
+      tradeQuoteForReview = null;
+      tradeKwargsForReview = null;
+      tradeApprovalNotice = null;
+      renderPreservingTradeAmountFocus(state);
+    });
+
+  root
+    .querySelector<HTMLSelectElement>("#trade-from")
+    ?.addEventListener("change", () => {
+      captureTradeFormState();
+      tradeEstimate = null;
+      tradeQuoteForReview = null;
+      tradeKwargsForReview = null;
+      tradeApprovalNotice = null;
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLSelectElement>("#trade-to")
+    ?.addEventListener("change", () => {
+      captureTradeFormState();
+      tradeEstimate = null;
+      tradeQuoteForReview = null;
+      tradeKwargsForReview = null;
+      tradeApprovalNotice = null;
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLSelectElement>("#trade-slippage")
+    ?.addEventListener("change", () => {
+      captureTradeFormState();
+      tradeEstimate = null;
+      tradeQuoteForReview = null;
+      tradeKwargsForReview = null;
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLSelectElement>("#trade-deadline")
+    ?.addEventListener("change", () => {
+      captureTradeFormState();
+      tradeEstimate = null;
+      tradeQuoteForReview = null;
+      tradeKwargsForReview = null;
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-trade-max]")
+    ?.addEventListener("click", () => {
+      const fromToken = tokenByContract(tradeSnapshot, tradeFromToken);
+      if (!fromToken) {
+        return;
+      }
+      tradeAmount = String(fromToken.balance);
+      tradeEstimate = null;
+      tradeQuoteForReview = null;
+      tradeKwargsForReview = null;
+      tradeApprovalNotice = null;
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-trade-flip]")
+    ?.addEventListener("click", () => {
+      const nextFrom = tradeToToken;
+      tradeToToken = tradeFromToken;
+      tradeFromToken = nextFrom;
+      tradeAmount = "";
+      tradeEstimate = null;
+      tradeQuoteForReview = null;
+      tradeKwargsForReview = null;
+      tradeApprovalNotice = null;
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-approve-trade]")
+    ?.addEventListener("click", () => {
+      void handleTradeApproval(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-review-trade]")
+    ?.addEventListener("click", () => {
+      void handleTradeReview(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-edit-trade]")
+    ?.addEventListener("click", () => {
+      tradeStep = "form";
+      clearFlash();
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-send-trade]")
+    ?.addEventListener("click", () => {
+      void handleTradeSend(state);
     });
 
   /* ── Manage assets ────────────────────────────────────────── */
@@ -4731,7 +5870,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
 
       try {
         sendResult = await sendRuntimeMessage<
-          typeof sendResult & Record<string, unknown>
+          SendTransactionResult & Record<string, unknown>
         >({
           type: "wallet_send_direct_transaction",
           contract: sendContract,
@@ -4739,40 +5878,37 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           kwargs: sendParsedKwargs,
           chi
         });
-        sendStep = "result";
-        const ok =
-          sendResult?.finalized || sendResult?.accepted === true;
-        setFlash(
-          ok
-            ? sendResult?.finalized
-              ? "Transaction finalized."
-              : "Transaction accepted."
-            : sendResult?.submitted
-              ? "Transaction submitted but not accepted."
-              : "Transaction failed.",
-          ok ? "success" : "danger"
-        );
-        const receipt =
-          sendResult && typeof sendResult === "object"
-            ? (sendResult as Record<string, unknown>).receipt
-            : null;
+        const result = sendResult;
+        const notificationState = currentState?.unlocked ? currentState : state;
+        const { txHash, generation, sentFlashShown } =
+          showSubmittedTransactionFlash(notificationState, result);
+
+        const ok = transactionAccepted(result);
+        const receipt = result.receipt ?? null;
         const execution =
           receipt && typeof receipt === "object"
             ? (receipt as Record<string, unknown>).execution
             : null;
         applyReceiptStateWrites(execution);
-        void refresh(ok ? null : undefined);
+
         if (ok) {
-          const txHash =
-            sendResult && typeof sendResult.txHash === "string"
-              ? sendResult.txHash
-              : null;
-          if (txHash && sendResult) {
-            void recordLocalActivityTx(state, txHash, sendResult);
+          if (txHash) {
+            void recordLocalActivityTx(state, txHash, result);
           }
           refreshActivityAfterTransaction(state, txHash);
+          resetSendState();
+          activeTab = "home";
+        } else {
+          sendStep = "review";
         }
+        void refresh();
         render(currentState?.unlocked ? currentState : state);
+        scheduleTransactionStatusFlash(
+          notificationState,
+          result,
+          generation,
+          sentFlashShown ? 1600 : 0
+        );
       } catch (error) {
         sendStep = "review";
         if (await reconcileLockedState()) {
@@ -4781,55 +5917,6 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         setFlash(formatError(error), "danger");
         render(currentState?.unlocked ? currentState : state);
       }
-    });
-
-  root
-    .querySelector<HTMLElement>("[data-new-tx]")
-    ?.addEventListener("click", () => {
-      resetSendState();
-      clearFlash();
-      render(state);
-    });
-
-  root
-    .querySelector<HTMLElement>("[data-save-recipient]")
-    ?.addEventListener("click", () => {
-      showSaveRecipient = true;
-      render(state);
-    });
-
-  root
-    .querySelector<HTMLElement>("[data-cancel-save-recipient]")
-    ?.addEventListener("click", () => {
-      showSaveRecipient = false;
-      render(state);
-    });
-
-  root
-    .querySelector<HTMLElement>("[data-confirm-save-recipient]")
-    ?.addEventListener("click", async () => {
-      const input = root.querySelector<HTMLInputElement>("#save-contact-name");
-      const name = input?.value.trim();
-      if (!name || !simpleTo) return;
-      contacts.push({ id: crypto.randomUUID(), name, address: simpleTo });
-      await sendRuntimeMessage<null>({ type: "contacts_save", contacts });
-      showSaveRecipient = false;
-      setFlash("Contact saved.", "success");
-      render(state);
-    });
-
-  // Also support Enter key in the contact name input
-  root
-    .querySelector<HTMLInputElement>("#save-contact-name")
-    ?.addEventListener("keydown", async (e) => {
-      if (e.key !== "Enter") return;
-      const name = (e.target as HTMLInputElement).value.trim();
-      if (!name || !simpleTo) return;
-      contacts.push({ id: crypto.randomUUID(), name, address: simpleTo });
-      await sendRuntimeMessage<null>({ type: "contacts_save", contacts });
-      showSaveRecipient = false;
-      setFlash("Contact saved.", "success");
-      render(state);
     });
 
   /* ── Simple send handlers ─────────────────────────────────── */

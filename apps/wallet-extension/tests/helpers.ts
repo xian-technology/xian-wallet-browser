@@ -207,10 +207,16 @@ export async function startMockRpcServer(options?: {
   chiEstimate?: number | null;
   nextNonce?: number;
   txHash?: string;
+  broadcastCheckCode?: number;
+  broadcastDeliverCode?: number;
+  broadcastLog?: string;
 }) {
   const chainId = options?.chainId ?? "xian-local";
   const nextNonce = options?.nextNonce ?? 7;
   const txHash = options?.txHash ?? "ABC123";
+  const broadcastCheckCode = options?.broadcastCheckCode ?? 0;
+  const broadcastDeliverCode = options?.broadcastDeliverCode ?? 0;
+  const broadcastLog = options?.broadcastLog ?? "";
   const requests: string[] = [];
 
   const server = createServer((request, response) => {
@@ -342,6 +348,22 @@ export async function startMockRpcServer(options?: {
         json(response, 200, {
           result: {
             hash: txHash
+          }
+        });
+        return;
+      case "/broadcast_tx_commit":
+        json(response, 200, {
+          result: {
+            hash: txHash,
+            height: "1",
+            check_tx: {
+              code: broadcastCheckCode,
+              log: broadcastCheckCode === 0 ? "" : broadcastLog
+            },
+            deliver_tx: {
+              code: broadcastDeliverCode,
+              log: broadcastDeliverCode === 0 ? "" : broadcastLog
+            }
           }
         });
         return;

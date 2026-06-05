@@ -259,6 +259,40 @@ export interface WalletAssetBalanceSnapshot {
   assetNetworkStates: WalletAssetNetworkStates;
 }
 
+export interface WalletDexPairInfo {
+  id: number;
+  token0: string;
+  token1: string;
+  reserve0: number;
+  reserve1: number;
+  totalSupply: number;
+  blockTimestampLast: string | null;
+  creationTime: string | null;
+}
+
+export interface WalletDexTokenInfo {
+  contract: string;
+  name: string | null;
+  symbol: string | null;
+  logoUrl: string | null;
+  logoSvg: string | null;
+  precision: number | null;
+  balance: number;
+  allowance: number;
+  feeOnTransfer: boolean;
+}
+
+export interface WalletDexSnapshot {
+  available: boolean;
+  contract: string;
+  pairsContract: string;
+  reason?: string;
+  tradeFeeBps: number;
+  maxHops: number;
+  pairs: WalletDexPairInfo[];
+  tokens: WalletDexTokenInfo[];
+}
+
 export interface WalletDetectedAsset extends XianWatchedAsset {
   balance: string | null;
   tracked: boolean;

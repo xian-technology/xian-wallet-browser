@@ -752,7 +752,10 @@ main {
 }
 
 .flash-toast {
-  padding: 10px 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
   border-radius: 12px;
   font-size: 13px;
   font-weight: 600;
@@ -765,15 +768,79 @@ main {
   pointer-events: auto;
 }
 
+.flash-icon {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.flash-icon svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.flash-content {
+  min-width: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.flash-message {
+  line-height: 1.25;
+}
+
+.flash-detail {
+  color: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+  opacity: 0.82;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flash-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  margin-top: 2px;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.flash-action:hover {
+  color: inherit;
+  opacity: 0.86;
+  transform: none;
+}
+
+.flash-action svg {
+  width: 12px;
+  height: 12px;
+}
+
 @keyframes toast-in {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
 .flash-info {
-  background: var(--accent-soft);
-  border-color: rgba(173, 255, 47, 0.12);
-  color: var(--accent);
+  background: rgba(28, 36, 18, 0.98);
+  border-color: rgba(173, 255, 47, 0.32);
+  color: #f5ffe8;
 }
 
 .flash-success {
@@ -2398,6 +2465,110 @@ textarea {
 .send-footer-link:hover {
   color: var(--fg);
   background: var(--bg-2);
+}
+
+/* ── Trade flow ───────────────────────────────────────────── */
+.trade-wrap {
+  gap: 12px;
+}
+
+.trade-card .s-card-body {
+  gap: 10px;
+}
+
+.trade-panel {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-0);
+  padding: 12px;
+}
+
+.trade-panel-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.trade-panel-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 132px;
+  gap: 8px;
+  align-items: center;
+}
+
+.trade-amount-input {
+  min-width: 0;
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.trade-token-select {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.trade-flip {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  padding: 0;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--text-secondary);
+}
+
+.trade-flip svg {
+  width: 16px;
+  height: 16px;
+}
+
+.trade-settings {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.trade-settings label {
+  font-size: 12px;
+}
+
+.trade-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.trade-route {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.trade-route-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.trade-route-arrow {
+  color: var(--muted);
+}
+
+.trade-max {
+  padding: 0 0 0 4px;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 800;
 }
 
 /* ── Button spinner ───────────────────────────────────────── */

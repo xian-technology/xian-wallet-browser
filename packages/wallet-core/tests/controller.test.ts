@@ -927,6 +927,128 @@ describe("@xian-tech/wallet-core controller", () => {
     );
   });
 
+  it("detects DEX deployment and returns trade snapshot state", async () => {
+    const store = createStore();
+    const client = createClient();
+    client.getContractMethods = vi.fn(async (contract: string) =>
+      contract === "con_dex"
+        ? [
+            { name: "swapExactTokensForTokens", arguments: [] },
+            {
+              name: "swapExactTokensForTokensSupportingFeeOnTransferTokens",
+              arguments: []
+            }
+          ]
+        : []
+    );
+    client.getState = vi.fn(
+      async (contract: string, variable: string, keys: string[] = []) => {
+        if (contract === "con_pairs" && variable === "pairs_num") return 1;
+        if (contract === "con_pairs" && variable === "pairs") {
+          const [, field] = keys;
+          if (field === "token0") return "currency";
+          if (field === "token1") return "con_token";
+          if (field === "reserve0") return "100";
+          if (field === "reserve1") return "50";
+          if (field === "totalSupply") return "70";
+          if (field === "blockTimestampLast") return "2026-01-01T00:00:00Z";
+          if (field === "creationTime") return "2026-01-01T00:00:00Z";
+        }
+        if (variable === "metadata" && keys[0] === "precision") return 8;
+        if (variable === "approvals" && keys[1] === "con_dex") {
+          return contract === "currency" ? "25" : "0";
+        }
+        if (
+          contract === "con_dex" &&
+          variable === "fee_on_transfer_tokens" &&
+          keys[0] === "con_token"
+        ) {
+          return true;
+        }
+        return null;
+      }
+    );
+    client.call = vi.fn(async () => 30);
+    client.getBalance = vi.fn(async (_address, options) =>
+      options?.contract === "currency" ? "42" : "7"
+    );
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      now: vi.fn(() => 123)
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+
+    const snapshot = await controller.getDexSnapshot();
+
+    expect(snapshot.available).toBe(true);
+    expect(snapshot.pairs).toEqual([
+      expect.objectContaining({
+        id: 1,
+        token0: "currency",
+        token1: "con_token",
+        reserve0: 100,
+        reserve1: 50
+      })
+    ]);
+    expect(snapshot.tokens).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          contract: "currency",
+          balance: 42,
+          allowance: 25,
+          feeOnTransfer: false
+        }),
+        expect.objectContaining({
+          contract: "con_token",
+          balance: 7,
+          allowance: 0,
+          feeOnTransfer: true
+        })
+      ])
+    );
+  });
+
+  it("reports DEX unavailable when con_dex swap exports are missing", async () => {
+    const store = createStore();
+    const client = createClient();
+    client.getContractMethods = vi.fn(async () => []);
+    client.getState = vi.fn(async () => null);
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      now: vi.fn(() => 123)
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+
+    const snapshot = await controller.getDexSnapshot();
+
+    expect(snapshot.available).toBe(false);
+    expect(snapshot.reason).toContain("con_dex");
+    expect(snapshot.pairs).toEqual([]);
+    expect(snapshot.tokens).toEqual([]);
+  });
+
   it("filters contract methods to exported functions when source metadata is available", async () => {
     const store = createStore();
     const client = createClient();

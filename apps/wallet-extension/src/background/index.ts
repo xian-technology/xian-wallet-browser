@@ -547,6 +547,9 @@ chrome.runtime.onMessage.addListener(
           case "wallet_get_contract_methods":
             sendResponse(ok(await controller.getContractMethods(message.contract)));
             return;
+          case "wallet_get_dex_snapshot":
+            sendResponse(ok(await controller.getDexSnapshot()));
+            return;
           case "wallet_create":
             {
               const created = await controller.createOrImportWallet(message);

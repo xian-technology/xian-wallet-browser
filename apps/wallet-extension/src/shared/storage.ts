@@ -711,6 +711,64 @@ export async function saveContacts(contacts: StoredContact[]): Promise<void> {
   await chrome.storage.local.set({ [CONTACTS_STORAGE_KEY]: contacts });
 }
 
+/* ── DEX availability ──────────────────────────────────────── */
+
+const DEX_AVAILABILITY_STORAGE_KEY = "xianWalletDexAvailability";
+
+export interface StoredDexAvailability {
+  networkKey: string;
+  contract: string;
+  checkedAt: string;
+}
+
+type DexAvailabilityStore = Record<string, StoredDexAvailability>;
+
+function normalizeDexAvailabilityStore(value: unknown): DexAvailabilityStore {
+  if (!isRecord(value)) {
+    return {};
+  }
+  const store: DexAvailabilityStore = {};
+  for (const [networkKey, entry] of Object.entries(value)) {
+    if (!networkKey || !isRecord(entry)) {
+      continue;
+    }
+    if (
+      typeof entry.networkKey === "string" &&
+      typeof entry.contract === "string" &&
+      typeof entry.checkedAt === "string"
+    ) {
+      store[networkKey] = {
+        networkKey: entry.networkKey,
+        contract: entry.contract,
+        checkedAt: entry.checkedAt
+      };
+    }
+  }
+  return store;
+}
+
+async function loadDexAvailabilityStore(): Promise<DexAvailabilityStore> {
+  const raw = await storageGet<unknown>(DEX_AVAILABILITY_STORAGE_KEY);
+  return normalizeDexAvailabilityStore(decodeStorageValue(raw));
+}
+
+export async function loadDexAvailability(
+  networkKey: string
+): Promise<StoredDexAvailability | null> {
+  const store = await loadDexAvailabilityStore();
+  return store[networkKey] ?? null;
+}
+
+export async function saveDexAvailability(
+  availability: StoredDexAvailability
+): Promise<void> {
+  const store = await loadDexAvailabilityStore();
+  store[availability.networkKey] = availability;
+  await storageSet({
+    [DEX_AVAILABILITY_STORAGE_KEY]: encodeStorageValue(store)
+  });
+}
+
 /* ── Local activity fallback ────────────────────────────────── */
 
 const LOCAL_ACTIVITY_STORAGE_KEY = "xianWalletLocalActivity";

@@ -8,7 +8,8 @@ import type {
   WalletAssetBalanceSnapshot,
   WalletBackup,
   WalletConnectedDappMetadata,
-  WalletCreateResult
+  WalletCreateResult,
+  WalletDexSnapshot
 } from "@xian-tech/wallet-core";
 
 import type { WalletShellMode } from "./preferences";
@@ -221,6 +222,10 @@ export interface WalletGetContractMethodsRuntimeMessage {
   contract: string;
 }
 
+export interface WalletGetDexSnapshotRuntimeMessage {
+  type: "wallet_get_dex_snapshot";
+}
+
 export interface WalletAddAccountRuntimeMessage {
   type: "wallet_add_account";
 }
@@ -353,6 +358,7 @@ export type RuntimeMessage =
   | WalletGetChiRateRuntimeMessage
   | WalletSendDirectTransactionRuntimeMessage
   | WalletGetContractMethodsRuntimeMessage
+  | WalletGetDexSnapshotRuntimeMessage
   | WalletAddAccountRuntimeMessage
   | WalletSwitchAccountRuntimeMessage
   | WalletRenameAccountRuntimeMessage
@@ -386,6 +392,7 @@ export type WalletCreateRuntimeResult = Omit<WalletCreateResult, "popupState"> &
 };
 export type WalletAssetBalanceRuntimeResult = WalletAssetBalanceSnapshot;
 export type ShieldedSnapshotHistoryRuntimeResult = ShieldedWalletHistoryStatus;
+export type WalletDexSnapshotRuntimeResult = WalletDexSnapshot;
 
 export interface RuntimeFailure {
   ok: false;
