@@ -167,6 +167,11 @@ interface TxArg {
   typeFixed?: boolean;
 }
 
+type ContractMethod = {
+  name: string;
+  arguments: { name: string; type: string }[];
+};
+
 let sendMode: SendMode = "simple";
 let sendStep: SendStep = "draft";
 
@@ -207,7 +212,7 @@ let sendResult: {
   message?: unknown;
 } | null = null;
 let argIdCounter = 0;
-let contractMethods: { name: string; arguments: { name: string; type: string }[] }[] = [];
+let contractMethods: ContractMethod[] = [];
 let contractMethodsLoading = false;
 let contractMethodsError: string | null = null;
 let contractMethodsFor: string | null = null;
@@ -296,6 +301,31 @@ function mapContractType(annotation: string): TxArgType {
   }
 }
 
+function sendArgsFromMethod(method: ContractMethod): TxArg[] {
+  return method.arguments.map((a) => {
+    const t = mapContractType(a.type);
+    return {
+      id: String(++argIdCounter),
+      name: a.name,
+      value: "",
+      type: t,
+      fixed: true,
+      typeFixed: t !== "Any"
+    };
+  });
+}
+
+function syncSendArgsForSelectedFunction(): void {
+  const method = contractMethods.find((m) => m.name === sendFunction);
+  if (!method) {
+    sendArgs = [];
+    return;
+  }
+  if (sendArgs.length === 0) {
+    sendArgs = sendArgsFromMethod(method);
+  }
+}
+
 function buildSendKwargs(): Record<string, unknown> {
   const kwargs: Record<string, unknown> = {};
   for (const arg of sendArgs) {
@@ -303,6 +333,61 @@ function buildSendKwargs(): Record<string, unknown> {
     kwargs[arg.name] = parseArgValue(arg.value, arg.type);
   }
   return kwargs;
+}
+
+async function loadContractMethodsForSend(
+  contractName: string,
+  state: PopupRuntimeState
+): Promise<void> {
+  const nextContract = contractName.trim();
+  if (
+    !nextContract ||
+    (nextContract === contractMethodsFor &&
+      (contractMethodsLoading || contractMethods.length > 0 || contractMethodsError))
+  ) {
+    return;
+  }
+
+  sendContract = nextContract;
+  contractMethodsFor = nextContract;
+  contractMethods = [];
+  contractMethodsLoading = true;
+  contractMethodsError = null;
+  if (!sendFunction) {
+    sendArgs = [];
+  }
+  render(state);
+
+  try {
+    const methods = await sendRuntimeMessage<ContractMethod[]>({
+      type: "wallet_get_contract_methods",
+      contract: nextContract
+    });
+    if (contractMethodsFor !== nextContract || sendContract !== nextContract) {
+      return;
+    }
+    contractMethods = methods;
+    if (!contractMethods.some((method) => method.name === sendFunction)) {
+      sendFunction = "";
+      sendArgs = [];
+    } else {
+      syncSendArgsForSelectedFunction();
+    }
+    contractMethodsLoading = false;
+    if (contractMethods.length === 0) {
+      contractMethodsError = "No transaction functions found for this contract.";
+    }
+  } catch (error) {
+    if (contractMethodsFor !== nextContract || sendContract !== nextContract) {
+      return;
+    }
+    contractMethodsLoading = false;
+    contractMethodsError = formatError(error);
+    contractMethods = [];
+  }
+  if (contractMethodsFor === nextContract) {
+    render(state);
+  }
 }
 
 /* ── Utilities ─────────────────────────────────────────────── */
@@ -2648,11 +2733,59 @@ function approvalRiskLabel(kind: ApprovalView["kind"]): string {
   }
 }
 
+type ApprovalDetailItem = NonNullable<ApprovalView["details"]>[number];
+
+function splitFeeDetail(details: ApprovalDetailItem[]): {
+  summaryDetails: ApprovalDetailItem[];
+  feeDetail: ApprovalDetailItem | null;
+} {
+  const feeIndex = details.findIndex(
+    (detail) => detail.label.toLowerCase() === "chi"
+  );
+  if (feeIndex < 0) {
+    return { summaryDetails: details, feeDetail: null };
+  }
+  return {
+    summaryDetails: [
+      ...details.slice(0, feeIndex),
+      ...details.slice(feeIndex + 1)
+    ],
+    feeDetail: details[feeIndex] ?? null
+  };
+}
+
+function renderSummaryRow(
+  label: string,
+  value: string,
+  options: { monospace?: boolean; title?: string } = {}
+): string {
+  const title = options.title ?? value;
+  return `
+    <div class="s-row">
+      <span class="s-row-key">${escapeHtml(label)}</span>
+      <span class="s-row-val ${options.monospace ? "mono" : ""}" title="${escapeAttribute(title)}">${escapeHtml(value)}</span>
+    </div>
+  `;
+}
+
+function renderTransactionFeeCard(value: string): string {
+  return `
+    <div class="s-card transaction-fee-card">
+      <div class="s-card-head">
+        <div><h3 class="s-card-title">Transaction fee</h3></div>
+      </div>
+      <div class="s-card-body">
+        ${renderSummaryRow("Chi", value)}
+      </div>
+    </div>
+  `;
+}
+
 function renderApprovalInline(view: ApprovalView): string {
   const tone = approvalTone(view.kind);
   const warnings = view.warnings ?? [];
   const highlights = view.highlights ?? [];
-  const details = view.details ?? [];
+  const { summaryDetails, feeDetail } = splitFeeDetail(view.details ?? []);
 
   return `
     <div class="settings-wrap">
@@ -2680,21 +2813,18 @@ function renderApprovalInline(view: ApprovalView): string {
               : ""
           }
           ${
-            details.length > 0
-              ? details
+            summaryDetails.length > 0
+              ? summaryDetails
                   .map(
-                    (d) => `
-                      <div class="s-row">
-                        <span class="s-row-key">${escapeHtml(d.label)}</span>
-                        <span class="s-row-val ${d.monospace ? "mono" : ""}">${escapeHtml(d.value)}</span>
-                      </div>
-                    `
+                    (d) => renderSummaryRow(d.label, d.value, { monospace: d.monospace })
                   )
                   .join("")
               : ""
           }
         </div>
       </div>
+
+      ${feeDetail ? renderTransactionFeeCard(feeDetail.value) : ""}
 
       ${
         view.payload
@@ -3213,14 +3343,18 @@ function renderSendReview(): string {
   const argumentRows = entries
     .map(([k, v]) => {
       const formatted = formatTxArgValue(v);
-      return `
-        <div class="s-row">
-          <span class="s-row-key">${escapeHtml(k)}</span>
-          <span class="s-row-val" title="${escapeAttribute(formatted)}">${escapeHtml(formatted)}</span>
-        </div>
-      `;
+      return renderSummaryRow(k, formatted);
     })
     .join("");
+  const argumentsHtml = entries.length > 0
+    ? `
+        <div class="s-section-label">Arguments</div>
+        ${argumentRows}
+      `
+    : `
+        <div class="s-section-label">Arguments</div>
+        <div class="s-empty-row">No arguments</div>
+      `;
 
   return `
     <div class="settings-wrap">
@@ -3231,21 +3365,13 @@ function renderSendReview(): string {
           <div><h3 class="s-card-title">Transaction summary</h3></div>
         </div>
         <div class="s-card-body">
-          <div class="s-row">
-            <span class="s-row-key">Contract</span>
-            <span class="s-row-val">${escapeHtml(sendContract)}</span>
-          </div>
-          <div class="s-row">
-            <span class="s-row-key">Function</span>
-            <span class="s-row-val">${escapeHtml(sendFunction)}</span>
-          </div>
-          ${argumentRows}
-          <div class="s-row">
-            <span class="s-row-key">Chi</span>
-            <span class="s-row-val">${escapeHtml(chiLabel)}</span>
-          </div>
+          ${renderSummaryRow("Contract", sendContract)}
+          ${renderSummaryRow("Function", sendFunction)}
+          ${argumentsHtml}
         </div>
       </div>
+
+      ${renderTransactionFeeCard(chiLabel)}
 
       <button class="full-width" data-send-tx>Send Transaction</button>
     </div>
@@ -4354,9 +4480,20 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           message: `${asset.symbol ?? asset.contract} added to wallet.`
         });
       });
-    });
+  });
 
   /* ── Send tab handlers ──────────────────────────────────── */
+
+  if (
+    activeTab === "send" &&
+    sendMode === "advanced" &&
+    sendStep === "draft" &&
+    sendContract.trim()
+  ) {
+    void Promise.resolve().then(() =>
+      loadContractMethodsForSend(sendContract, state)
+    );
+  }
 
   root
     .querySelector<HTMLElement>("[data-cancel-unrecognized-recipient]")
@@ -4402,41 +4539,8 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         "#send-contract"
       );
       const contractName = contractInput?.value.trim() ?? "";
-      if (!contractName || contractName === contractMethodsFor) {
-        return;
-      }
-
       captureSendFormState();
-      contractMethodsFor = contractName;
-      contractMethods = [];
-      contractMethodsLoading = true;
-      contractMethodsError = null;
-      sendFunction = "";
-      render(state);
-
-      try {
-        contractMethods = await sendRuntimeMessage<
-          typeof contractMethods
-        >({
-          type: "wallet_get_contract_methods",
-          contract: contractName
-        });
-        if (!contractMethods.some((method) => method.name === sendFunction)) {
-          sendFunction = "";
-          sendArgs = [];
-        }
-        contractMethodsLoading = false;
-        if (contractMethods.length === 0) {
-          contractMethodsError = "No transaction functions found for this contract.";
-        }
-      } catch (error) {
-        contractMethodsLoading = false;
-        contractMethodsError = formatError(error);
-        contractMethods = [];
-      }
-      if (contractMethodsFor === contractName) {
-        render(state);
-      }
+      await loadContractMethodsForSend(contractName, state);
     });
 
   root
@@ -4447,17 +4551,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         (m) => m.name === sendFunction
       );
       if (method) {
-        sendArgs = method.arguments.map((a) => {
-          const t = mapContractType(a.type);
-          return {
-            id: String(++argIdCounter),
-            name: a.name,
-            value: "",
-            type: t,
-            fixed: true,
-            typeFixed: t !== "Any"
-          };
-        });
+        sendArgs = sendArgsFromMethod(method);
       } else {
         sendArgs = [];
       }

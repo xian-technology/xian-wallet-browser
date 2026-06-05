@@ -616,7 +616,7 @@ def private_helper():
     await popup.locator("[data-go-send]").click();
     await popup.locator("[data-switch-advanced]").click();
     await popup.locator("#send-contract").fill("currency");
-    await popup.locator("#send-contract").blur();
+    await popup.locator("[data-review-tx]").click();
 
     const functionSelect = popup.locator("#send-function");
     await expect(functionSelect).toContainText("transfer");
@@ -636,16 +636,18 @@ def private_helper():
       "Contract",
       "Function",
       "amount",
-      "to",
-      "Chi"
+      "to"
     ]);
-    await expect(summary.locator(".s-row-key", { hasText: "Arguments" })).toHaveCount(0);
+    await expect(summary.locator(".s-section-label")).toHaveText("Arguments");
     await expect(
       summary.locator(".s-row").filter({ hasText: "amount" }).getByText("1.25")
     ).toBeVisible();
     await expect(
       summary.locator(".s-row").filter({ hasText: "to" }).getByText("bob")
     ).toBeVisible();
+    const fee = popup.locator(".s-card", { hasText: "Transaction fee" });
+    await expect(fee.locator(".s-row-key")).toHaveText(["Chi"]);
+    await expect(fee.getByText("50,000")).toBeVisible();
     await expect(popup.getByText("[object Object]")).toHaveCount(0);
   } finally {
     await cleanupExtension(context, userDataDir);

@@ -27,6 +27,51 @@ function escapeHtml(value: unknown): string {
     .split("'").join("&#39;");
 }
 
+type ApprovalDetailItem = NonNullable<ApprovalView["details"]>[number];
+
+function splitFeeDetail(details: ApprovalDetailItem[]): {
+  summaryDetails: ApprovalDetailItem[];
+  feeDetail: ApprovalDetailItem | null;
+} {
+  const feeIndex = details.findIndex(
+    (detail) => detail.label.toLowerCase() === "chi"
+  );
+  if (feeIndex < 0) {
+    return { summaryDetails: details, feeDetail: null };
+  }
+  return {
+    summaryDetails: [
+      ...details.slice(0, feeIndex),
+      ...details.slice(feeIndex + 1)
+    ],
+    feeDetail: details[feeIndex] ?? null
+  };
+}
+
+function renderDetailRow(detail: ApprovalDetailItem): string {
+  return `
+    <div class="detail-row detail-row-${detail.tone ?? "default"}">
+      <span>${escapeHtml(detail.label)}</span>
+      <strong class="${detail.monospace ? "code" : ""}">${escapeHtml(detail.value)}</strong>
+    </div>
+  `;
+}
+
+function renderTransactionFeePanel(detail: ApprovalDetailItem): string {
+  return `
+    <div class="surface transaction-fee-panel">
+      <div class="section-head">
+        <div>
+          <h2>Transaction fee</h2>
+        </div>
+      </div>
+      <div class="detail-grid">
+        ${renderDetailRow(detail)}
+      </div>
+    </div>
+  `;
+}
+
 function formatTimestamp(value: number): string {
   return new Date(value).toLocaleString();
 }
@@ -80,7 +125,7 @@ async function render(): Promise<void> {
   const tone = toneForApproval(view.kind);
   const warnings = view.warnings ?? [];
   const highlights = view.highlights ?? [];
-  const details = view.details ?? [];
+  const { summaryDetails, feeDetail } = splitFeeDetail(view.details ?? []);
 
   root.innerHTML = `
     <div class="app-shell stack">
@@ -147,17 +192,8 @@ async function render(): Promise<void> {
           </div>
           <div class="detail-grid">
             ${
-              details.length > 0
-                ? details
-                    .map(
-                      (detail) => `
-                        <div class="detail-row detail-row-${detail.tone ?? "default"}">
-                          <span>${escapeHtml(detail.label)}</span>
-                          <strong class="${detail.monospace ? "code" : ""}">${escapeHtml(detail.value)}</strong>
-                        </div>
-                      `
-                    )
-                    .join("")
+              summaryDetails.length > 0
+                ? summaryDetails.map((detail) => renderDetailRow(detail)).join("")
                 : `
                     <div class="empty muted">
                       No structured summary was available for this request. Review the raw payload below.
@@ -166,6 +202,8 @@ async function render(): Promise<void> {
             }
           </div>
         </section>
+
+        ${feeDetail ? renderTransactionFeePanel(feeDetail) : ""}
 
         <details class="disclosure ${view.kind === "signMessage" ? "is-open" : ""}" ${
           view.kind === "signMessage" ? "open" : ""

@@ -1131,6 +1131,20 @@ button.track-pill:hover {
   border-bottom: none;
 }
 
+.s-section-label {
+  margin: 12px 0 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.s-empty-row {
+  padding: 9px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .s-row-key {
   color: var(--text-secondary);
   flex-shrink: 0;
@@ -1146,6 +1160,19 @@ button.track-pill:hover {
 .s-row-val.mono {
   font-family: var(--font-mono);
   font-size: 11px;
+}
+
+.transaction-fee-card .s-card-head {
+  padding-bottom: 2px;
+}
+
+.transaction-fee-card .s-card-body {
+  padding-bottom: 10px;
+}
+
+.transaction-fee-card .s-row {
+  border-bottom: none;
+  padding-bottom: 6px;
 }
 
 /* ── Preset Items ── */
@@ -1679,6 +1706,15 @@ textarea {
 
 .detail-row-accent {
   background: var(--accent-soft);
+}
+
+.transaction-fee-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.transaction-fee-panel .detail-row {
+  background: var(--warning-soft);
 }
 
 /* ── Code ── */
