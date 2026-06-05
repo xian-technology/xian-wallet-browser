@@ -2006,7 +2006,7 @@ function renderHomeTab(state: PopupRuntimeState): string {
   const tradeEnabled = dexAvailabilityStatus === "available";
   const tradeChecking = dexAvailabilityStatus === "checking";
   const tradeTitle = tradeEnabled
-    ? "Trade tokens"
+    ? "Swap tokens"
     : tradeChecking
       ? "Checking DEX availability"
       : dexAvailabilityError ?? "DEX is not deployed on this network yet";
@@ -2029,8 +2029,8 @@ function renderHomeTab(state: PopupRuntimeState): string {
         <span>Receive</span>
       </button>
       <button class="quick-action ${tradeEnabled ? "" : "quick-action-disabled"}" ${tradeEnabled ? "data-go-trade" : "disabled"} title="${escapeAttribute(tradeTitle)}">
-        <div class="quick-action-circle">${ICONS.trendingUp}</div>
-        <span>${tradeChecking ? "Checking" : "Trade"}</span>
+        <div class="quick-action-circle">${ICONS.repeat}</div>
+        <span>${tradeChecking ? "Checking" : "Swap"}</span>
       </button>
     </div>
 
