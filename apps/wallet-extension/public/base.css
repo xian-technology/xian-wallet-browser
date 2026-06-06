@@ -2500,15 +2500,69 @@ textarea {
 
 .trade-amount-input {
   min-width: 0;
+  height: 52px;
   font-size: 20px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 
-.trade-token-select {
+.trade-token-button {
+  all: unset;
   min-width: 0;
-  font-size: 12px;
+  height: 52px;
+  width: 100%;
+  padding: 0 12px;
+  border-radius: 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease;
+  font-size: 20px;
   font-weight: 700;
+}
+
+.trade-token-button:hover,
+.trade-token-button[aria-expanded="true"] {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--line-strong);
+}
+
+.trade-token-button:focus-visible {
+  outline: none;
+  border-color: rgba(173, 255, 47, 0.3);
+}
+
+.trade-token-button svg {
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.trade-token-button-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trade-token-picker-list {
+  margin-top: 8px;
+  background: var(--bg-1);
+  max-height: 190px;
+}
+
+.trade-token-picker-empty {
+  padding: 10px 12px;
+  color: var(--muted);
 }
 
 .trade-flip {

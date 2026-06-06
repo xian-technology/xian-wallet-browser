@@ -4,6 +4,7 @@ import {
   truncateAddress,
   type ApprovalView,
   type WalletBackup,
+  type WalletDexTokenInfo,
   type PopupState,
   type WalletDetectedAsset
 } from "@xian-tech/wallet-core";
@@ -260,6 +261,7 @@ let transactionFlashGeneration = 0;
 
 type DexAvailabilityStatus = "unknown" | "checking" | "available" | "unavailable";
 type TradeStep = "form" | "review" | "approving" | "swapping";
+type TradeTokenSide = "from" | "to";
 
 let dexAvailabilityStatus: DexAvailabilityStatus = "unknown";
 let dexAvailabilityNetworkKey: string | null = null;
@@ -281,6 +283,7 @@ let tradeChiRate: number | null = null;
 let tradeQuoteForReview: DexQuote | null = null;
 let tradeKwargsForReview: Record<string, unknown> | null = null;
 let tradeApprovalNotice: string | null = null;
+let tradeTokenPicker: TradeTokenSide | null = null;
 
 function resetSendState(): void {
   sendMode = "simple";
@@ -320,6 +323,7 @@ function resetTradeForm(): void {
   tradeQuoteForReview = null;
   tradeKwargsForReview = null;
   tradeApprovalNotice = null;
+  tradeTokenPicker = null;
 }
 
 function resetNoWalletUiState(): void {
@@ -3995,18 +3999,77 @@ function currentTradeQuote(): {
     : { quote: null, error: "No route exists between these tokens." };
 }
 
-function renderTradeTokenOptions(selectedContract: string, exclude?: string): string {
-  return sortedDexTokens(tradeSnapshot)
-    .filter((token) => token.contract !== exclude)
-    .map((token) => {
+function renderTradeTokenButton(
+  side: TradeTokenSide,
+  token: WalletDexTokenInfo | null,
+  selectedContract: string
+): string {
+  const symbol = tokenSymbol(token);
+  const label = token
+    ? symbol
+    : "Select token";
+  return `
+    <button
+      type="button"
+      class="trade-token-button"
+      data-toggle-trade-token-picker="${side}"
+      aria-expanded="${tradeTokenPicker === side ? "true" : "false"}"
+    >
+      <span class="trade-token-button-label">${escapeHtml(label)}</span>
+      ${ICONS.chevronDown}
+    </button>
+    <input type="hidden" id="trade-${side}" value="${escapeAttribute(selectedContract)}" />
+  `;
+}
+
+function renderTradeTokenPicker(
+  side: TradeTokenSide,
+  selectedContract: string,
+  exclude?: string
+): string {
+  if (tradeTokenPicker !== side) {
+    return "";
+  }
+  const tokens = sortedDexTokens(tradeSnapshot).filter(
+    (token) => token.contract !== exclude
+  );
+  if (tokens.length === 0) {
+    return `
+      <div class="token-picker-list trade-token-picker-list">
+        <div class="trade-token-picker-empty text-sm">No tokens available.</div>
+      </div>
+    `;
+  }
+  return `
+    <div class="token-picker-list trade-token-picker-list">
+      ${tokens.map((token) => {
       const symbol = tokenSymbol(token);
+      const active = token.contract === selectedContract;
       return `
-        <option value="${escapeAttribute(token.contract)}" ${token.contract === selectedContract ? "selected" : ""}>
-          ${escapeHtml(symbol)} · ${escapeHtml(token.contract)}
-        </option>
+        <button
+          type="button"
+          class="token-picker-item ${active ? "is-active" : ""}"
+          data-pick-trade-token="${side}"
+          data-contract="${escapeAttribute(token.contract)}"
+        >
+          ${renderTokenIcon({
+            contract: token.contract,
+            symbol,
+            icon: token.logoSvg ?? token.logoUrl,
+            className: "token-chooser-icon",
+            background: token.contract === "currency" ? "var(--accent-dim)" : assetGradient(token.contract),
+            size: 28,
+            fontSize: 13
+          })}
+          <span class="token-chooser-info">
+            <span class="token-chooser-sym">${escapeHtml(symbol)}</span>
+            <span class="token-chooser-name">${escapeHtml(token.name ?? token.contract)}</span>
+          </span>
+        </button>
       `;
-    })
-    .join("");
+      }).join("")}
+    </div>
+  `;
 }
 
 function renderTradeRoute(quote: DexQuote): string {
@@ -4080,7 +4143,7 @@ function renderTradeForm(state: PopupRuntimeState): string {
         <div class="s-card">
           <div class="s-card-head">
             <div>
-              <h3 class="s-card-title">Trade</h3>
+              <h3 class="s-card-title">Swap</h3>
               <p class="s-card-desc">Swap tokens when the DEX is deployed on this network.</p>
             </div>
           </div>
@@ -4140,7 +4203,7 @@ function renderTradeForm(state: PopupRuntimeState): string {
       <div class="s-card trade-card">
         <div class="s-card-head">
           <div>
-            <h3 class="s-card-title">Trade</h3>
+            <h3 class="s-card-title">Swap</h3>
             <p class="s-card-desc">Swap through ${escapeHtml(DEX_ROUTER)} on ${escapeHtml(state.activeNetworkName ?? "this network")}.</p>
           </div>
           <button class="icon-action" data-refresh-trade title="Refresh markets">${ICONS.repeat}</button>
@@ -4155,8 +4218,9 @@ function renderTradeForm(state: PopupRuntimeState): string {
             </div>
             <div class="trade-panel-body">
               <input id="trade-amount" class="trade-amount-input" type="text" inputmode="decimal" autocomplete="off" value="${escapeAttribute(tradeAmount)}" placeholder="0.00" />
-              <select id="trade-from" class="trade-token-select">${renderTradeTokenOptions(tradeFromToken, tradeToToken)}</select>
+              ${renderTradeTokenButton("from", fromToken, tradeFromToken)}
             </div>
+            ${renderTradeTokenPicker("from", tradeFromToken, tradeToToken)}
           </div>
 
           <button class="trade-flip" data-trade-flip title="Flip tokens">${ICONS.repeat}</button>
@@ -4168,8 +4232,9 @@ function renderTradeForm(state: PopupRuntimeState): string {
             </div>
             <div class="trade-panel-body">
               <input class="trade-amount-input" value="${quote ? escapeAttribute(formatTradeNumber(quote.amountOut)) : ""}" placeholder="0.00" readonly />
-              <select id="trade-to" class="trade-token-select">${renderTradeTokenOptions(tradeToToken, tradeFromToken)}</select>
+              ${renderTradeTokenButton("to", toToken, tradeToToken)}
             </div>
+            ${renderTradeTokenPicker("to", tradeToToken, tradeFromToken)}
           </div>
 
           <div class="trade-settings">
@@ -4225,7 +4290,7 @@ function renderTradeReview(state: PopupRuntimeState): string {
 
       <div class="s-card">
         <div class="s-card-head">
-          <div><h3 class="s-card-title">Trade summary</h3></div>
+          <div><h3 class="s-card-title">Swap summary</h3></div>
         </div>
         <div class="s-card-body">
           ${renderSummaryRow("From", `${formatTradeNumber(quote.amountIn)} ${tokenSymbol(fromToken)}`)}
@@ -4261,8 +4326,8 @@ function renderTradeBusy(label: string): string {
 
 function captureTradeFormState(): void {
   const amount = root.querySelector<HTMLInputElement>("#trade-amount");
-  const from = root.querySelector<HTMLSelectElement>("#trade-from");
-  const to = root.querySelector<HTMLSelectElement>("#trade-to");
+  const from = root.querySelector<HTMLInputElement | HTMLSelectElement>("#trade-from");
+  const to = root.querySelector<HTMLInputElement | HTMLSelectElement>("#trade-to");
   const slippage = root.querySelector<HTMLSelectElement>("#trade-slippage");
   const deadline = root.querySelector<HTMLSelectElement>("#trade-deadline");
   if (amount) tradeAmount = amount.value.trim();
@@ -5241,27 +5306,40 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       renderPreservingTradeAmountFocus(state);
     });
 
-  root
-    .querySelector<HTMLSelectElement>("#trade-from")
-    ?.addEventListener("change", () => {
+  for (const button of root.querySelectorAll<HTMLElement>(
+    "[data-toggle-trade-token-picker]"
+  )) {
+    button.addEventListener("click", () => {
       captureTradeFormState();
-      tradeEstimate = null;
-      tradeQuoteForReview = null;
-      tradeKwargsForReview = null;
-      tradeApprovalNotice = null;
+      const side = button.dataset.toggleTradeTokenPicker as TradeTokenSide | undefined;
+      tradeTokenPicker = tradeTokenPicker === side ? null : side ?? null;
       render(state);
     });
+  }
 
-  root
-    .querySelector<HTMLSelectElement>("#trade-to")
-    ?.addEventListener("change", () => {
+  for (const button of root.querySelectorAll<HTMLElement>(
+    "[data-pick-trade-token]"
+  )) {
+    button.addEventListener("click", () => {
       captureTradeFormState();
+      const side = button.dataset.pickTradeToken as TradeTokenSide | undefined;
+      const contract = button.dataset.contract;
+      if (!side || !contract) {
+        return;
+      }
+      if (side === "from") {
+        tradeFromToken = contract;
+      } else {
+        tradeToToken = contract;
+      }
+      tradeTokenPicker = null;
       tradeEstimate = null;
       tradeQuoteForReview = null;
       tradeKwargsForReview = null;
       tradeApprovalNotice = null;
       render(state);
     });
+  }
 
   root
     .querySelector<HTMLSelectElement>("#trade-slippage")
@@ -5295,6 +5373,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       tradeQuoteForReview = null;
       tradeKwargsForReview = null;
       tradeApprovalNotice = null;
+      tradeTokenPicker = null;
       render(state);
     });
 
@@ -5309,6 +5388,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       tradeQuoteForReview = null;
       tradeKwargsForReview = null;
       tradeApprovalNotice = null;
+      tradeTokenPicker = null;
       render(state);
     });
 
