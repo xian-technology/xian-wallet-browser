@@ -159,6 +159,18 @@ describe("wallet-extension storage", () => {
     });
   });
 
+  it("ignores unversioned wallet state", async () => {
+    storage[STORAGE_KEY] = {
+      publicKey: "a".repeat(64),
+      encryptedPrivateKey: "ciphertext",
+      walletEncryptionSalt: "salt",
+      seedSource: "privateKey",
+      createdAt: "2026-01-01T00:00:00.000Z"
+    };
+
+    expect(await loadWalletState()).toBeNull();
+  });
+
   it("round-trips bigint data in persisted requests and approvals", async () => {
     await saveRequestState({
       requestId: "request-1",

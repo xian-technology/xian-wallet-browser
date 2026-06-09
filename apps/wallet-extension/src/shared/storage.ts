@@ -546,18 +546,6 @@ async function loadEnvelope(): Promise<WalletStorageEnvelope> {
     };
   }
 
-  const migratedWallet = normalizeWalletState(decoded);
-  if (migratedWallet) {
-    const migratedEnvelope: WalletStorageEnvelope = {
-      version: STORAGE_SCHEMA_VERSION,
-      wallet: migratedWallet,
-      providerRequests: {},
-      approvals: {}
-    };
-    await saveEnvelope(migratedEnvelope);
-    return migratedEnvelope;
-  }
-
   return emptyEnvelope();
 }
 
