@@ -70,6 +70,7 @@ Typical user-facing flows covered by this repo:
 | Connect dapp | content / inpage bridge, approval UI | exposes `window.xian` / provider methods from `xian-js` |
 | Sign message | provider bridge, approval UI | dapps receive only the signature |
 | Prepare / sign / send tx | provider bridge, `@xian-tech/client` | dapps can send an intent without seeing private keys |
+| Swap tokens | `wallet-core`, popup UI | in-wallet DEX swap through `con_dex` with reserve-based quotes, slippage, deadline, and automatic approval |
 | Watch asset | provider bridge, token registry UI | lets dapps request token tracking |
 | Network switching | popup UI, provider events | emits provider chain changes for connected dapps |
 | Review activity | popup UI | pulls indexed transaction history where available and keeps a local fallback for submitted txs |
