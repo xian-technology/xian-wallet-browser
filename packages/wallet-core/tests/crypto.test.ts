@@ -21,6 +21,9 @@ import {
 } from "../src/crypto";
 
 describe("@xian-tech/wallet-core crypto helpers", () => {
+  const vectorMnemonic =
+    "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+
   it("encrypts and decrypts a private key", async () => {
     const privateKey = createPrivateKey();
     const encrypted = await encryptPrivateKey(privateKey, "secret-password");
@@ -93,6 +96,24 @@ describe("@xian-tech/wallet-core crypto helpers", () => {
     );
     await expect(derivePrivateKeyFromMnemonic(mnemonic)).resolves.toBe(
       await derivePrivateKeyFromMnemonic(mnemonic)
+    );
+  });
+
+  it("derives canonical indexed mnemonic private keys", async () => {
+    await expect(derivePrivateKeyFromMnemonic(vectorMnemonic, 0)).resolves.toBe(
+      "b3aee0ed179a18a754136d3d134c03e9c1ad97eb2e9912401dc2d9ffc96882e0"
+    );
+    await expect(derivePrivateKeyFromMnemonic(vectorMnemonic, 1)).resolves.toBe(
+      "f1f4674448f4d17a78af6b150a7fa45a752d0014fb0235604a339a898695ce69"
+    );
+  });
+
+  it("rejects invalid mnemonic account indexes", async () => {
+    await expect(derivePrivateKeyFromMnemonic(vectorMnemonic, -1)).rejects.toThrow(
+      "account index"
+    );
+    await expect(derivePrivateKeyFromMnemonic(vectorMnemonic, 1.5)).rejects.toThrow(
+      "account index"
     );
   });
 
