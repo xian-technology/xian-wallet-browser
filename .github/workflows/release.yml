@@ -60,8 +60,7 @@ jobs:
           const packageFiles = [
             "package.json",
             "packages/wallet-core/package.json",
-            "apps/wallet-extension/package.json",
-            "apps/wallet-extension/public/manifest.json"
+            "apps/wallet-extension/package.json"
           ];
 
           for (const file of packageFiles) {
@@ -69,6 +68,34 @@ jobs:
             if (pkg.version !== expected) {
               throw new Error(`${file} has version ${pkg.version}, expected ${expected}`);
             }
+          }
+
+          function chromeExtensionVersion(version) {
+            const match = version.match(/^(\d+)\.(\d+)\.(\d+)(?:-(alpha|beta|rc)\.(\d+))?$/);
+            if (!match) {
+              throw new Error(`unsupported version ${version}`);
+            }
+            const [, major, minor, patch, channel, number] = match;
+            const offsets = { alpha: 10000, beta: 20000, rc: 30000 };
+            const build = channel ? offsets[channel] + Number(number) : 65535;
+            if (build > 65535) {
+              throw new Error(`Chrome extension build component is too large for ${version}`);
+            }
+            return `${major}.${minor}.${patch}.${build}`;
+          }
+
+          const manifestFile = "apps/wallet-extension/public/manifest.json";
+          const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
+          const expectedManifestVersion = chromeExtensionVersion(expected);
+          if (manifest.version !== expectedManifestVersion) {
+            throw new Error(
+              `${manifestFile} has version ${manifest.version}, expected ${expectedManifestVersion}`
+            );
+          }
+          if (manifest.version_name !== expected) {
+            throw new Error(
+              `${manifestFile} has version_name ${manifest.version_name}, expected ${expected}`
+            );
           }
           NODE
 
