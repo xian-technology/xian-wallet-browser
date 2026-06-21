@@ -1268,7 +1268,7 @@ def private_helper():
       store,
       createClient: (state) => ({
         getChainId: vi.fn(async () =>
-          state.activeNetworkId === "mainnet-preset" ? "xian-1" : "xian-local"
+          state.activeNetworkId === "mainnet-preset" ? "xian-local-1" : "xian-local"
         ),
         getBalance: vi.fn(async () => "12"),
         getTokenBalances: vi.fn(async () => ({
@@ -1336,7 +1336,7 @@ def private_helper():
 
     const savedState = await controller.saveNetworkPreset({
       name: "Mainnet",
-      chainId: "xian-1",
+      chainId: "xian-local-1",
       rpcUrl: "https://rpc.mainnet.example",
       dashboardUrl: "https://dashboard.mainnet.example",
       makeActive: false
@@ -1347,7 +1347,7 @@ def private_helper():
         expect.objectContaining({
           id: "mainnet-preset",
           name: "Mainnet",
-          chainId: "xian-1"
+          chainId: "xian-local-1"
         })
       ])
     );
@@ -1355,7 +1355,7 @@ def private_helper():
 
     const switched = await controller.startProviderRequest("request-2", ORIGIN, {
       method: "xian_switchChain",
-      params: [{ chainId: "xian-1" }]
+      params: [{ chainId: "xian-local-1" }]
     });
 
     expect(switched).toEqual({
@@ -1366,10 +1366,10 @@ def private_helper():
     const popupState = await controller.getPopupState();
     expect(popupState.activeNetworkId).toBe("mainnet-preset");
     expect(popupState.activeNetworkName).toBe("Mainnet");
-    expect(popupState.chainId).toBe("xian-1");
+    expect(popupState.chainId).toBe("xian-local-1");
     expect(onProviderEvent).toHaveBeenLastCalledWith(
       "chainChanged",
-      ["xian-1"],
+      ["xian-local-1"],
       ORIGIN
     );
   });
@@ -2147,7 +2147,7 @@ def private_helper():
 
     await controller.saveNetworkPreset({
       name: "Mainnet",
-      chainId: "xian-1",
+      chainId: "xian-local-1",
       rpcUrl: "https://rpc.mainnet.example",
       dashboardUrl: "https://dashboard.mainnet.example",
       makeActive: true

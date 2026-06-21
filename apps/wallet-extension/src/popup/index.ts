@@ -1746,7 +1746,7 @@ function renderSetup(state: PopupRuntimeState | null): void {
                       </label>
                       <label>
                         Expected chain ID
-                        <input id="setup-expected-chain-id" placeholder="Optional, e.g. xian-1" />
+                        <input id="setup-expected-chain-id" placeholder="Optional, e.g. xian-local-1" />
                       </label>
                       <label>
                         RPC URL
@@ -5056,7 +5056,7 @@ function renderNetworkEditor(state: PopupRuntimeState): string {
       </label>
       <label>
         Expected chain ID
-        <input id="network-chain-id" value="${escapeAttribute(networkDraft.chainId)}" placeholder="Optional, e.g. xian-1" />
+        <input id="network-chain-id" value="${escapeAttribute(networkDraft.chainId)}" placeholder="Optional, e.g. xian-local-1" />
       </label>
       <label>
         RPC URL
