@@ -83,7 +83,8 @@ npm run build --workspace xian-wallet-extension
 
 Then open the browser extension management page, enable developer mode, and
 load `apps/wallet-extension/dist` as an unpacked extension. Use a local node
-from `xian-stack` or a reachable public RPC in the wallet network settings.
+from `xian-stack` or an explicitly configured custom RPC in the wallet network
+settings.
 
 For dapp testing, pair it with the `xian-js` browser example:
 
