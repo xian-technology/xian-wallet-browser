@@ -3,6 +3,7 @@ import type { XianProviderRequest } from "@xian-tech/provider";
 import type {
   ApprovalDetail,
   ApprovalKind,
+  ApprovalTrustSuggestion,
   ApprovalView,
   PendingApprovalRecord
 } from "./types.js";
@@ -115,6 +116,26 @@ function compactDetails(
   details: Array<ApprovalDetail | null>
 ): ApprovalDetail[] {
   return details.filter((detail): detail is ApprovalDetail => detail != null);
+}
+
+function trustedDappSuggestion(
+  contract: string,
+  fn: string,
+  requestLabel: string
+): ApprovalTrustSuggestion {
+  const target = `${contract}.${fn}`;
+  return {
+    label: `Auto-approve this exact ${target}`,
+    description:
+      `For the next 30 days, this site can repeat matching ${requestLabel} with the same arguments on this account and network.`,
+    broadLabel: `Auto-approve any ${target}`,
+    broadDescription:
+      `For the next 30 days, this site can send matching ${requestLabel} even if recipients, amounts, routes, or other arguments change.`,
+    broadWarning:
+      "Broad auto-approval can move funds or execute contract logic without another prompt. Use it only for dapps you fully trust.",
+    exactScope: "exact",
+    broadScope: "any"
+  };
 }
 
 function txPayloadFromRequestPayload(payload: unknown): Record<string, unknown> {
@@ -287,11 +308,11 @@ export function buildApprovalView(
           trustSuggestion:
             typeof txPayload.contract === "string" &&
             typeof txPayload.function === "string"
-              ? {
-                  label: `Always allow ${txPayload.contract}.${txPayload.function}`,
-                  description:
-                    "For the next 30 days, matching prepared-signature requests from this site can be signed without another prompt on this account and network."
-                }
+              ? trustedDappSuggestion(
+                  txPayload.contract,
+                  txPayload.function,
+                  "prepared-signature requests"
+                )
               : undefined,
           payload: prettyJson(payload),
           payloadLabel: "Raw transaction",
@@ -334,11 +355,11 @@ export function buildApprovalView(
           trustSuggestion:
             typeof txPayload.contract === "string" &&
             typeof txPayload.function === "string"
-              ? {
-                  label: `Always allow ${txPayload.contract}.${txPayload.function}`,
-                  description:
-                    "For the next 30 days, matching prepared-transaction broadcasts from this site can be sent without another prompt on this account and network."
-                }
+              ? trustedDappSuggestion(
+                  txPayload.contract,
+                  txPayload.function,
+                  "prepared-transaction broadcasts"
+                )
               : undefined,
           payload: prettyJson(payload),
           payloadLabel: "Raw transaction",
@@ -390,11 +411,11 @@ export function buildApprovalView(
           trustSuggestion:
             typeof intent.contract === "string" &&
             typeof intent.function === "string"
-              ? {
-                  label: `Always allow ${intent.contract}.${intent.function}`,
-                  description:
-                    "For the next 30 days, matching contract calls from this site can be prepared, signed, and sent without another prompt on this account and network."
-                }
+              ? trustedDappSuggestion(
+                  intent.contract,
+                  intent.function,
+                  "contract calls"
+                )
               : undefined,
           payload: prettyJson(payload),
           payloadLabel: "Raw call intent",

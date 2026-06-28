@@ -336,8 +336,8 @@ test("approves connect and send-call requests through the injected provider brid
             contract: "currency",
             function: "transfer",
             kwargs: {
-              to: "carol",
-              amount: "7"
+              to: "bob",
+              amount: "5"
             },
             chi: 500
           }
@@ -346,6 +346,39 @@ test("approves connect and send-call requests through the injected provider brid
     });
 
     expect(await waitForInjectedProviderResult(dappPage, "auto-send-call")).toEqual({
+      status: "fulfilled",
+      result: expect.objectContaining({
+        accepted: true,
+        txHash: "ABC123",
+        nonce: 12,
+        chiSupplied: 500
+      })
+    });
+
+    const changedExistingPages = new Set(context.pages());
+    await startInjectedProviderRequest(dappPage, "changed-send-call", {
+      method: "xian_sendCall",
+      params: [
+        {
+          intent: {
+            contract: "currency",
+            function: "transfer",
+            kwargs: {
+              to: "carol",
+              amount: "7"
+            },
+            chi: 500
+          }
+        }
+      ]
+    });
+    const changedApproval = await waitForApprovalPage(context, changedExistingPages);
+    await expect(changedApproval.getByText("Send contract call")).toBeVisible();
+    const changedClose = changedApproval.waitForEvent("close");
+    await changedApproval.getByRole("button", { name: "Approve call" }).click();
+    await changedClose;
+
+    expect(await waitForInjectedProviderResult(dappPage, "changed-send-call")).toEqual({
       status: "fulfilled",
       result: expect.objectContaining({
         accepted: true,
@@ -377,8 +410,8 @@ test("approves connect and send-call requests through the injected provider brid
           local_status: "accepted",
           payload: expect.objectContaining({
             kwargs: {
-              to: "carol",
-              amount: "7"
+              to: "bob",
+              amount: "5"
             }
           })
         })

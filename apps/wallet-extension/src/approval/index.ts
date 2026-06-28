@@ -15,6 +15,9 @@ if (!approvalIdParam) {
 }
 
 const approvalId = approvalIdParam;
+let currentView: ApprovalView | null = null;
+
+type ApprovalTrustScope = NonNullable<ApprovalView["trustSuggestion"]>["exactScope"];
 
 function escapeHtml(value: unknown): string {
   if (value == null) return "";
@@ -116,11 +119,115 @@ function riskLabel(kind: ApprovalView["kind"]): string {
   }
 }
 
+function renderTrustOptions(view: ApprovalView): string {
+  if (!view.trustSuggestion) {
+    return "";
+  }
+  return `
+    <div class="trust-options">
+      <label class="surface trust-option">
+        <input id="trust-toggle" type="checkbox" />
+        <span class="trust-icon" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            <path d="m9 12 2 2 4-4"/>
+          </svg>
+        </span>
+        <span class="trust-text">
+          <strong>${escapeHtml(view.trustSuggestion.label)}</strong>
+          <span class="muted">${escapeHtml(view.trustSuggestion.description)}</span>
+        </span>
+        <span class="trust-switch" aria-hidden="true"></span>
+      </label>
+      <label class="surface trust-option trust-option-danger">
+        <input id="trust-broad-toggle" type="checkbox" />
+        <span class="trust-icon" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <path d="M12 9v4"/>
+            <path d="M12 17h.01"/>
+          </svg>
+        </span>
+        <span class="trust-text">
+          <strong>${escapeHtml(view.trustSuggestion.broadLabel)}</strong>
+          <span class="muted">${escapeHtml(view.trustSuggestion.broadDescription)}</span>
+        </span>
+        <span class="trust-switch" aria-hidden="true"></span>
+      </label>
+    </div>
+  `;
+}
+
+function wireTrustOptions(): void {
+  const exact = root.querySelector<HTMLInputElement>("#trust-toggle");
+  const broad = root.querySelector<HTMLInputElement>("#trust-broad-toggle");
+  exact?.addEventListener("change", () => {
+    if (exact.checked && broad) broad.checked = false;
+  });
+  broad?.addEventListener("change", () => {
+    if (broad.checked && exact) exact.checked = false;
+  });
+}
+
+function selectedTrustScope(): ApprovalTrustScope | undefined {
+  const suggestion = currentView?.trustSuggestion;
+  if (!suggestion) {
+    return undefined;
+  }
+  if (root.querySelector<HTMLInputElement>("#trust-broad-toggle")?.checked) {
+    return suggestion.broadScope;
+  }
+  if (root.querySelector<HTMLInputElement>("#trust-toggle")?.checked) {
+    return suggestion.exactScope;
+  }
+  return undefined;
+}
+
+function showBroadTrustConfirmation(): void {
+  const suggestion = currentView?.trustSuggestion;
+  if (!suggestion || root.querySelector("[data-broad-trust-confirmation]")) {
+    return;
+  }
+  const dialog = document.createElement("div");
+  dialog.dataset.broadTrustConfirmation = "true";
+  dialog.innerHTML = `
+    <div class="app-dialog-backdrop" role="presentation">
+      <div class="app-dialog" role="dialog" aria-modal="true" aria-labelledby="broad-trust-title">
+        <div class="app-dialog-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <path d="M12 9v4"/>
+            <path d="M12 17h.01"/>
+          </svg>
+        </div>
+        <h3 id="broad-trust-title" class="app-dialog-title">Enable broad auto-approval?</h3>
+        <p class="app-dialog-copy">${escapeHtml(suggestion.broadWarning)}</p>
+        <div class="app-dialog-value">${escapeHtml(suggestion.broadLabel)}</div>
+        <div class="app-dialog-actions">
+          <button class="secondary" data-cancel-broad-trust>Cancel</button>
+          <button class="danger" data-confirm-broad-trust>Enable broad auto-approval</button>
+        </div>
+      </div>
+    </div>
+  `;
+  root.appendChild(dialog);
+  dialog
+    .querySelector<HTMLButtonElement>("[data-cancel-broad-trust]")
+    ?.addEventListener("click", () => dialog.remove());
+  dialog
+    .querySelector<HTMLButtonElement>("[data-confirm-broad-trust]")
+    ?.addEventListener("click", async () => {
+      dialog.remove();
+      await resolveApproval(true, { confirmedBroad: true });
+    });
+}
+
 async function render(): Promise<void> {
   const view = await sendRuntimeMessage<ApprovalView>({
     type: "approval_get",
     approvalId
   });
+  currentView = view;
 
   const tone = toneForApproval(view.kind);
   const warnings = view.warnings ?? [];
@@ -212,26 +319,7 @@ async function render(): Promise<void> {
           <pre class="approval-payload">${escapeHtml(view.payload)}</pre>
         </details>
 
-        ${
-          view.trustSuggestion
-            ? `
-                <label class="surface trust-option">
-                  <input id="trust-toggle" type="checkbox" />
-                  <span class="trust-icon" aria-hidden="true">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-                      <path d="m9 12 2 2 4-4"/>
-                    </svg>
-                  </span>
-                  <span class="trust-text">
-                    <strong>${escapeHtml(view.trustSuggestion.label)}</strong>
-                    <span class="muted">${escapeHtml(view.trustSuggestion.description)}</span>
-                  </span>
-                  <span class="trust-switch" aria-hidden="true"></span>
-                </label>
-              `
-            : ""
-        }
+        ${renderTrustOptions(view)}
 
         <div class="action-row approval-actions">
           <button id="approve-button">${escapeHtml(view.approveLabel ?? "Approve")}</button>
@@ -252,14 +340,20 @@ async function render(): Promise<void> {
     ?.addEventListener("click", async () => {
       await resolveApproval(false);
     });
+  wireTrustOptions();
 }
 
-async function resolveApproval(approved: boolean): Promise<void> {
+async function resolveApproval(
+  approved: boolean,
+  options: { confirmedBroad?: boolean } = {}
+): Promise<void> {
+  const trust = approved ? selectedTrustScope() : undefined;
+  if (trust === "any" && !options.confirmedBroad) {
+    showBroadTrustConfirmation();
+    return;
+  }
   disableButtons();
   try {
-    const trust =
-      approved &&
-      root.querySelector<HTMLInputElement>("#trust-toggle")?.checked === true;
     await sendRuntimeMessage<null>({
       type: "approval_resolve",
       approvalId,

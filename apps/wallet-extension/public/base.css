@@ -2202,6 +2202,11 @@ textarea {
   flex: 1 1 0;
 }
 
+.trust-options {
+  display: grid;
+  gap: 8px;
+}
+
 .trust-option {
   display: grid;
   grid-template-columns: auto 1fr auto;
@@ -2219,6 +2224,11 @@ textarea {
 .trust-option:has(input:checked) {
   background: var(--accent-soft);
   border-color: var(--accent-dim);
+}
+
+.trust-option-danger:has(input:checked) {
+  background: var(--danger-soft);
+  border-color: var(--danger);
 }
 
 .trust-option input[type="checkbox"] {
@@ -2242,6 +2252,11 @@ textarea {
 .trust-option:has(input:checked) .trust-icon {
   background: rgba(173, 255, 47, 0.15);
   color: var(--accent);
+}
+
+.trust-option-danger:has(input:checked) .trust-icon {
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 .trust-text {
@@ -2288,9 +2303,18 @@ textarea {
   border-color: var(--accent);
 }
 
+.trust-option-danger:has(input:checked) .trust-switch {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
 .trust-option:has(input:checked) .trust-switch::after {
   transform: translateX(14px);
   background: var(--accent-text);
+}
+
+.trust-option-danger:has(input:checked) .trust-switch::after {
+  background: #fff;
 }
 
 /* ═══════════════════════════════════════════════════════════

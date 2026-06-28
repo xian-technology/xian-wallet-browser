@@ -1,5 +1,6 @@
 import type {
   XianDappPolicy,
+  XianDappPolicyArgumentScope,
   XianProviderRequest,
   XianWatchedAsset
 } from "@xian-tech/provider";
@@ -233,6 +234,11 @@ export interface ApprovalDetail {
 export interface ApprovalTrustSuggestion {
   label: string;
   description: string;
+  broadLabel: string;
+  broadDescription: string;
+  broadWarning: string;
+  exactScope: XianDappPolicyArgumentScope;
+  broadScope: XianDappPolicyArgumentScope;
 }
 
 export interface WalletWatchedAsset extends XianWatchedAsset {

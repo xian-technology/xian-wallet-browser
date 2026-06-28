@@ -1,4 +1,7 @@
-import type { XianProviderRequest } from "@xian-tech/provider";
+import type {
+  XianDappPolicyArgumentScope,
+  XianProviderRequest
+} from "@xian-tech/provider";
 import type {
   ApprovalView,
   PopupState,
@@ -322,7 +325,7 @@ export interface ApprovalResolveRuntimeMessage {
   type: "approval_resolve";
   approvalId: string;
   approved: boolean;
-  trust?: boolean;
+  trust?: XianDappPolicyArgumentScope;
 }
 
 export interface ProviderEventRuntimeMessage {

@@ -10,9 +10,11 @@ import {
   ProviderChainMismatchError,
   ProviderUnauthorizedError,
   ProviderUnsupportedMethodError,
+  xianDappPoliciesHaveSameScope,
   type BroadcastMode,
   type TransactionSubmission,
   type XianDappPolicy,
+  type XianDappPolicyArgumentScope,
   type XianProviderRequest,
   type XianSignedTransaction,
   type XianTransactionIntent,
@@ -460,6 +462,7 @@ function normalizeTrustedDappPolicies(value: unknown): XianDappPolicy[] {
           typeof entry.maxChi === "string"
             ? entry.maxChi
             : undefined,
+        argumentScope: entry.argumentScope === "any" ? "any" : "exact",
         kwargs: isRecord(entry.kwargs) ? entry.kwargs : undefined,
         label: trimNullableString(entry.label) ?? undefined,
         createdAt: entry.createdAt,
@@ -835,6 +838,18 @@ function updateAssetNetworkStateInWallet(
   };
 }
 
+function normalizeApprovalTrustScope(
+  trust: boolean | XianDappPolicyArgumentScope | undefined
+): XianDappPolicyArgumentScope | null {
+  if (trust === true) {
+    return "exact";
+  }
+  if (trust === "exact" || trust === "any") {
+    return trust;
+  }
+  return null;
+}
+
 function removeAssetNetworkStateFromWallet(
   state: StoredWalletState,
   contract: string
@@ -856,21 +871,6 @@ function removeAssetNetworkStateFromWallet(
   );
 
   return changed ? { ...state, assetNetworkStates } : state;
-}
-
-function sameTrustedDappPolicyScope(
-  left: XianDappPolicy,
-  right: XianDappPolicy
-): boolean {
-  return (
-    left.origin === right.origin &&
-    left.account === right.account &&
-    left.chainId === right.chainId &&
-    left.contract === right.contract &&
-    left.function === right.function &&
-    left.methods.length === right.methods.length &&
-    left.methods.every((method) => right.methods.includes(method))
-  );
 }
 
 interface ParsedShieldedWalletSnapshot {
@@ -1574,7 +1574,7 @@ export class WalletController {
       ...state,
       trustedDappPolicies: [
         ...currentPolicies.filter(
-          (existing) => !sameTrustedDappPolicyScope(existing, policy)
+          (existing) => !xianDappPoliciesHaveSameScope(existing, policy)
         ),
         policy
       ]
@@ -1636,7 +1636,8 @@ export class WalletController {
   }
 
   private async createTrustedDappPolicyForApproval(
-    approval: PersistedApproval
+    approval: PersistedApproval,
+    argumentScope: XianDappPolicyArgumentScope
   ): Promise<XianDappPolicy | null> {
     const state = this.requireStoredWallet(await this.loadWalletState());
     const activeChainId =
@@ -1652,7 +1653,8 @@ export class WalletController {
       chainId: activeChainId,
       request: approval.record.request,
       now: this.now(),
-      expiresAt: this.now() + TRUSTED_DAPP_POLICY_TTL_MS
+      expiresAt: this.now() + TRUSTED_DAPP_POLICY_TTL_MS,
+      argumentScope
     });
   }
 
@@ -3897,7 +3899,7 @@ export class WalletController {
   async resolveApproval(
     approvalId: string,
     approved: boolean,
-    options?: { trust?: boolean }
+    options?: { trust?: boolean | XianDappPolicyArgumentScope }
   ): Promise<null> {
     const approval = await this.store.loadApprovalState(approvalId);
     if (!approval) {
@@ -3926,8 +3928,12 @@ export class WalletController {
         requestState.dappMetadata
       );
       await this.fulfillRequest(requestState, result);
-      if (options?.trust) {
-        const policy = await this.createTrustedDappPolicyForApproval(approval);
+      const trustScope = normalizeApprovalTrustScope(options?.trust);
+      if (trustScope) {
+        const policy = await this.createTrustedDappPolicyForApproval(
+          approval,
+          trustScope
+        );
         if (policy) {
           await this.upsertTrustedDappPolicy(policy);
         }

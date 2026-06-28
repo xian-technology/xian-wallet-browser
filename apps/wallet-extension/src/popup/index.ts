@@ -162,6 +162,7 @@ let tokenMetaGeneration = 0;
 let showReceive = false;
 let managingAssets = false;
 let activeApprovalId: string | null = null;
+let pendingBroadTrustApprovalId: string | null = null;
 let showAccountMenu = false;
 let renamingAccountIndex: number | null = null;
 let confirmDeleteAccountIndex: number | null = null;
@@ -2538,12 +2539,16 @@ function renderTrustedDappPolicy(policy: PopupRuntimeState["trustedDappPolicies"
     policy.lastUsedAt != null
       ? ` · Used ${formatTimestamp(policy.lastUsedAt)}`
       : "";
+  const argumentScope =
+    policy.argumentScope === "any"
+      ? "Any arguments"
+      : `Exact arguments${policy.kwargs ? ` (${Object.keys(policy.kwargs).length})` : ""}`;
 
   return `
     <div class="app-policy-row">
       <div>
         <div class="app-policy-title">${escapeHtml(scope)}</div>
-        <div class="app-policy-meta">${escapeHtml(expires)}${escapeHtml(lastUsed)}</div>
+        <div class="app-policy-meta">${escapeHtml(argumentScope)} · ${escapeHtml(expires)}${escapeHtml(lastUsed)}</div>
       </div>
       <button class="ghost-sm" data-remove-trusted-policy="${escapeAttribute(policy.id)}">Revoke</button>
     </div>
@@ -3315,6 +3320,65 @@ function renderTransactionFeeCard(value: string): string {
   `;
 }
 
+function renderApprovalTrustOptions(view: ApprovalView): string {
+  if (!view.trustSuggestion) {
+    return "";
+  }
+  return `
+    <div class="trust-options">
+      <label class="surface trust-option">
+        <input data-trust-inline="${escapeAttribute(view.id)}" type="checkbox" />
+        <span class="trust-icon" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            <path d="m9 12 2 2 4-4"/>
+          </svg>
+        </span>
+        <span class="trust-text">
+          <strong>${escapeHtml(view.trustSuggestion.label)}</strong>
+          <span class="muted">${escapeHtml(view.trustSuggestion.description)}</span>
+        </span>
+        <span class="trust-switch" aria-hidden="true"></span>
+      </label>
+      <label class="surface trust-option trust-option-danger">
+        <input data-trust-broad-inline="${escapeAttribute(view.id)}" type="checkbox" />
+        <span class="trust-icon" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <path d="M12 9v4"/>
+            <path d="M12 17h.01"/>
+          </svg>
+        </span>
+        <span class="trust-text">
+          <strong>${escapeHtml(view.trustSuggestion.broadLabel)}</strong>
+          <span class="muted">${escapeHtml(view.trustSuggestion.broadDescription)}</span>
+        </span>
+        <span class="trust-switch" aria-hidden="true"></span>
+      </label>
+    </div>
+  `;
+}
+
+function renderBroadTrustConfirmationDialog(view: ApprovalView): string {
+  if (!view.trustSuggestion) {
+    return "";
+  }
+  return `
+    <div class="app-dialog-backdrop" role="presentation">
+      <div class="app-dialog" role="dialog" aria-modal="true" aria-labelledby="broad-trust-title">
+        <div class="app-dialog-icon">${ICONS.alertTriangle}</div>
+        <h3 id="broad-trust-title" class="app-dialog-title">Enable broad auto-approval?</h3>
+        <p class="app-dialog-copy">${escapeHtml(view.trustSuggestion.broadWarning)}</p>
+        <div class="app-dialog-value">${escapeHtml(view.trustSuggestion.broadLabel)}</div>
+        <div class="app-dialog-actions">
+          <button class="secondary" data-cancel-broad-trust>Cancel</button>
+          <button class="danger" data-confirm-broad-trust="${escapeAttribute(view.id)}">Enable broad auto-approval</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderApprovalInline(view: ApprovalView): string {
   const tone = approvalTone(view.kind);
   const warnings = view.warnings ?? [];
@@ -3371,31 +3435,13 @@ function renderApprovalInline(view: ApprovalView): string {
           : ""
       }
 
-      ${
-        view.trustSuggestion
-          ? `
-              <label class="surface trust-option">
-                <input data-trust-inline="${escapeAttribute(view.id)}" type="checkbox" />
-                <span class="trust-icon" aria-hidden="true">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-                    <path d="m9 12 2 2 4-4"/>
-                  </svg>
-                </span>
-                <span class="trust-text">
-                  <strong>${escapeHtml(view.trustSuggestion.label)}</strong>
-                  <span class="muted">${escapeHtml(view.trustSuggestion.description)}</span>
-                </span>
-                <span class="trust-switch" aria-hidden="true"></span>
-              </label>
-            `
-          : ""
-      }
+      ${renderApprovalTrustOptions(view)}
 
       <div class="action-row" style="gap: 10px">
         <button class="full-width" data-approve-inline="${escapeAttribute(view.id)}">${escapeHtml(view.approveLabel ?? "Approve")}</button>
         <button class="secondary full-width" data-reject-inline="${escapeAttribute(view.id)}">Reject</button>
       </div>
+      ${pendingBroadTrustApprovalId === view.id ? renderBroadTrustConfirmationDialog(view) : ""}
     </div>
   `;
 }
@@ -6266,7 +6312,59 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
     .querySelector<HTMLElement>("[data-close-approval]")
     ?.addEventListener("click", () => {
       activeApprovalId = null;
+      pendingBroadTrustApprovalId = null;
       render(state);
+    });
+
+  for (const input of root.querySelectorAll<HTMLInputElement>("[data-trust-inline]")) {
+    input.addEventListener("change", () => {
+      if (!input.checked) return;
+      const id = input.dataset.trustInline;
+      if (!id) return;
+      const broad = root.querySelector<HTMLInputElement>(
+        `[data-trust-broad-inline="${CSS.escape(id)}"]`
+      );
+      if (broad) broad.checked = false;
+    });
+  }
+
+  for (const input of root.querySelectorAll<HTMLInputElement>("[data-trust-broad-inline]")) {
+    input.addEventListener("change", () => {
+      if (!input.checked) return;
+      const id = input.dataset.trustBroadInline;
+      if (!id) return;
+      const exact = root.querySelector<HTMLInputElement>(
+        `[data-trust-inline="${CSS.escape(id)}"]`
+      );
+      if (exact) exact.checked = false;
+    });
+  }
+
+  root
+    .querySelector<HTMLElement>("[data-cancel-broad-trust]")
+    ?.addEventListener("click", () => {
+      pendingBroadTrustApprovalId = null;
+      render(state);
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-confirm-broad-trust]")
+    ?.addEventListener("click", () => {
+      const id =
+        root.querySelector<HTMLElement>("[data-confirm-broad-trust]")?.dataset
+          .confirmBroadTrust;
+      if (!id) return;
+      pendingBroadTrustApprovalId = null;
+      void withErrorFlash(async () => {
+        await sendRuntimeMessage<null>({
+          type: "approval_resolve",
+          approvalId: id,
+          approved: true,
+          trust: "any"
+        });
+        activeApprovalId = null;
+        await refresh({ tone: "success", message: "Approved." });
+      });
     });
 
   root
@@ -6276,10 +6374,20 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         root.querySelector<HTMLElement>("[data-approve-inline]")?.dataset
           .approveInline;
       if (!id) return;
-      const trust =
-        root.querySelector<HTMLInputElement>(
-          `[data-trust-inline="${CSS.escape(id)}"]`
-        )?.checked === true;
+      const trust = root.querySelector<HTMLInputElement>(
+        `[data-trust-broad-inline="${CSS.escape(id)}"]`
+      )?.checked
+        ? "any"
+        : root.querySelector<HTMLInputElement>(
+              `[data-trust-inline="${CSS.escape(id)}"]`
+            )?.checked
+          ? "exact"
+          : undefined;
+      if (trust === "any") {
+        pendingBroadTrustApprovalId = id;
+        render(state);
+        return;
+      }
       void withErrorFlash(async () => {
         await sendRuntimeMessage<null>({
           type: "approval_resolve",
@@ -6299,6 +6407,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         root.querySelector<HTMLElement>("[data-reject-inline]")?.dataset
           .rejectInline;
       if (!id) return;
+      pendingBroadTrustApprovalId = null;
       void withErrorFlash(async () => {
         await sendRuntimeMessage<null>({
           type: "approval_resolve",

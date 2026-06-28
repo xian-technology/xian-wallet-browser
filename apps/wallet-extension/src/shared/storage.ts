@@ -137,6 +137,7 @@ function normalizeTrustedDappPolicies(value: unknown): XianDappPolicy[] {
           typeof entry.maxChi === "string"
             ? entry.maxChi
             : undefined,
+        argumentScope: entry.argumentScope === "any" ? "any" : "exact",
         kwargs: isRecord(entry.kwargs) ? entry.kwargs : undefined,
         label: typeof entry.label === "string" ? entry.label : undefined,
         createdAt: entry.createdAt,

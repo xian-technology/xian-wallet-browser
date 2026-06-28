@@ -574,6 +574,7 @@ describe("@xian-tech/wallet-core controller", () => {
         .mockReturnValueOnce("approval-connect")
         .mockReturnValueOnce("approval-send")
         .mockReturnValueOnce("policy-1")
+        .mockReturnValueOnce("approval-changed")
         .mockReturnValueOnce("approval-different"),
       now: vi.fn(() => 1_000)
     });
@@ -617,7 +618,9 @@ describe("@xian-tech/wallet-core controller", () => {
         methods: ["xian_sendCall"],
         contract: "currency",
         function: "transfer",
-        maxChi: 500
+        maxChi: 500,
+        argumentScope: "exact",
+        kwargs: { to: "bob", amount: "5" }
       })
     ]);
 
@@ -639,6 +642,25 @@ describe("@xian-tech/wallet-core controller", () => {
     );
 
     await expect(
+      controller.startProviderRequest("request-changed-send", ORIGIN, {
+        method: "xian_sendCall",
+        params: [
+          {
+            intent: {
+              contract: "currency",
+              function: "transfer",
+              kwargs: { to: "mallory", amount: "500" },
+              chi: 500
+            }
+          }
+        ]
+      })
+    ).resolves.toEqual({
+      status: "pending",
+      approvalId: "approval-changed"
+    });
+
+    await expect(
       controller.startProviderRequest("request-different-send", ORIGIN, {
         method: "xian_sendCall",
         params: [
@@ -656,6 +678,93 @@ describe("@xian-tech/wallet-core controller", () => {
       status: "pending",
       approvalId: "approval-different"
     });
+  });
+
+  it("auto-approves changed arguments only for explicit broad trusted policies", async () => {
+    const store = createStore();
+    const client = createClient();
+    const onApprovalRequested = vi.fn(async () => undefined);
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested,
+      createId: vi
+        .fn()
+        .mockReturnValueOnce("approval-connect")
+        .mockReturnValueOnce("approval-send")
+        .mockReturnValueOnce("policy-1"),
+      now: vi.fn(() => 1_000)
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+
+    await controller.startProviderRequest("request-connect", ORIGIN, {
+      method: "xian_requestAccounts"
+    });
+    await controller.resolveApproval("approval-connect", true);
+
+    const trustedRequest = {
+      method: "xian_sendCall",
+      params: [
+        {
+          intent: {
+            contract: "currency",
+            function: "transfer",
+            kwargs: { to: "bob", amount: "5" },
+            chi: 500
+          }
+        }
+      ]
+    };
+    await expect(
+      controller.startProviderRequest("request-first-send", ORIGIN, trustedRequest)
+    ).resolves.toEqual({
+      status: "pending",
+      approvalId: "approval-send"
+    });
+
+    await controller.resolveApproval("approval-send", true, { trust: "any" });
+    expect(store.current()?.trustedDappPolicies).toEqual([
+      expect.objectContaining({
+        id: "policy-1",
+        contract: "currency",
+        function: "transfer",
+        argumentScope: "any",
+        kwargs: undefined
+      })
+    ]);
+
+    await expect(
+      controller.startProviderRequest("request-changed-send", ORIGIN, {
+        method: "xian_sendCall",
+        params: [
+          {
+            intent: {
+              contract: "currency",
+              function: "transfer",
+              kwargs: { to: "mallory", amount: "500" },
+              chi: 500
+            }
+          }
+        ]
+      })
+    ).resolves.toMatchObject({
+      status: "fulfilled",
+      result: expect.objectContaining({
+        txHash: "ABC123"
+      })
+    });
+
+    expect(onApprovalRequested).toHaveBeenCalledTimes(2);
   });
 
   it("removes watched assets while keeping the native asset pinned", async () => {
