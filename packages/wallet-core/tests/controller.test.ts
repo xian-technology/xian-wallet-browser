@@ -2328,6 +2328,51 @@ def private_helper():
     );
   });
 
+  it("accepts bracketed IPv6 loopback RPC presets without remote HTTP opt-in", async () => {
+    const store = createStore();
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => createClient(),
+      onApprovalRequested: vi.fn(async () => undefined),
+      createId: vi.fn(() => "ipv6-loopback-preset")
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+
+    const updated = await controller.saveNetworkPreset({
+      name: "IPv6 loopback",
+      rpcUrl: "http://[::1]:26657",
+      dashboardUrl: "http://[::1]:8080",
+      makeActive: true
+    });
+
+    expect(updated.networkPresets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "ipv6-loopback-preset",
+          rpcUrl: "http://[::1]:26657",
+          dashboardUrl: "http://[::1]:8080",
+          allowInsecureHttp: false
+        })
+      ])
+    );
+    expect(updated.rpcUrl).toBe("http://[::1]:26657");
+
+    const backup = await controller.exportWallet("backup-pass");
+    const restored = await controller.importWalletBackup(backup, "backup-pass");
+    expect(restored.activeNetworkId).toBe("ipv6-loopback-preset");
+    expect(restored.rpcUrl).toBe("http://[::1]:26657");
+  });
+
   it("rejects pending requests when the wallet is replaced", async () => {
     const store = createStore();
     const controller = new WalletController({

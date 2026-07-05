@@ -1,4 +1,5 @@
 import { encode as encodeQr } from "uqr";
+import { normalizeUrlHostname } from "@xian-tech/wallet-core";
 
 export function escapeHtml(value: unknown): string {
   if (value == null) return "";
@@ -18,7 +19,7 @@ export function escapeAttribute(value: unknown): string {
 export function safeOriginLabel(origin: string): string {
   try {
     const url = new URL(origin);
-    return url.hostname || origin;
+    return normalizeUrlHostname(url.hostname) || origin;
   } catch {
     return origin;
   }

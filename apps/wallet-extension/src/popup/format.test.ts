@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatBalance } from "./format";
+import { formatBalance, safeOriginLabel } from "./format";
 
 describe("formatBalance", () => {
   it("truncates displayed decimals instead of rounding balances", () => {
@@ -28,5 +28,17 @@ describe("formatBalance", () => {
     expect(formatBalance(null, 2)).toBe("—");
     expect(formatBalance("", 2)).toBe("—");
     expect(formatBalance("not-a-number", 2)).toBe("not-a-number");
+  });
+});
+
+describe("safeOriginLabel", () => {
+  it("formats bracketed IPv6 origins without preserving URL parser brackets", () => {
+    expect(safeOriginLabel("http://[::1]:3000")).toBe("::1");
+    expect(safeOriginLabel("http://[2001:db8::1]:3000")).toBe("2001:db8::1");
+  });
+
+  it("preserves existing local origin labels", () => {
+    expect(safeOriginLabel("http://localhost:3000")).toBe("localhost");
+    expect(safeOriginLabel("http://127.0.0.1:3000")).toBe("127.0.0.1");
   });
 });

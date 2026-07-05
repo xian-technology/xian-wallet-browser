@@ -1,5 +1,6 @@
 import { XianClient, type WatchSubscription } from "@xian-tech/client";
 import {
+  assertRpcTransportAllowed,
   formatChiWithXianCost,
   truncateAddress,
   type ApprovalView,
@@ -656,37 +657,11 @@ function selectedAssetIsTracked(state: PopupRuntimeState): boolean {
   return state.watchedAssets.some((asset) => asset.contract === selectedAsset);
 }
 
-function isLoopbackHttpUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return (
-      url.protocol === "http:" &&
-      (url.hostname === "localhost" ||
-        url.hostname === "::1" ||
-        /^127(?:\.\d{1,3}){3}$/.test(url.hostname))
-    );
-  } catch {
-    return false;
-  }
-}
-
 function activePresetAllowsInsecureHttp(state: PopupRuntimeState): boolean {
   return (
     state.networkPresets.find((preset) => preset.id === state.activeNetworkId)
       ?.allowInsecureHttp === true
   );
-}
-
-function assertRpcTransportAllowed(
-  rpcUrl: string,
-  allowInsecureHttp: boolean
-): void {
-  const url = new URL(rpcUrl);
-  if (url.protocol === "http:" && !allowInsecureHttp && !isLoopbackHttpUrl(rpcUrl)) {
-    throw new Error(
-      "HTTP RPC URLs are disabled for this network. Enable HTTP data transfers only for endpoints you trust."
-    );
-  }
 }
 
 function ensureBalanceWatchClient(state: PopupRuntimeState): XianClient | null {

@@ -1,4 +1,7 @@
-import type { ApprovalView } from "@xian-tech/wallet-core";
+import {
+  normalizeUrlHostname,
+  type ApprovalView
+} from "@xian-tech/wallet-core";
 
 import { sendRuntimeMessage } from "../shared/messages";
 
@@ -82,7 +85,7 @@ function formatTimestamp(value: number): string {
 function originLabel(origin: string): string {
   try {
     const url = new URL(origin);
-    return url.hostname || origin;
+    return normalizeUrlHostname(url.hostname) || origin;
   } catch {
     return origin;
   }
