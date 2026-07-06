@@ -17,12 +17,12 @@ jobs:
       PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
     steps:
       - name: Check out xian-wallet-browser
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           path: xian-wallet-browser
 
       - name: Check out xian-js
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/xian-js
           ref: main
@@ -57,7 +57,7 @@ jobs:
 
       - name: Upload Playwright artifacts
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: xian-wallet-browser-playwright
           path: |
