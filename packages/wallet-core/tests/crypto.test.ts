@@ -8,6 +8,7 @@ import {
   decryptMnemonicWithSessionKey,
   decryptPrivateKey,
   decryptPrivateKeyWithSessionKey,
+  decryptWalletBackup,
   deriveWalletSessionKey,
   derivePrivateKeyFromMnemonic,
   encryptMnemonic,
@@ -19,6 +20,7 @@ import {
   normalizeMnemonicInput,
   normalizePrivateKeyInput
 } from "../src/crypto";
+import type { WalletBackup } from "../src/types";
 
 describe("@xian-tech/wallet-core crypto helpers", () => {
   const vectorMnemonic =
@@ -135,5 +137,18 @@ describe("@xian-tech/wallet-core crypto helpers", () => {
         JSON.stringify({ payload: { chain_id: "xian-local" } })
       )
     ).toBe(true);
+  });
+
+  it("rejects plaintext wallet backups", async () => {
+    await expect(
+      decryptWalletBackup(
+        {
+          version: 1,
+          type: "privateKey",
+          privateKey: "11".repeat(32)
+        } as unknown as WalletBackup,
+        "unused"
+      )
+    ).rejects.toThrow("invalid wallet backup");
   });
 });

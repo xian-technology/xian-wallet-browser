@@ -434,7 +434,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isEncryptedWalletBackup(value: WalletBackup): value is EncryptedWalletBackup {
+function isEncryptedWalletBackup(value: unknown): value is EncryptedWalletBackup {
   return (
     isRecord(value) &&
     value.version === 2 &&
@@ -449,7 +449,7 @@ function isEncryptedWalletBackup(value: WalletBackup): value is EncryptedWalletB
   );
 }
 
-function assertPlainWalletBackup(value: unknown): WalletBackupPayload {
+function assertWalletBackupPayload(value: unknown): WalletBackupPayload {
   if (!isRecord(value) || value.version !== 1 || typeof value.type !== "string") {
     throw new Error("invalid wallet backup");
   }
@@ -491,7 +491,7 @@ export async function decryptWalletBackup(
   password: string
 ): Promise<WalletBackupPayload> {
   if (!isEncryptedWalletBackup(backup)) {
-    return assertPlainWalletBackup(backup);
+    throw new Error("invalid wallet backup");
   }
 
   if (
@@ -509,7 +509,7 @@ export async function decryptWalletBackup(
     ciphertext: backup.ciphertext
   });
   try {
-    return assertPlainWalletBackup(
+    return assertWalletBackupPayload(
       JSON.parse(await decryptText(encryptedText, password))
     );
   } catch (error) {

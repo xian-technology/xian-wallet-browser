@@ -1575,12 +1575,9 @@ function parseWalletBackupJson(text: string): WalletBackup {
 
   const candidate = backup as {
     version?: unknown;
-    type?: unknown;
+    kind?: unknown;
   };
-  if (
-    candidate.version !== 2 &&
-    (candidate.version !== 1 || typeof candidate.type !== "string")
-  ) {
+  if (candidate.version !== 2 || candidate.kind !== "xian-wallet-backup") {
     throw new Error("Invalid backup JSON.");
   }
 

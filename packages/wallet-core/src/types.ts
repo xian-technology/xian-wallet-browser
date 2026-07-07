@@ -352,7 +352,7 @@ export interface EncryptedWalletBackup {
   ciphertext: string;
 }
 
-export type WalletBackup = WalletBackupPayload | EncryptedWalletBackup;
+export type WalletBackup = EncryptedWalletBackup;
 
 export interface WalletSettingsInput {
   networkName?: string;
