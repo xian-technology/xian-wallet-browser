@@ -48,6 +48,7 @@ jobs:
         run: |
           npm install
           npm audit --audit-level=critical --omit=dev
+          npx playwright install chromium
           npm run validate
 
       - name: Run browser wallet visual checks
