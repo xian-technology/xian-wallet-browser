@@ -3,7 +3,7 @@
   "components": {
     "xian-js": {
       "repository": "xian-technology/xian-js",
-      "ref": "fb758d7d6f5de2f9514f54e5eae0f718b01dc5d7",
+      "ref": "3c4e287c0fdd89a13dacbca178b8ca1bd53810cc",
       "packages": {
         "@xian-tech/client": {
           "version": "0.2.0",
