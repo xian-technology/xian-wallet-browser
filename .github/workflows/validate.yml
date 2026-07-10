@@ -31,7 +31,7 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     container:
-      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:b5812704e1824d08f16c4abef84dc9b8ad43a28777221e1b1a9679d0f763149f
+      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:cf0daee9b994042e011bc29f20cdff1a9f682a039b43fcd738f7d8a9d3bcd9d6
     env:
       PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
       PLAYWRIGHT_VERSION: 1.61.1
