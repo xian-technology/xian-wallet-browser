@@ -132,6 +132,12 @@ export interface PersistedApproval {
   requestId: string;
   record: PendingApprovalRecord;
   view: ApprovalView;
+  /**
+   * Immutable wallet context captured when the user-facing review was built.
+   * Missing only for approvals persisted by wallet versions before context
+   * binding was introduced; those approvals must never be executed.
+   */
+  context?: ApprovalContext;
   windowId?: number;
 }
 
@@ -192,11 +198,25 @@ export interface WalletConnectedDappMetadata {
 
 export type ApprovalKind =
   | "connect"
+  | "switchChain"
   | "signMessage"
   | "signTransaction"
   | "sendTransaction"
   | "sendCall"
   | "watchAsset";
+
+export interface ApprovalNetworkContext {
+  readonly presetId: string;
+  readonly rpcUrl: string;
+  readonly configuredChainId?: string;
+  readonly chainId?: string;
+}
+
+export interface ApprovalContext {
+  readonly account: string;
+  readonly network: ApprovalNetworkContext;
+  readonly targetNetwork?: ApprovalNetworkContext;
+}
 
 export interface PendingApprovalRecord {
   id: string;

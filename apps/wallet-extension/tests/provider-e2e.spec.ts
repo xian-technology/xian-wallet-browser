@@ -328,7 +328,7 @@ test("approves connect and send-call requests through the injected provider brid
       ])
     );
 
-    await startInjectedProviderRequest(dappPage, "auto-send-call", {
+    const autoSendRequest = {
       method: "xian_sendCall",
       params: [
         {
@@ -343,17 +343,51 @@ test("approves connect and send-call requests through the injected provider brid
           }
         }
       ]
-    });
+    };
+    await Promise.all([
+      startInjectedProviderRequest(
+        dappPage,
+        "auto-send-call-1",
+        autoSendRequest
+      ),
+      startInjectedProviderRequest(
+        dappPage,
+        "auto-send-call-2",
+        autoSendRequest
+      )
+    ]);
 
-    expect(await waitForInjectedProviderResult(dappPage, "auto-send-call")).toEqual({
-      status: "fulfilled",
-      result: expect.objectContaining({
-        accepted: true,
-        txHash: "ABC123",
-        nonce: 12,
-        chiSupplied: 500
-      })
-    });
+    const autoSendResults = await Promise.all([
+      waitForInjectedProviderResult(dappPage, "auto-send-call-1"),
+      waitForInjectedProviderResult(dappPage, "auto-send-call-2")
+    ]);
+    expect(autoSendResults).toEqual([
+      {
+        status: "fulfilled",
+        result: expect.objectContaining({
+          accepted: true,
+          txHash: "ABC123",
+          chiSupplied: 500
+        })
+      },
+      {
+        status: "fulfilled",
+        result: expect.objectContaining({
+          accepted: true,
+          txHash: "ABC123",
+          chiSupplied: 500
+        })
+      }
+    ]);
+    expect(
+      autoSendResults
+        .map((entry) =>
+          entry.status === "fulfilled"
+            ? Number((entry.result as { nonce?: unknown }).nonce)
+            : Number.NaN
+        )
+        .sort((left, right) => left - right)
+    ).toEqual([13, 14]);
 
     const changedExistingPages = new Set(context.pages());
     await startInjectedProviderRequest(dappPage, "changed-send-call", {
@@ -383,7 +417,7 @@ test("approves connect and send-call requests through the injected provider brid
       result: expect.objectContaining({
         accepted: true,
         txHash: "ABC123",
-        nonce: 12,
+        nonce: 15,
         chiSupplied: 500
       })
     });
@@ -900,6 +934,252 @@ test("rejects or dismisses pending approvals and returns provider errors to the 
   } finally {
     await cleanupExtension(context, userDataDir);
     await dapp.close();
+  }
+});
+
+test("requires connected-origin approval before switching the wallet chain", async () => {
+  const localRpc = await startMockRpcServer({ chainId: "xian-local" });
+  const testRpc = await startMockRpcServer({ chainId: "xian-test" });
+  const dapp = await startDappServer();
+  const { context, extensionId, userDataDir } = await launchExtension();
+
+  try {
+    const popup = await openExtensionPage(context, extensionId, "popup.html");
+    await createWalletInPopup(popup, "correct horse battery");
+    await sendRuntimeMessage(popup, {
+      type: "wallet_update_settings",
+      networkName: "Local mock",
+      expectedChainId: localRpc.chainId,
+      rpcUrl: localRpc.url,
+      dashboardUrl: localRpc.url
+    });
+    await sendRuntimeMessage(popup, {
+      type: "wallet_save_network_preset",
+      id: "testnet-preset",
+      name: "Test mock",
+      chainId: testRpc.chainId,
+      rpcUrl: testRpc.url,
+      dashboardUrl: testRpc.url,
+      makeActive: false
+    });
+    const sourceNetwork = await sendRuntimeMessage<{
+      activeNetworkId?: string;
+    }>(popup, { type: "wallet_get_popup_state" });
+
+    const dappPage = await context.newPage();
+    await dappPage.goto(dapp.url);
+    await waitForInjectedProvider(dappPage);
+    await installProviderEventLog(dappPage);
+
+    await startInjectedProviderRequest(dappPage, "unconnected-switch", {
+      method: "xian_switchChain",
+      params: [{ chainId: testRpc.chainId }]
+    });
+    expect(
+      await waitForInjectedProviderResult(dappPage, "unconnected-switch")
+    ).toEqual({
+      status: "rejected",
+      error: expect.objectContaining({
+        code: 4100,
+        message: "site is not connected to this wallet"
+      })
+    });
+    expect(
+      context.pages().filter((page) => page.url().includes("approval.html"))
+    ).toHaveLength(0);
+
+    const connectExistingPages = new Set(context.pages());
+    await startInjectedProviderRequest(dappPage, "connect", {
+      method: "xian_requestAccounts"
+    });
+    const connectApproval = await waitForApprovalPage(
+      context,
+      connectExistingPages
+    );
+    const connectClose = connectApproval.waitForEvent("close");
+    await connectApproval.getByRole("button", { name: "Connect" }).click();
+    await connectClose;
+    expect(await waitForInjectedProviderResult(dappPage, "connect")).toEqual({
+      status: "fulfilled",
+      result: [expect.any(String)]
+    });
+
+    const rejectExistingPages = new Set(context.pages());
+    await startInjectedProviderRequest(dappPage, "reject-switch", {
+      method: "xian_switchChain",
+      params: [{ chainId: testRpc.chainId }]
+    });
+    const rejectApproval = await waitForApprovalPage(
+      context,
+      rejectExistingPages
+    );
+    await expect(
+      rejectApproval.getByRole("heading", { name: "Switch network" })
+    ).toBeVisible();
+    await expect(rejectApproval.getByText("Current network")).toBeVisible();
+    await expect(rejectApproval.getByText("Requested network")).toBeVisible();
+    const rejectClose = rejectApproval.waitForEvent("close");
+    await rejectApproval.getByRole("button", { name: "Reject" }).click();
+    await rejectClose;
+    expect(
+      await waitForInjectedProviderResult(dappPage, "reject-switch")
+    ).toEqual({
+      status: "rejected",
+      error: expect.objectContaining({
+        code: 4100,
+        message: "user rejected the request"
+      })
+    });
+    await expect
+      .poll(() =>
+        sendRuntimeMessage<{ activeNetworkId?: string }>(popup, {
+          type: "wallet_get_popup_state"
+        })
+      )
+      .toMatchObject({ activeNetworkId: sourceNetwork.activeNetworkId });
+    expect(await readProviderEventLog(dappPage)).not.toContainEqual({
+      event: "chainChanged",
+      args: [testRpc.chainId]
+    });
+
+    const approveExistingPages = new Set(context.pages());
+    await startInjectedProviderRequest(dappPage, "approve-switch", {
+      method: "xian_switchChain",
+      params: [{ chainId: testRpc.chainId }]
+    });
+    const approveApproval = await waitForApprovalPage(
+      context,
+      approveExistingPages
+    );
+    const approveClose = approveApproval.waitForEvent("close");
+    await approveApproval
+      .getByRole("button", { name: "Switch network" })
+      .click();
+    await approveClose;
+    expect(
+      await waitForInjectedProviderResult(dappPage, "approve-switch")
+    ).toEqual({
+      status: "fulfilled",
+      result: null
+    });
+    await expect
+      .poll(async () => (await readProviderEventLog(dappPage)).at(-1))
+      .toEqual({
+        event: "chainChanged",
+        args: [testRpc.chainId]
+      });
+  } finally {
+    await cleanupExtension(context, userDataDir);
+    await dapp.close();
+    await testRpc.close();
+    await localRpc.close();
+  }
+});
+
+test("rejects reviewed approvals after the active account or network changes", async () => {
+  const localRpc = await startMockRpcServer({ chainId: "xian-local" });
+  const testRpc = await startMockRpcServer({ chainId: "xian-test" });
+  const dapp = await startDappServer();
+  const { context, extensionId, userDataDir } = await launchExtension();
+
+  try {
+    const popup = await openExtensionPage(context, extensionId, "popup.html");
+    await createWalletInPopup(popup, "correct horse battery");
+    await sendRuntimeMessage(popup, {
+      type: "wallet_update_settings",
+      networkName: "Local mock",
+      expectedChainId: localRpc.chainId,
+      rpcUrl: localRpc.url,
+      dashboardUrl: localRpc.url
+    });
+    await sendRuntimeMessage(popup, {
+      type: "wallet_save_network_preset",
+      id: "testnet-preset",
+      name: "Test mock",
+      chainId: testRpc.chainId,
+      rpcUrl: testRpc.url,
+      dashboardUrl: testRpc.url,
+      makeActive: false
+    });
+
+    const dappPage = await context.newPage();
+    await dappPage.goto(dapp.url);
+    await waitForInjectedProvider(dappPage);
+    const connectExistingPages = new Set(context.pages());
+    await startInjectedProviderRequest(dappPage, "connect", {
+      method: "xian_requestAccounts"
+    });
+    const connectApproval = await waitForApprovalPage(
+      context,
+      connectExistingPages
+    );
+    const connectClose = connectApproval.waitForEvent("close");
+    await connectApproval.getByRole("button", { name: "Connect" }).click();
+    await connectClose;
+    expect(await waitForInjectedProviderResult(dappPage, "connect")).toEqual({
+      status: "fulfilled",
+      result: [expect.any(String)]
+    });
+
+    const networkExistingPages = new Set(context.pages());
+    await startInjectedProviderRequest(dappPage, "stale-network", {
+      method: "xian_signMessage",
+      params: [{ message: "reviewed on local" }]
+    });
+    const networkApproval = await waitForApprovalPage(
+      context,
+      networkExistingPages
+    );
+    await sendRuntimeMessage(popup, {
+      type: "wallet_switch_network",
+      presetId: "testnet-preset"
+    });
+    const networkClose = networkApproval.waitForEvent("close");
+    await networkApproval
+      .getByRole("button", { name: "Sign message" })
+      .click();
+    await networkClose;
+    expect(
+      await waitForInjectedProviderResult(dappPage, "stale-network")
+    ).toEqual({
+      status: "rejected",
+      error: expect.objectContaining({
+        code: 4100,
+        message:
+          "wallet account or network changed after this request was reviewed"
+      })
+    });
+
+    const accountExistingPages = new Set(context.pages());
+    await startInjectedProviderRequest(dappPage, "stale-account", {
+      method: "xian_signMessage",
+      params: [{ message: "reviewed by account one" }]
+    });
+    const accountApproval = await waitForApprovalPage(
+      context,
+      accountExistingPages
+    );
+    await sendRuntimeMessage(popup, { type: "wallet_add_account" });
+    const accountClose = accountApproval.waitForEvent("close");
+    await accountApproval
+      .getByRole("button", { name: "Sign message" })
+      .click();
+    await accountClose;
+    expect(
+      await waitForInjectedProviderResult(dappPage, "stale-account")
+    ).toEqual({
+      status: "rejected",
+      error: expect.objectContaining({
+        code: 4100,
+        message:
+          "wallet account or network changed after this request was reviewed"
+      })
+    });
+  } finally {
+    await cleanupExtension(context, userDataDir);
+    await dapp.close();
+    await testRpc.close();
+    await localRpc.close();
   }
 });
 

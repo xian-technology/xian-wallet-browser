@@ -29,5 +29,17 @@ Design boundaries:
 - browser-extension transport and DOM rendering stay in app-level code
 - approval policy, permission enforcement, and custody state stay in
   `@xian-tech/wallet-core`
+- every durable approval is bound to the account, active network preset, RPC,
+  and reviewed chain; a context change makes the request ineligible for
+  execution, including after a service-worker or browser restart
+- dapp-requested chain switches require an existing connection and a dedicated
+  approval before the wallet changes its global active network
+- one cached `XianClient` per network keeps SDK nonce reservation and ambiguous
+  broadcast quarantine effective across concurrent approvals; automatic
+  `sendCall` and direct-wallet sends use that ordered lifecycle
+- prepared transactions remain explicit-nonce snapshots, while wallet-core
+  rejects concurrent broadcasts with the same chain, sender, and nonce
+- external message approvals sign the versioned Xian envelope bound to the
+  reviewed active chain and account; raw signing remains transaction-internal
 - the repo is browser-product-first, not a general SDK workspace
 - if a future hosted wallet or PWA is built, it should live here as another app

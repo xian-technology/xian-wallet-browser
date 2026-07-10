@@ -8,30 +8,67 @@ on:
     branches:
       - "*"
 
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  workflow-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Lint GitHub Actions workflows
+        uses: raven-actions/actionlint@e01d1ea33dd6a5ed517d95b4c0c357560ac6f518 # v2.1.1
+        with:
+          version: 1.7.12
+          pyflakes: false
+
   validate:
     runs-on: ubuntu-latest
     container:
-      image: mcr.microsoft.com/playwright:v1.59.1-noble
+      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:b5812704e1824d08f16c4abef84dc9b8ad43a28777221e1b1a9679d0f763149f
     env:
       PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      PLAYWRIGHT_VERSION: 1.61.1
     steps:
       - name: Check out xian-wallet-browser
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           path: xian-wallet-browser
 
       - name: Check out xian-js
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           repository: ${{ github.repository_owner }}/xian-js
           ref: main
           path: xian-js
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
+      - name: Check out xian-contracting
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
-          node-version: "24"
+          repository: ${{ github.repository_owner }}/xian-contracting
+          ref: main
+          path: xian-contracting
+
+      - name: Check out xian-meta
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          repository: ${{ github.repository_owner }}/xian-meta
+          ref: main
+          path: xian-meta
+
+      - name: Report resolved sibling SHAs
+        run: python3 xian-meta/scripts/report_workspace_shas.py --workspace-root .
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "24.18.0"
           cache: npm
           cache-dependency-path: |
             xian-js/package-lock.json
@@ -40,16 +77,21 @@ jobs:
       - name: Install and build xian-js
         working-directory: xian-js
         run: |
-          npm install
+          npm ci
           npm run build
 
       - name: Install and validate xian-wallet-browser
         working-directory: xian-wallet-browser
         run: |
-          npm install
+          npm ci
           npm audit --audit-level=critical --omit=dev
-          npx playwright install chromium
+          node -e 'const actual = require("@playwright/test/package.json").version; if (actual !== process.env.PLAYWRIGHT_VERSION) throw new Error("Playwright " + actual + " does not match CI image " + process.env.PLAYWRIGHT_VERSION)'
           npm run validate
+
+      - name: Run browser wallet checks
+        timeout-minutes: 10
+        working-directory: xian-wallet-browser
+        run: timeout 600s npm run test:browser --workspace xian-wallet-extension
 
       - name: Run browser wallet visual checks
         timeout-minutes: 10
@@ -58,7 +100,7 @@ jobs:
 
       - name: Upload Playwright artifacts
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: xian-wallet-browser-playwright
           path: |

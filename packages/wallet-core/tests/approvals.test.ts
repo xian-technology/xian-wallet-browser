@@ -46,6 +46,39 @@ describe("@xian-tech/wallet-core approvals", () => {
     );
   });
 
+  it("builds a chain-switch view that names both reviewed networks", () => {
+    const view = buildApprovalView(
+      makeRecord("switchChain", {
+        method: "xian_switchChain",
+        params: [{ chainId: "xian-testnet-5" }]
+      }),
+      {
+        account: "abc123",
+        chainId: "xian-local",
+        targetChainId: "xian-testnet-5"
+      }
+    );
+
+    expect(view).toMatchObject({
+      title: "Switch network",
+      approveLabel: "Switch network",
+      account: "abc123",
+      chainId: "xian-local"
+    });
+    expect(view.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "Current network",
+          value: "xian-local"
+        }),
+        expect.objectContaining({
+          label: "Requested network",
+          value: "xian-testnet-5"
+        })
+      ])
+    );
+  });
+
   it("builds a structured send-call approval view", () => {
     const view = buildApprovalView(
       makeRecord("sendCall", {

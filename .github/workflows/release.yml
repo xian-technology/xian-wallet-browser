@@ -10,94 +10,128 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  release-context:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+      version: ${{ steps.resolve.outputs.version }}
+      xian_js_repository: ${{ steps.resolve.outputs.xian_js_repository }}
+      xian_js_ref: ${{ steps.resolve.outputs.xian_js_ref }}
+      xian_contracting_repository: ${{ steps.resolve.outputs.xian_contracting_repository }}
+      xian_contracting_ref: ${{ steps.resolve.outputs.xian_contracting_ref }}
     steps:
-      - name: Check out xian-wallet-browser
-        uses: actions/checkout@v7
+      - name: Check out release tag
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          fetch-depth: 0
           path: xian-wallet-browser
-
-      - name: Check out xian-js
-        uses: actions/checkout@v7
-        with:
-          repository: ${{ github.repository_owner }}/xian-js
-          ref: main
-          path: xian-js
+          ref: ${{ github.ref }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: "24"
+          node-version: "24.18.0"
+
+      - name: Resolve immutable release context
+        id: resolve
+        working-directory: xian-wallet-browser
+        env:
+          GITHUB_REF_TYPE: ${{ github.ref_type }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          TRIGGER_SHA: ${{ github.sha }}
+        run: node ./scripts/release-context.mjs resolve
+
+  build:
+    needs: release-context
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:b5812704e1824d08f16c4abef84dc9b8ad43a28777221e1b1a9679d0f763149f
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      PLAYWRIGHT_VERSION: 1.61.1
+    permissions:
+      contents: read
+    steps:
+      - name: Check out immutable wallet source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          path: xian-wallet-browser
+          ref: ${{ needs.release-context.outputs.source_sha }}
+
+      - name: Check out pinned xian-js source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          repository: ${{ needs.release-context.outputs.xian_js_repository }}
+          ref: ${{ needs.release-context.outputs.xian_js_ref }}
+          path: xian-js
+
+      - name: Check out pinned xian-contracting source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          repository: ${{ needs.release-context.outputs.xian_contracting_repository }}
+          ref: ${{ needs.release-context.outputs.xian_contracting_ref }}
+          path: xian-contracting
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "24.18.0"
           cache: npm
           cache-dependency-path: |
             xian-js/package-lock.json
             xian-wallet-browser/package-lock.json
 
-      - name: Install and build xian-js
+      - name: Verify pinned source and package context
+        working-directory: xian-wallet-browser
+        env:
+          EXPECTED_SOURCE_SHA: ${{ needs.release-context.outputs.source_sha }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node ./scripts/release-context.mjs verify-component
+
+      - name: Install and build pinned xian-js
         working-directory: xian-js
         run: |
-          npm install
+          npm ci
           npm run build
 
-      - name: Install xian-wallet-browser dependencies
+      - name: Install locked wallet dependencies
         working-directory: xian-wallet-browser
-        run: npm install
+        run: npm ci
 
-      - name: Validate xian-wallet-browser
+      - name: Verify Playwright image matches the lockfile
+        working-directory: xian-wallet-browser
+        run: node -e 'const actual = require("@playwright/test/package.json").version; if (actual !== process.env.PLAYWRIGHT_VERSION) throw new Error("Playwright " + actual + " does not match release image " + process.env.PLAYWRIGHT_VERSION)'
+
+      - name: Audit production dependencies
+        working-directory: xian-wallet-browser
+        run: npm audit --audit-level=critical --omit=dev
+
+      - name: Validate wallet workspace
         working-directory: xian-wallet-browser
         run: npm run validate
 
-      - name: Verify repo versions match tag
+      - name: Run browser wallet checks
+        timeout-minutes: 10
         working-directory: xian-wallet-browser
-        run: |
-          node <<'NODE'
-          const fs = require("node:fs");
+        run: timeout 600s npm run test:browser --workspace xian-wallet-extension
 
-          const expected = process.env.GITHUB_REF_NAME.replace(/^v/, "");
-          const packageFiles = [
-            "package.json",
-            "packages/wallet-core/package.json",
-            "apps/wallet-extension/package.json"
-          ];
+      - name: Run browser wallet visual checks
+        timeout-minutes: 10
+        working-directory: xian-wallet-browser
+        run: timeout 600s npm run test:visual --workspace xian-wallet-extension
 
-          for (const file of packageFiles) {
-            const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
-            if (pkg.version !== expected) {
-              throw new Error(`${file} has version ${pkg.version}, expected ${expected}`);
-            }
-          }
-
-          function chromeExtensionVersion(version) {
-            const match = version.match(/^(\d+)\.(\d+)\.(\d+)(?:-(alpha|beta|rc)\.(\d+))?$/);
-            if (!match) {
-              throw new Error(`unsupported version ${version}`);
-            }
-            const [, major, minor, patch, channel, number] = match;
-            const offsets = { alpha: 10000, beta: 20000, rc: 30000 };
-            const build = channel ? offsets[channel] + Number(number) : 65535;
-            if (build > 65535) {
-              throw new Error(`Chrome extension build component is too large for ${version}`);
-            }
-            return `${major}.${minor}.${patch}.${build}`;
-          }
-
-          const manifestFile = "apps/wallet-extension/public/manifest.json";
-          const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
-          const expectedManifestVersion = chromeExtensionVersion(expected);
-          if (manifest.version !== expectedManifestVersion) {
-            throw new Error(
-              `${manifestFile} has version ${manifest.version}, expected ${expectedManifestVersion}`
-            );
-          }
-          if (manifest.version_name !== expected) {
-            throw new Error(
-              `${manifestFile} has version_name ${manifest.version_name}, expected ${expected}`
-            );
-          }
-          NODE
+      - name: Upload Playwright diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-playwright-diagnostics
+          path: |
+            xian-wallet-browser/apps/wallet-extension/test-results
+            xian-wallet-browser/apps/wallet-extension/playwright-report
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Pack wallet-core and archive extension
         working-directory: xian-wallet-browser
@@ -109,8 +143,15 @@ jobs:
             zip -r "../../../release-dist/xian-wallet-extension-${GITHUB_REF_NAME#v}.zip" .
           )
 
-      - name: Upload release artifacts
-        uses: actions/upload-artifact@v7
+      - name: Verify release artifact metadata
+        working-directory: xian-wallet-browser
+        env:
+          ARTIFACT_DIRECTORY: release-dist
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node ./scripts/release-context.mjs verify-artifacts
+
+      - name: Upload validated release artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: release-dist
           path: xian-wallet-browser/release-dist/*
@@ -118,7 +159,9 @@ jobs:
           retention-days: 14
 
   publish:
-    needs: build
+    needs:
+      - release-context
+      - build
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -126,42 +169,73 @@ jobs:
       name: npm
     steps:
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: "24"
+          node-version: "24.18.0"
           registry-url: https://registry.npmjs.org
 
-      - name: Download release artifacts
-        uses: actions/download-artifact@v8
+      - name: Download validated release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: release-dist
           path: release-dist
 
       - name: Publish wallet-core to npm
+        env:
+          EXPECTED_VERSION: ${{ needs.release-context.outputs.version }}
         run: |
-          for package in release-dist/*.tgz; do
-            metadata="$(
-              tar -xOf "$package" package/package.json \
-                | node -e 'let input = ""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => { const pkg = JSON.parse(input); console.log(pkg.name + "\t" + pkg.version); });'
+          shopt -s nullglob
+          packages=(release-dist/*.tgz)
+          if [ "${#packages[@]}" -ne 1 ]; then
+            echo "Expected one npm artifact, found ${#packages[@]}" >&2
+            exit 1
+          fi
+          package="${packages[0]}"
+          metadata="$(
+            tar -xOf "$package" package/package.json \
+              | node -e 'let input = ""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => { const pkg = JSON.parse(input); console.log(pkg.name + "\t" + pkg.version); });'
+          )"
+          name="${metadata%%$'\t'*}"
+          version="${metadata#*$'\t'}"
+          if [ "${name}" != "@xian-tech/wallet-core" ] || [ "${version}" != "${EXPECTED_VERSION}" ]; then
+            echo "Unexpected wallet package: ${name}@${version}" >&2
+            exit 1
+          fi
+
+          if published_integrity="$(npm view "${name}@${version}" dist.integrity 2>/dev/null)"; then
+            local_integrity="$(
+              node - "$package" <<'NODE'
+          const crypto = require("node:crypto");
+          const fs = require("node:fs");
+          const archive = fs.readFileSync(process.argv[2]);
+          console.log(`sha512-${crypto.createHash("sha512").update(archive).digest("base64")}`);
+          NODE
             )"
-            version="${metadata#*$'\t'}"
-            publish_tag="latest"
-            if [[ "${version}" == *"-"* ]]; then
-              publish_tag="beta"
+            if [ -z "${published_integrity}" ] || [ "${published_integrity}" != "${local_integrity}" ]; then
+              echo "Published ${name}@${version} does not match the validated artifact" >&2
+              exit 1
             fi
-            npm publish "./$package" --provenance --access public --tag "${publish_tag}"
-          done
+            echo "${name}@${version} already exists with matching integrity; skipping"
+            exit 0
+          fi
+
+          publish_tag="latest"
+          if [[ "${version}" == *"-"* ]]; then
+            publish_tag="beta"
+          fi
+          npm publish "./$package" --provenance --access public --tag "${publish_tag}"
 
   github-release:
     needs:
+      - release-context
       - build
       - publish
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Download release artifacts
-        uses: actions/download-artifact@v8
+      - name: Download validated release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: release-dist
           path: release-dist
@@ -169,6 +243,7 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.release-context.outputs.version }}
         run: |
           release_flags=()
           if [[ "${GITHUB_REF_NAME}" == *"-"* ]]; then
@@ -177,6 +252,6 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" release-dist/* \
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
-            --title "xian-wallet-browser ${GITHUB_REF_NAME#v}" \
+            --title "xian-wallet-browser ${RELEASE_VERSION}" \
             --generate-notes \
             "${release_flags[@]}"

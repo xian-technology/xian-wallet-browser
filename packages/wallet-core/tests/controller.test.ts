@@ -344,6 +344,13 @@ describe("@xian-tech/wallet-core controller", () => {
       status: "pending",
       approvalId: "approval-2"
     });
+    expect(store.currentApprovals()["approval-2"]?.context).toMatchObject({
+      account: store.current()?.publicKey,
+      network: {
+        presetId: "local-node",
+        chainId: "xian-local"
+      }
+    });
 
     const controllerB = new WalletController({
       wallet: {
@@ -402,6 +409,362 @@ describe("@xian-tech/wallet-core controller", () => {
         pollIntervalMs: undefined
       }
     );
+  });
+
+  it("routes concurrent approved send calls through one nonce-aware network client", async () => {
+    const store = createStore();
+    const client = createClient();
+    let nextNonce = 7;
+    client.sendTx = vi.fn(async (request) => ({
+      submitted: true,
+      accepted: true,
+      finalized: false,
+      txHash: `TX-${nextNonce}`,
+      mode: request.mode ?? "checktx",
+      nonce: nextNonce++,
+      chiSupplied: request.chiSupplied ?? request.chi ?? 50_000,
+      response: {}
+    }));
+    const createClientFactory = vi.fn(() => client);
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: createClientFactory,
+      onApprovalRequested: vi.fn(async () => undefined),
+      createId: vi
+        .fn()
+        .mockReturnValueOnce("approval-connect")
+        .mockReturnValueOnce("approval-send-1")
+        .mockReturnValueOnce("approval-send-2")
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+    await controller.startProviderRequest("request-connect", ORIGIN, {
+      method: "xian_requestAccounts"
+    });
+    await controller.resolveApproval("approval-connect", true);
+
+    const sendRequest = (to: string) => ({
+      method: "xian_sendCall",
+      params: [{
+        intent: {
+          contract: "currency",
+          function: "transfer",
+          kwargs: { to, amount: "1" },
+          chi: 500
+        }
+      }]
+    });
+    await controller.startProviderRequest(
+      "request-send-1",
+      ORIGIN,
+      sendRequest("alice")
+    );
+    await controller.startProviderRequest(
+      "request-send-2",
+      ORIGIN,
+      sendRequest("bob")
+    );
+
+    await Promise.all([
+      controller.resolveApproval("approval-send-1", true),
+      controller.resolveApproval("approval-send-2", true)
+    ]);
+
+    expect(client.sendTx).toHaveBeenCalledTimes(2);
+    expect(client.buildTx).not.toHaveBeenCalled();
+    expect(createClientFactory).toHaveBeenCalledTimes(1);
+    const [first, second] = await Promise.all([
+      controller.getProviderRequestStatus("request-send-1"),
+      controller.getProviderRequestStatus("request-send-2")
+    ]);
+    expect(first).toMatchObject({
+      status: "fulfilled",
+      result: { nonce: 7 }
+    });
+    expect(second).toMatchObject({
+      status: "fulfilled",
+      result: { nonce: 8 }
+    });
+  });
+
+  it("rejects concurrent broadcasts of prebuilt transactions with the same nonce", async () => {
+    const store = createStore();
+    const client = createClient();
+    let releaseBroadcast!: () => void;
+    const broadcastGate = new Promise<void>((resolve) => {
+      releaseBroadcast = resolve;
+    });
+    client.broadcastTx = vi.fn(async (tx) => {
+      await broadcastGate;
+      return {
+        submitted: true,
+        accepted: true,
+        finalized: false,
+        txHash: "TX-7",
+        mode: "checktx" as const,
+        nonce: tx.payload.nonce,
+        chiSupplied: tx.payload.chi_supplied,
+        response: {}
+      };
+    });
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined),
+      createId: vi
+        .fn()
+        .mockReturnValueOnce("approval-connect")
+        .mockReturnValueOnce("approval-send-1")
+        .mockReturnValueOnce("approval-send-2")
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+    await controller.startProviderRequest("request-connect", ORIGIN, {
+      method: "xian_requestAccounts"
+    });
+    await controller.resolveApproval("approval-connect", true);
+    const tx: XianUnsignedTransaction = {
+      payload: {
+        chain_id: "xian-local",
+        contract: "currency",
+        function: "transfer",
+        kwargs: { to: "bob", amount: "1" },
+        nonce: 7,
+        sender: store.current()!.publicKey,
+        chi_supplied: 500
+      }
+    };
+    const request = {
+      method: "xian_sendTransaction",
+      params: [{ tx }]
+    };
+    await controller.startProviderRequest("request-send-1", ORIGIN, request);
+    await controller.startProviderRequest("request-send-2", ORIGIN, request);
+
+    const firstResolution = controller.resolveApproval("approval-send-1", true);
+    await vi.waitFor(() => expect(client.broadcastTx).toHaveBeenCalledTimes(1));
+    await controller.resolveApproval("approval-send-2", true);
+    const second = await controller.getProviderRequestStatus("request-send-2");
+    expect(second).toMatchObject({
+      status: "rejected",
+      error: {
+        message: expect.stringContaining("nonce is already being submitted")
+      }
+    });
+
+    releaseBroadcast();
+    await firstResolution;
+    expect(client.broadcastTx).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an approval when the active account changes before execution", async () => {
+    const store = createStore();
+    const client = createClient();
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined),
+      createId: vi
+        .fn()
+        .mockReturnValueOnce("approval-connect")
+        .mockReturnValueOnce("approval-send")
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      createWithMnemonic: true
+    });
+    await controller.startProviderRequest("request-connect", ORIGIN, {
+      method: "xian_requestAccounts"
+    });
+    await controller.resolveApproval("approval-connect", true);
+    const reviewedAccount = store.current()?.publicKey;
+
+    await controller.startProviderRequest("request-send", ORIGIN, {
+      method: "xian_sendCall",
+      params: [
+        {
+          intent: {
+            contract: "currency",
+            function: "transfer",
+            kwargs: { to: "bob", amount: "5" }
+          }
+        }
+      ]
+    });
+    expect(store.currentApprovals()["approval-send"]?.context?.account).toBe(
+      reviewedAccount
+    );
+
+    await controller.addAccount();
+    expect(store.current()?.publicKey).not.toBe(reviewedAccount);
+    await controller.resolveApproval("approval-send", true);
+
+    await expect(
+      controller.getProviderRequestStatus("request-send")
+    ).resolves.toEqual({
+      status: "rejected",
+      error: expect.objectContaining({
+        code: 4100,
+        message:
+          "wallet account or network changed after this request was reviewed"
+      })
+    });
+    expect(client.buildTx).not.toHaveBeenCalled();
+    expect(client.broadcastTx).not.toHaveBeenCalled();
+  });
+
+  it("rejects a persisted approval after a network change and controller restart", async () => {
+    const store = createStore();
+    const client = createClient();
+    vi.mocked(client.getChainId).mockImplementation(async () =>
+      store.current()?.activeNetworkId === "test-preset"
+        ? "xian-test"
+        : "xian-local"
+    );
+    const options = {
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined)
+    };
+    const controllerA = new WalletController({
+      ...options,
+      createId: vi
+        .fn()
+        .mockReturnValueOnce("approval-connect")
+        .mockReturnValueOnce("test-preset")
+        .mockReturnValueOnce("approval-send")
+    });
+
+    await controllerA.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+    await controllerA.startProviderRequest("request-connect", ORIGIN, {
+      method: "xian_requestAccounts"
+    });
+    await controllerA.resolveApproval("approval-connect", true);
+    await controllerA.saveNetworkPreset({
+      name: "Test",
+      chainId: "xian-test",
+      rpcUrl: "https://rpc.test.example",
+      makeActive: false
+    });
+    await controllerA.startProviderRequest("request-send", ORIGIN, {
+      method: "xian_signMessage",
+      params: [{ message: "reviewed on local" }]
+    });
+
+    await controllerA.switchNetwork("test-preset");
+    const controllerB = new WalletController(options);
+    await controllerB.unlockWallet("secret");
+    await expect(
+      controllerB.startProviderRequest("request-accounts", ORIGIN, {
+        method: "xian_accounts"
+      })
+    ).resolves.toEqual({
+      status: "fulfilled",
+      result: [store.current()?.publicKey]
+    });
+    await controllerB.resolveApproval("approval-send", true);
+
+    await expect(
+      controllerB.getProviderRequestStatus("request-send")
+    ).resolves.toEqual({
+      status: "rejected",
+      error: expect.objectContaining({
+        code: 4100,
+        message:
+          "wallet account or network changed after this request was reviewed"
+      })
+    });
+  });
+
+  it("never executes legacy persisted approvals that have no bound context", async () => {
+    const store = createStore();
+    const client = createClient();
+    const controllerA = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined),
+      createId: vi
+        .fn()
+        .mockReturnValueOnce("approval-connect")
+        .mockReturnValueOnce("approval-legacy")
+    });
+
+    await controllerA.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+    await controllerA.startProviderRequest("request-connect", ORIGIN, {
+      method: "xian_requestAccounts"
+    });
+    await controllerA.resolveApproval("approval-connect", true);
+    await controllerA.startProviderRequest("request-legacy", ORIGIN, {
+      method: "xian_signMessage",
+      params: [{ message: "legacy approval" }]
+    });
+    delete store.currentApprovals()["approval-legacy"]?.context;
+
+    const controllerB = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client
+    });
+    await controllerB.unlockWallet("secret");
+    await controllerB.resolveApproval("approval-legacy", true);
+
+    await expect(
+      controllerB.getProviderRequestStatus("request-legacy")
+    ).resolves.toEqual({
+      status: "rejected",
+      error: expect.objectContaining({
+        code: 4100,
+        message: "approval predates wallet context binding; request it again"
+      })
+    });
   });
 
   it("estimates missing send-call chi before showing and executing approvals", async () => {
@@ -1431,6 +1794,7 @@ def private_helper():
         .fn()
         .mockReturnValueOnce("approval-1")
         .mockReturnValueOnce("mainnet-preset")
+        .mockReturnValueOnce("approval-switch")
     });
 
     await controller.createOrImportWallet({
@@ -1468,6 +1832,42 @@ def private_helper():
     });
 
     expect(switched).toEqual({
+      status: "pending",
+      approvalId: "approval-switch"
+    });
+    expect(onProviderEvent).not.toHaveBeenCalledWith(
+      "chainChanged",
+      ["xian-local-1"],
+      ORIGIN
+    );
+    await expect(
+      controller.getApprovalView("approval-switch")
+    ).resolves.toMatchObject({
+      kind: "switchChain",
+      title: "Switch network",
+      account: store.current()?.publicKey,
+      chainId: "xian-local"
+    });
+    expect(store.currentApprovals()["approval-switch"]?.context).toEqual({
+      account: store.current()?.publicKey,
+      network: {
+        presetId: "local-node",
+        rpcUrl: "http://127.0.0.1:26657",
+        configuredChainId: undefined,
+        chainId: "xian-local"
+      },
+      targetNetwork: {
+        presetId: "mainnet-preset",
+        rpcUrl: "https://rpc.mainnet.example",
+        configuredChainId: "xian-local-1",
+        chainId: "xian-local-1"
+      }
+    });
+
+    await controller.resolveApproval("approval-switch", true);
+    await expect(
+      controller.getProviderRequestStatus("request-2")
+    ).resolves.toEqual({
       status: "fulfilled",
       result: null
     });
@@ -1481,6 +1881,113 @@ def private_helper():
       ["xian-local-1"],
       ORIGIN
     );
+  });
+
+  it("rejects unconnected and user-rejected chain switch requests without changing networks", async () => {
+    const store = createStore();
+    const onProviderEvent = vi.fn(async () => undefined);
+    const controller = new WalletController({
+      wallet: {
+        id: "xian-wallet",
+        name: "Xian Wallet",
+        rdns: "org.xian.wallet"
+      },
+      version: "0.1.0-test",
+      store,
+      createClient: (state) => ({
+        ...createClient(),
+        getChainId: vi.fn(async () =>
+          state.activeNetworkId === "test-preset" ? "xian-test" : "xian-local"
+        )
+      }),
+      onApprovalRequested: vi.fn(async () => undefined),
+      onProviderEvent,
+      createId: vi
+        .fn()
+        .mockReturnValueOnce("approval-connect")
+        .mockReturnValueOnce("test-preset")
+        .mockReturnValueOnce("approval-switch")
+        .mockReturnValueOnce("approval-stale-target")
+    });
+
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY
+    });
+    await controller.startProviderRequest("request-connect", ORIGIN, {
+      method: "xian_requestAccounts"
+    });
+    await controller.resolveApproval("approval-connect", true);
+    await controller.saveNetworkPreset({
+      name: "Test",
+      chainId: "xian-test",
+      rpcUrl: "https://rpc.test.example",
+      makeActive: false
+    });
+
+    await expect(
+      controller.startProviderRequest("request-malicious", "https://evil.example", {
+        method: "xian_switchChain",
+        params: [{ chainId: "xian-test" }]
+      })
+    ).resolves.toEqual({
+      status: "rejected",
+      error: expect.objectContaining({
+        code: 4100,
+        message: "site is not connected to this wallet"
+      })
+    });
+    expect(store.currentApprovals()).toEqual({});
+
+    await expect(
+      controller.startProviderRequest("request-switch", ORIGIN, {
+        method: "xian_switchChain",
+        params: [{ chainId: "xian-test" }]
+      })
+    ).resolves.toEqual({
+      status: "pending",
+      approvalId: "approval-switch"
+    });
+    await controller.resolveApproval("approval-switch", false);
+
+    await expect(
+      controller.getProviderRequestStatus("request-switch")
+    ).resolves.toEqual({
+      status: "rejected",
+      error: expect.objectContaining({
+        code: 4100,
+        message: "user rejected the request"
+      })
+    });
+    expect((await controller.getPopupState()).activeNetworkId).toBe("local-node");
+    expect(onProviderEvent).not.toHaveBeenCalledWith(
+      "chainChanged",
+      ["xian-test"],
+      ORIGIN
+    );
+
+    await controller.startProviderRequest("request-stale-target", ORIGIN, {
+      method: "xian_switchChain",
+      params: [{ chainId: "xian-test" }]
+    });
+    await controller.saveNetworkPreset({
+      id: "test-preset",
+      name: "Test moved",
+      chainId: "xian-test",
+      rpcUrl: "https://rpc-2.test.example",
+      makeActive: false
+    });
+    await controller.resolveApproval("approval-stale-target", true);
+    await expect(
+      controller.getProviderRequestStatus("request-stale-target")
+    ).resolves.toEqual({
+      status: "rejected",
+      error: expect.objectContaining({
+        code: 4100,
+        message: "requested network changed after this request was reviewed"
+      })
+    });
+    expect((await controller.getPopupState()).activeNetworkId).toBe("local-node");
   });
 
   it("rejects dismissed approvals after restart and preserves the rejection status", async () => {

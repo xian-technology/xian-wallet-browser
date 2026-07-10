@@ -41,12 +41,25 @@ broadcast or prepare transactions.
 - Close an approval window without acting and confirm the page receives an
   approval-dismissed error.
 - Approve a sign-message request and confirm the payload summary is clear.
+- Verify the returned message signature with the v1 Xian message helper, then
+  confirm verification fails for a different chain, account, or raw message.
 - Approve a send-call request against a mock/devnet RPC and confirm the page
   receives a submission with a tx hash.
+- Start two trusted send-call requests concurrently for the same account and
+  chain and confirm they broadcast in order with distinct sequential nonces.
+- Submit the same prebuilt transaction twice concurrently and confirm only one
+  broadcast starts while the second request is rejected.
 - Disconnect a connected site and confirm later requests require a new connect
   approval.
 - Add a custom network preset, switch to it, and confirm connected pages
   receive `chainChanged`.
+- Request a chain switch from a connected site, reject it, and confirm neither
+  the active network nor provider events change. Approve a second request and
+  confirm every connected page receives exactly one `chainChanged` event.
+- Request a chain switch from an unconnected origin and confirm it is rejected
+  without opening an approval window.
+- Leave a sign/send approval open, change the active account or network, then
+  approve it and confirm the request is rejected without signing or broadcast.
 - Remove a custom network preset and confirm the wallet falls back cleanly.
 - Add a watched asset, verify it appears in the wallet, then remove it.
 - Confirm the native `currency` asset cannot be removed.
@@ -56,6 +69,8 @@ broadcast or prepare transactions.
 - With a connect or sign request pending, reload the extension service worker or
   restart the browser and confirm the approval can still be completed or
   dismissed.
+- Confirm a pre-upgrade approval that has no stored account/network binding is
+  rejected and the site can create a fresh request.
 - Confirm connected origins persist across popup closes.
 - Confirm watched assets and network presets persist across browser restarts.
 

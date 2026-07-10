@@ -4,7 +4,10 @@
 
 - validation runs on pushes and pull requests
 - publishing happens only from a git tag
-- the release tag format is `vX.Y.Z`
+- the release tag format is `vX.Y.Z`, with optional `alpha.N`, `beta.N`, or
+  `rc.N` prerelease suffixes
+- `release-manifest.json` pins every sibling build input by commit SHA and
+  source-package version
 
 ## Version Policy
 
@@ -16,7 +19,8 @@ That means:
 - the repo root version must be `X.Y.Z`
 - `@xian-tech/wallet-core` must be `X.Y.Z`
 - `apps/wallet-extension/package.json` must also carry `X.Y.Z`
-- `apps/wallet-extension/public/manifest.json` must also carry `X.Y.Z`
+- `apps/wallet-extension/public/manifest.json` must carry `X.Y.Z` in
+  `version_name` and its deterministic four-part Chrome encoding in `version`
 
 This repo is not lockstepped with `xian-js`.
 
@@ -37,36 +41,43 @@ normally through npm.
 
 ## Tag Workflow
 
-1. If needed, release `xian-js` first.
+1. If needed, release `xian-js` and its compiler dependency first.
 2. Update `package.json`, `packages/wallet-core/package.json`, and
    `apps/wallet-extension/package.json` to the intended release version.
    Update `apps/wallet-extension/public/manifest.json` to the same version.
 3. If the wallet depends on a newer SDK release, update
    `packages/wallet-core/package.json` and `apps/wallet-extension/package.json`
    to the new `@xian-tech/client` or `@xian-tech/provider` versions.
-4. Run `npm install`.
-5. Run `npm run validate`.
-6. Run `npm run test:browser --workspace xian-wallet-extension`.
-7. Run `npm run test:visual --workspace xian-wallet-extension`.
-8. Commit the release version changes.
-9. Create and push a tag in the form `vX.Y.Z`.
+4. Update `release-manifest.json` with the exact released `xian-js` and
+   `xian-contracting` commits. Every declared package version must match the
+   pinned source and the lockfile that consumes it.
+5. Run `npm install` and commit the resulting `package-lock.json` update.
+6. Run `node scripts/release-context.mjs validate-manifest`.
+7. Run `npm ci`, `npm audit --audit-level=critical --omit=dev`, and
+   `npm run validate`.
+8. Run `npm run test:browser --workspace xian-wallet-extension`.
+9. Run `npm run test:visual --workspace xian-wallet-extension`.
+10. Commit the release version and manifest changes from a clean tree.
+11. Create and push a tag in the form `vX.Y.Z`.
 
 ## What The Release Workflow Does
 
-On `v*` tags, GitHub Actions will:
+On an accepted release tag, GitHub Actions will:
 
-1. check out both `xian-wallet-browser` and sibling `xian-js`
-2. build `xian-js`
-3. validate `xian-wallet-browser`
-4. verify that repo versions match the tag
-5. pack `@xian-tech/wallet-core`
-6. archive the built extension bundle as a release asset
-7. publish `@xian-tech/wallet-core` to npm with trusted publishing
-8. create a GitHub release from the same tag
+1. resolve the tag and trigger to one clean immutable wallet source SHA
+2. check out the SDK and compiler sources at their manifest commit SHAs
+3. verify repo, package, Chrome-manifest, lockfile, and sibling-source versions
+4. install locked dependencies, audit, and run unit, browser, and visual gates
+5. pack `@xian-tech/wallet-core` and archive the validated extension bundle
+6. inspect and upload immutable release artifacts
+7. publish only the downloaded wallet-core tarball with trusted publishing
+8. create a GitHub release from the same tag and artifacts
 
 ## Notes
 
 - Do not tag from a dirty tree.
+- Do not use moving or unversioned sibling source for a wallet release. The
+  pinned SDK package versions must be the versions consumers install from npm.
 - npm trusted publishing must be configured for `@xian-tech/wallet-core`.
 - The extension itself is not published to npm; it is attached to the GitHub
   release as a zip artifact.

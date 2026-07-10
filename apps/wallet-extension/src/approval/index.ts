@@ -95,6 +95,7 @@ function toneForApproval(kind: ApprovalView["kind"]): "info" | "warning" | "dang
   switch (kind) {
     case "connect":
       return "info";
+    case "switchChain":
     case "watchAsset":
     case "signMessage":
       return "warning";
@@ -109,6 +110,8 @@ function riskLabel(kind: ApprovalView["kind"]): string {
   switch (kind) {
     case "connect":
       return "Connection request";
+    case "switchChain":
+      return "Network change";
     case "watchAsset":
       return "Asset suggestion";
     case "signMessage":

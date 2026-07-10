@@ -1,4 +1,5 @@
 import {
+  createXianMessageSigningPayload,
   Ed25519Signer,
   shieldedSyncHintFromViewingPrivateKey,
   type XianShieldedWalletHistoryResult,
@@ -52,6 +53,8 @@ import {
   isUnsafeMessageToSign
 } from "./crypto.js";
 import type {
+  ApprovalContext,
+  ApprovalNetworkContext,
   ApprovalView,
   PendingApprovalRecord,
   PersistedApproval,
@@ -179,6 +182,20 @@ export interface WalletNetworkClient {
       pollIntervalMs?: number;
     }
   ): Promise<TransactionSubmission>;
+  sendTx?(request: {
+    sender: string;
+    contract: string;
+    function: string;
+    kwargs: Record<string, unknown>;
+    signer: Ed25519Signer;
+    chainId?: string;
+    chi?: number | bigint;
+    chiSupplied?: number | bigint;
+    mode?: BroadcastMode;
+    waitForTx?: boolean;
+    timeoutMs?: number;
+    pollIntervalMs?: number;
+  }): Promise<TransactionSubmission>;
 }
 
 export interface WalletControllerOptions {
@@ -310,6 +327,32 @@ function isMissingContractResult(value: unknown): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value != null;
+}
+
+function isApprovalNetworkContext(
+  value: unknown
+): value is ApprovalNetworkContext {
+  return (
+    isRecord(value) &&
+    typeof value.presetId === "string" &&
+    value.presetId.length > 0 &&
+    typeof value.rpcUrl === "string" &&
+    value.rpcUrl.length > 0 &&
+    (value.configuredChainId == null ||
+      typeof value.configuredChainId === "string") &&
+    (value.chainId == null || typeof value.chainId === "string")
+  );
+}
+
+function isApprovalContext(value: unknown): value is ApprovalContext {
+  return (
+    isRecord(value) &&
+    typeof value.account === "string" &&
+    value.account.length > 0 &&
+    isApprovalNetworkContext(value.network) &&
+    (value.targetNetwork == null ||
+      isApprovalNetworkContext(value.targetNetwork))
+  );
 }
 
 function readExportDecoratorFlag(value: unknown): boolean | null {
@@ -939,6 +982,9 @@ function hydrateError(error: WalletSerializedError): Error {
 
 export class WalletController {
   private readonly requestWaiters = new Map<string, RequestWaiter>();
+  private readonly clients = new Map<string, WalletNetworkClient>();
+  private readonly automaticSendTails = new Map<string, Promise<void>>();
+  private readonly preparedSendsInFlight = new Set<string>();
   private unlockedPrivateKey: string | null = null;
   private unlockedSigner: Ed25519Signer | null = null;
   private unlockedSessionKey: string | null = null;
@@ -1120,13 +1166,24 @@ export class WalletController {
   private currentClient(state: StoredWalletState): WalletNetworkClient {
     const activePreset = this.activeNetworkPreset(state);
     assertRpcTransportAllowed(state.rpcUrl, activePreset.allowInsecureHttp);
-    if (this.options.createClient) {
-      return this.options.createClient(state);
+    const cacheKey = JSON.stringify([
+      activePreset.id,
+      state.rpcUrl,
+      state.dashboardUrl ?? null,
+      activePreset.allowInsecureHttp === true
+    ]);
+    const cached = this.clients.get(cacheKey);
+    if (cached) {
+      return cached;
     }
-    return new XianClient({
-      rpcUrl: state.rpcUrl,
-      dashboardUrl: state.dashboardUrl
-    });
+    const client = this.options.createClient
+      ? this.options.createClient(state)
+      : new XianClient({
+          rpcUrl: state.rpcUrl,
+          dashboardUrl: state.dashboardUrl
+        });
+    this.clients.set(cacheKey, client);
+    return client;
   }
 
   private requireStoredWallet(
@@ -1354,6 +1411,110 @@ export class WalletController {
     return resolvedChainId ?? preset.chainId;
   }
 
+  private async captureApprovalNetworkContext(
+    state: StoredWalletState,
+    preset: WalletNetworkPreset
+  ): Promise<ApprovalNetworkContext> {
+    const networkState =
+      this.activeNetworkPreset(state).id === preset.id
+        ? state
+        : this.applyActivePreset(state, preset.id);
+    return {
+      presetId: preset.id,
+      rpcUrl: preset.rpcUrl,
+      configuredChainId: preset.chainId,
+      chainId: this.displayChainId(
+        preset,
+        await this.safeGetChainId(networkState)
+      )
+    };
+  }
+
+  private async captureApprovalContext(
+    state: StoredWalletState,
+    targetPreset?: WalletNetworkPreset
+  ): Promise<ApprovalContext> {
+    const activePreset = this.activeNetworkPreset(state);
+    return {
+      account: state.publicKey,
+      network: await this.captureApprovalNetworkContext(state, activePreset),
+      targetNetwork: targetPreset
+        ? await this.captureApprovalNetworkContext(state, targetPreset)
+        : undefined
+    };
+  }
+
+  private approvalNetworkContextsMatch(
+    expected: ApprovalNetworkContext,
+    actual: ApprovalNetworkContext
+  ): boolean {
+    return (
+      expected.presetId === actual.presetId &&
+      expected.rpcUrl === actual.rpcUrl &&
+      expected.configuredChainId === actual.configuredChainId &&
+      expected.chainId === actual.chainId
+    );
+  }
+
+  private async assertApprovalContext(
+    approval: PersistedApproval,
+    state: StoredWalletState
+  ): Promise<ApprovalContext> {
+    if (!isApprovalContext(approval.context)) {
+      throw new ProviderUnauthorizedError(
+        "approval predates wallet context binding; request it again"
+      );
+    }
+    if (
+      approval.record.kind === "switchChain" &&
+      !approval.context.targetNetwork
+    ) {
+      throw new ProviderUnauthorizedError(
+        "chain-switch approval has no bound target network; request it again"
+      );
+    }
+
+    const current = await this.captureApprovalContext(state);
+    if (
+      approval.context.account !== current.account ||
+      !this.approvalNetworkContextsMatch(
+        approval.context.network,
+        current.network
+      )
+    ) {
+      throw new ProviderUnauthorizedError(
+        "wallet account or network changed after this request was reviewed"
+      );
+    }
+
+    if (approval.context.targetNetwork) {
+      const targetPreset = state.networkPresets.find(
+        (preset) => preset.id === approval.context?.targetNetwork?.presetId
+      );
+      if (!targetPreset) {
+        throw new ProviderUnauthorizedError(
+          "requested network changed after this request was reviewed"
+        );
+      }
+      const target = await this.captureApprovalNetworkContext(
+        state,
+        targetPreset
+      );
+      if (
+        !this.approvalNetworkContextsMatch(
+          approval.context.targetNetwork,
+          target
+        )
+      ) {
+        throw new ProviderUnauthorizedError(
+          "requested network changed after this request was reviewed"
+        );
+      }
+    }
+
+    return approval.context;
+  }
+
   private networkStatus(
     preset: WalletNetworkPreset,
     resolvedChainId: string | undefined
@@ -1385,7 +1546,7 @@ export class WalletController {
       return;
     }
 
-    await Promise.all(
+    await Promise.allSettled(
       state.connectedOrigins.map((origin) =>
         this.broadcastProviderEvent("chainChanged", [nextChainId], origin)
       )
@@ -1605,17 +1766,15 @@ export class WalletController {
     approval: PersistedApproval,
     argumentScope: XianDappPolicyArgumentScope
   ): Promise<XianDappPolicy | null> {
-    const state = this.requireStoredWallet(await this.loadWalletState());
-    const activeChainId =
-      approval.view.chainId ??
-      this.displayChainId(this.activeNetworkPreset(state), await this.safeGetChainId(state));
-    if (!activeChainId) {
+    const context = approval.context;
+    if (!context?.network.chainId) {
       return null;
     }
+    const activeChainId = context.network.chainId;
     return createXianDappPolicyForRequest({
       id: this.createId(),
       origin: approval.record.origin,
-      account: state.publicKey,
+      account: context.account,
       chainId: activeChainId,
       request: approval.record.request,
       now: this.now(),
@@ -1887,6 +2046,75 @@ export class WalletController {
     });
   }
 
+  private async runAutomaticSendExclusive<T>(
+    scope: string,
+    action: () => Promise<T>
+  ): Promise<T> {
+    const previous = this.automaticSendTails.get(scope) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.then(() => gate);
+    this.automaticSendTails.set(scope, tail);
+    await previous;
+    try {
+      return await action();
+    } finally {
+      release();
+      if (this.automaticSendTails.get(scope) === tail) {
+        this.automaticSendTails.delete(scope);
+      }
+    }
+  }
+
+  private async sendCallTransaction(
+    state: StoredWalletState,
+    intent: XianTransactionIntent,
+    options?: {
+      mode?: BroadcastMode;
+      waitForTx?: boolean;
+      timeoutMs?: number;
+      pollIntervalMs?: number;
+    }
+  ): Promise<TransactionSubmission> {
+    const signer = await this.getUnlockedSigner();
+    const client = this.currentClient(state);
+    const activeChainId = await client.getChainId();
+    if (intent.chainId && intent.chainId !== activeChainId) {
+      throw new ProviderChainMismatchError(
+        "wallet is connected to a different chain"
+      );
+    }
+    const request = {
+      sender: signer.address,
+      contract: intent.contract,
+      function: intent.function,
+      kwargs: intent.kwargs,
+      signer,
+      chainId: activeChainId,
+      chi: parseIntentNumber(intent.chi, "chi"),
+      chiSupplied: parseIntentNumber(intent.chiSupplied, "chiSupplied"),
+      ...options
+    };
+
+    // The official client owns nonce release/quarantine semantics. Keeping one
+    // client per network makes that reservation manager effective across
+    // concurrent approvals handled by this controller.
+    if (client.sendTx) {
+      return client.sendTx(request);
+    }
+
+    // Custom clients used by embedders may not yet expose sendTx. Serialize the
+    // full build/sign/broadcast lifecycle so two automatic sends cannot take the
+    // same network nonce concurrently.
+    const scope = `${activeChainId}\u0000${signer.address}`;
+    return this.runAutomaticSendExclusive(scope, async () => {
+      const tx = await this.prepareTransaction(state, intent);
+      return this.sendPreparedTransaction(state, tx, options);
+    });
+  }
+
   private async signPreparedTransaction(
     state: StoredWalletState,
     tx: XianUnsignedTransaction
@@ -1916,16 +2144,34 @@ export class WalletController {
       pollIntervalMs?: number;
     }
   ): Promise<TransactionSubmission> {
-    const signedTx = await this.signPreparedTransaction(state, tx);
-    return this.currentClient(state).broadcastTx(signedTx, options);
+    const payload = tx.payload;
+    const scope = `${payload.chain_id}\u0000${payload.sender}\u0000${String(
+      payload.nonce
+    )}`;
+    if (this.preparedSendsInFlight.has(scope)) {
+      throw new ProviderUnauthorizedError(
+        "another transaction with this sender, chain, and nonce is already being submitted"
+      );
+    }
+    this.preparedSendsInFlight.add(scope);
+    try {
+      const signedTx = await this.signPreparedTransaction(state, tx);
+      return await this.currentClient(state).broadcastTx(signedTx, options);
+    } finally {
+      this.preparedSendsInFlight.delete(scope);
+    }
   }
 
   private async executeApprovedRequest(
     origin: string,
     request: XianProviderRequest,
-    dappMetadata?: WalletConnectedDappMetadata
+    dappMetadata?: WalletConnectedDappMetadata,
+    approval?: PersistedApproval
   ): Promise<unknown> {
     const state = this.requireStoredWallet(await this.loadWalletState());
+    if (approval) {
+      await this.assertApprovalContext(approval, state);
+    }
 
     switch (request.method) {
       case "xian_requestAccounts": {
@@ -1945,6 +2191,48 @@ export class WalletController {
           nextState.publicKey
         );
         return [nextState.publicKey];
+      }
+
+      case "xian_switchChain": {
+        this.requireConnectedOrigin(state, origin);
+        await this.getUnlockedSigner();
+        const { chainId } = firstParamObject(request.params);
+        const requestedChainId =
+          typeof chainId === "string" ? chainId.trim() : "";
+        if (!requestedChainId) {
+          throw new TypeError("xian_switchChain requires a chainId string");
+        }
+        const previousChainId = this.displayChainId(
+          this.activeNetworkPreset(state),
+          await this.safeGetChainId(state)
+        );
+        if (previousChainId === requestedChainId) {
+          return null;
+        }
+        const targetPreset = state.networkPresets.find(
+          (preset) => preset.chainId === requestedChainId
+        );
+        if (!targetPreset) {
+          throw new ProviderChainMismatchError(
+            "wallet has no configured network preset for the requested chain"
+          );
+        }
+        const nextState = this.applyActivePreset(state, targetPreset.id);
+        const resolvedTargetChainId = this.displayChainId(
+          targetPreset,
+          await this.safeGetChainId(nextState)
+        );
+        if (resolvedTargetChainId !== requestedChainId) {
+          throw new ProviderChainMismatchError(
+            "configured network RPC reports a different chain"
+          );
+        }
+        await this.store.saveState(nextState);
+        await this.emitChainChangedForConnectedOrigins(
+          nextState,
+          previousChainId
+        );
+        return null;
       }
 
       case "xian_watchAsset": {
@@ -1974,7 +2262,14 @@ export class WalletController {
             "refusing to sign a transaction-like payload as a plain message"
           );
         }
-        return signer.signMessage(message);
+        const chainId = await this.currentClient(state).getChainId();
+        return signer.signMessage(
+          createXianMessageSigningPayload({
+            account: state.publicKey,
+            chainId,
+            message
+          })
+        );
       }
 
       case "xian_signTransaction": {
@@ -2003,11 +2298,7 @@ export class WalletController {
         await this.getUnlockedSigner();
         const { intent, mode, waitForTx, timeoutMs, pollIntervalMs } =
           firstParamObject(request.params);
-        const tx = await this.prepareTransaction(
-          state,
-          intent as XianTransactionIntent
-        );
-        return this.sendPreparedTransaction(state, tx, {
+        return this.sendCallTransaction(state, intent as XianTransactionIntent, {
           mode: mode as BroadcastMode | undefined,
           waitForTx: waitForTx as boolean | undefined,
           timeoutMs: timeoutMs as number | undefined,
@@ -2122,12 +2413,11 @@ export class WalletController {
 
   private async createApprovalRequest(
     requestState: StoredProviderRequest,
-    account: string | undefined,
-    chainId: string | undefined
+    context: ApprovalContext
   ): Promise<ProviderRequestStartResult> {
     const request = await this.requestWithEstimatedSendCallChi(
       requestState.request,
-      account
+      context.account
     );
     const record: PendingApprovalRecord = {
       id: this.createId(),
@@ -2142,12 +2432,18 @@ export class WalletController {
       record.kind === "sendCall"
         ? await this.getChiRate()
         : null;
-    const view = buildApprovalView(record, { account, chainId, chiRate });
+    const view = buildApprovalView(record, {
+      account: context.account,
+      chainId: context.network.chainId,
+      targetChainId: context.targetNetwork?.chainId,
+      chiRate
+    });
     const approval: PersistedApproval = {
       id: record.id,
       requestId: requestState.requestId,
       record,
-      view
+      view,
+      context
     };
 
     await this.store.saveApprovalState(approval);
@@ -2186,7 +2482,10 @@ export class WalletController {
     origin: string,
     request: XianProviderRequest,
     dappMetadata?: WalletConnectedDappMetadata
-  ): Promise<{ kind: "result"; value: unknown } | { kind: "approval"; account?: string; chainId?: string }> {
+  ): Promise<
+    | { kind: "result"; value: unknown }
+    | { kind: "approval"; context: ApprovalContext }
+  > {
     switch (request.method) {
       case "xian_getWalletInfo":
         return {
@@ -2197,11 +2496,6 @@ export class WalletController {
       case "xian_requestAccounts": {
         const walletState = this.requireStoredWallet(state);
         await this.getUnlockedSigner();
-        const approvalChainId = this.displayChainId(
-          this.activeNetworkPreset(walletState),
-          await this.safeGetChainId(walletState)
-        );
-
         if (walletState.connectedOrigins.includes(origin)) {
           const nextState = await this.updateConnectedOrigin(
             origin,
@@ -2216,8 +2510,7 @@ export class WalletController {
 
         return {
           kind: "approval",
-          account: walletState.publicKey,
-          chainId: approvalChainId
+          context: await this.captureApprovalContext(walletState)
         };
       }
 
@@ -2262,15 +2555,19 @@ export class WalletController {
 
       case "xian_switchChain": {
         const walletState = this.requireStoredWallet(state);
+        this.requireConnectedOrigin(walletState, origin);
+        await this.getUnlockedSigner();
         const { chainId } = firstParamObject(request.params);
-        if (typeof chainId !== "string" || chainId.length === 0) {
+        const requestedChainId =
+          typeof chainId === "string" ? chainId.trim() : "";
+        if (!requestedChainId) {
           throw new TypeError("xian_switchChain requires a chainId string");
         }
         const previousChainId = this.displayChainId(
           this.activeNetworkPreset(walletState),
           await this.safeGetChainId(walletState)
         );
-        if (previousChainId === chainId) {
+        if (previousChainId === requestedChainId) {
           return {
             kind: "result",
             value: null
@@ -2278,19 +2575,25 @@ export class WalletController {
         }
 
         const targetPreset = walletState.networkPresets.find(
-          (preset) => preset.chainId === chainId
+          (preset) => preset.chainId === requestedChainId
         );
         if (!targetPreset) {
           throw new ProviderChainMismatchError(
             "wallet has no configured network preset for the requested chain"
           );
         }
-        const nextState = this.applyActivePreset(walletState, targetPreset.id);
-        await this.store.saveState(nextState);
-        await this.emitChainChangedForConnectedOrigins(nextState, previousChainId);
+        const context = await this.captureApprovalContext(
+          walletState,
+          targetPreset
+        );
+        if (context.targetNetwork?.chainId !== requestedChainId) {
+          throw new ProviderChainMismatchError(
+            "configured network RPC reports a different chain"
+          );
+        }
         return {
-          kind: "result",
-          value: null
+          kind: "approval",
+          context
         };
       }
 
@@ -2300,11 +2603,7 @@ export class WalletController {
         await this.getUnlockedSigner();
         return {
           kind: "approval",
-          account: walletState.publicKey,
-          chainId: this.displayChainId(
-            this.activeNetworkPreset(walletState),
-            await this.safeGetChainId(walletState)
-          )
+          context: await this.captureApprovalContext(walletState)
         };
       }
 
@@ -2314,11 +2613,7 @@ export class WalletController {
         await this.getUnlockedSigner();
         return {
           kind: "approval",
-          account: walletState.publicKey,
-          chainId: this.displayChainId(
-            this.activeNetworkPreset(walletState),
-            await this.safeGetChainId(walletState)
-          )
+          context: await this.captureApprovalContext(walletState)
         };
       }
 
@@ -2358,8 +2653,7 @@ export class WalletController {
         }
         return {
           kind: "approval",
-          account: walletState.publicKey,
-          chainId: activeChainId
+          context: await this.captureApprovalContext(walletState)
         };
       }
 
@@ -2604,13 +2898,16 @@ export class WalletController {
   }): Promise<unknown> {
     const state = this.requireStoredWallet(await this.loadWalletState());
     await this.getUnlockedSigner();
-    const tx = await this.prepareTransaction(state, {
-      contract: intent.contract,
-      function: intent.function,
-      kwargs: intent.kwargs,
-      chi: intent.chi
-    });
-    return this.sendPreparedTransaction(state, tx, { mode: "commit" });
+    return this.sendCallTransaction(
+      state,
+      {
+        contract: intent.contract,
+        function: intent.function,
+        kwargs: intent.kwargs,
+        chi: intent.chi
+      },
+      { mode: "commit" }
+    );
   }
 
   async getDexSnapshot(): Promise<WalletDexSnapshot> {
@@ -3781,8 +4078,7 @@ export class WalletController {
 
       return this.createApprovalRequest(
         requestState,
-        immediate.account,
-        immediate.chainId
+        immediate.context
       );
     } catch (error) {
       const rejected = await this.rejectRequest(requestState, error);
@@ -3891,7 +4187,8 @@ export class WalletController {
       const result = await this.executeApprovedRequest(
         approval.record.origin,
         approval.record.request,
-        requestState.dappMetadata
+        requestState.dappMetadata,
+        approval
       );
       await this.fulfillRequest(requestState, result);
       const trustScope = normalizeApprovalTrustScope(options?.trust);

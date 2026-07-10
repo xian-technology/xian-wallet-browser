@@ -185,6 +185,8 @@ export function approvalKindFromMethod(method: string): ApprovalKind {
   switch (method) {
     case "xian_requestAccounts":
       return "connect";
+    case "xian_switchChain":
+      return "switchChain";
     case "xian_signMessage":
       return "signMessage";
     case "xian_signTransaction":
@@ -205,6 +207,7 @@ export function buildApprovalView(
   options?: {
     account?: string;
     chainId?: string;
+    targetChainId?: string;
     chiRate?: number | null;
   }
 ): ApprovalView {
@@ -243,6 +246,50 @@ export function buildApprovalView(
         chainId: options?.chainId,
         createdAt: approval.createdAt
       };
+    case "switchChain":
+      {
+        const switchRequest =
+          typeof payload === "object" && payload != null
+            ? (payload as Record<string, unknown>)
+            : {};
+        const targetChainId =
+          options?.targetChainId ??
+          (typeof switchRequest.chainId === "string"
+            ? switchRequest.chainId
+            : undefined);
+        return {
+          id: approval.id,
+          origin: approval.origin,
+          kind: approval.kind,
+          title: "Switch network",
+          description:
+            "Allow this site to change the wallet network used by every connected site.",
+          approveLabel: "Switch network",
+          details: compactDetails([
+            compactDetail("Account", options?.account, { monospace: true }),
+            compactDetail("Current network", options?.chainId),
+            compactDetail("Requested network", targetChainId)
+          ]),
+          highlights: [
+            `Switch from ${stringifyValue(options?.chainId)} to ${stringifyValue(
+              targetChainId
+            )}`
+          ],
+          warnings: [
+            "Switching changes the signing and transaction context for all connected sites."
+          ],
+          payload: prettyJson({
+            origin: approval.origin,
+            account: options?.account ?? null,
+            fromChainId: options?.chainId ?? null,
+            toChainId: targetChainId ?? null
+          }),
+          payloadLabel: "Network switch request",
+          account: options?.account,
+          chainId: options?.chainId,
+          createdAt: approval.createdAt
+        };
+      }
     case "signMessage":
       {
         const message =

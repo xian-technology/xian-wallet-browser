@@ -24,7 +24,8 @@
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "vitest run",
-    "validate": "npm run typecheck && npm run build && npm run test"
+    "test:release": "node --test scripts/release-context.node-test.mjs",
+    "validate": "npm run typecheck && npm run build && npm run test && npm run test:release"
   },
   "devDependencies": {
     "@types/node": "^26.1.0",

@@ -3217,6 +3217,7 @@ function approvalTone(
   switch (kind) {
     case "connect":
       return "info";
+    case "switchChain":
     case "watchAsset":
     case "signMessage":
       return "warning";
@@ -3231,6 +3232,8 @@ function approvalRiskLabel(kind: ApprovalView["kind"]): string {
   switch (kind) {
     case "connect":
       return "Connection";
+    case "switchChain":
+      return "Network change";
     case "watchAsset":
       return "Asset";
     case "signMessage":

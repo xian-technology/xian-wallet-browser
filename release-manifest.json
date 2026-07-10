@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "components": {
+    "xian-js": {
+      "repository": "xian-technology/xian-js",
+      "ref": "7a7ddd7f75ff917b557e9cc464d321eea308a04c",
+      "packages": {
+        "@xian-tech/client": {
+          "version": "0.1.12-beta.2",
+          "path": "packages/client/package.json"
+        },
+        "@xian-tech/provider": {
+          "version": "0.1.12-beta.2",
+          "path": "packages/provider/package.json"
+        }
+      }
+    },
+    "xian-contracting": {
+      "repository": "xian-technology/xian-contracting",
+      "ref": "548ad9fc996f5adf7c4101ba18ead298f9f21f45",
+      "packages": {
+        "@xian-tech/compiler": {
+          "version": "0.1.4-beta.1",
+          "path": "packages/xian-compiler-core/npm/package.json"
+        }
+      }
+    }
+  }
+}
