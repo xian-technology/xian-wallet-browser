@@ -133,6 +133,9 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Install archive tooling
+        run: apt-get update && apt-get install -y --no-install-recommends zip
+
       - name: Pack wallet-core and archive extension
         working-directory: xian-wallet-browser
         run: |
