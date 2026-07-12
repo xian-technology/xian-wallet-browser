@@ -3,14 +3,14 @@
   "components": {
     "xian-js": {
       "repository": "xian-technology/xian-js",
-      "ref": "3c4e287c0fdd89a13dacbca178b8ca1bd53810cc",
+      "ref": "3343df5345b1bee4ecb5efa989367f4c1011d418",
       "packages": {
         "@xian-tech/client": {
-          "version": "0.2.0",
+          "version": "0.3.0",
           "path": "packages/client/package.json"
         },
         "@xian-tech/provider": {
-          "version": "0.2.0",
+          "version": "0.3.0",
           "path": "packages/provider/package.json"
         }
       }
