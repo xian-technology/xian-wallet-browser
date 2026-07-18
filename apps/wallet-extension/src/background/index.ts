@@ -14,6 +14,7 @@ import {
   DEFAULT_WALLET_SHELL_MODE,
   type WalletShellMode
 } from "../shared/preferences";
+import { completedProviderRequestMessage } from "./provider-request-notification";
 import {
   deleteApprovalState,
   listApprovalStates,
@@ -257,7 +258,8 @@ function detailsFromSubmission(value: unknown): ProviderTransactionDetails {
 
 function buildTransactionSubmittedMessage(
   runtimeMessage: ProviderRequestRuntimeMessage,
-  result: { status: "fulfilled"; result: unknown }
+  result: { status: "fulfilled"; result: unknown },
+  autoApproved: boolean
 ): WalletTransactionSubmittedRuntimeMessage | null {
   const method = runtimeMessage.request.method;
   if (!isSubmittedProviderMethod(method)) {
@@ -273,7 +275,7 @@ function buildTransactionSubmittedMessage(
     origin: runtimeMessage.origin,
     requestId: runtimeMessage.requestId,
     method,
-    autoApproved: true,
+    autoApproved,
     submitted: readBoolean(submission.submitted),
     accepted: readBooleanOrNull(submission.accepted),
     finalized: readBoolean(submission.finalized),
@@ -337,9 +339,14 @@ async function recordProviderTransactionActivity(
 
 async function publishProviderTransaction(
   runtimeMessage: ProviderRequestRuntimeMessage,
-  result: { status: "fulfilled"; result: unknown }
+  result: { status: "fulfilled"; result: unknown },
+  autoApproved: boolean
 ): Promise<void> {
-  const notification = buildTransactionSubmittedMessage(runtimeMessage, result);
+  const notification = buildTransactionSubmittedMessage(
+    runtimeMessage,
+    result,
+    autoApproved
+  );
   if (!notification) {
     return;
   }
@@ -495,6 +502,15 @@ chrome.runtime.onMessage.addListener(
     _sender: unknown,
     sendResponse: (response: ReturnType<typeof ok> | ReturnType<typeof fail>) => void
   ) => {
+    // This message is broadcast by this background worker for popup/side-panel
+    // consumers. Do not feed it back through request synchronization here.
+    if (
+      (message as RuntimeMessage | WalletTransactionSubmittedRuntimeMessage).type ===
+      "wallet_transaction_submitted"
+    ) {
+      return false;
+    }
+
     void (async () => {
       try {
         if (
@@ -705,20 +721,31 @@ chrome.runtime.onMessage.addListener(
                 { dappMetadata: message.dappMetadata }
               );
               if (result.status === "fulfilled") {
-                void publishProviderTransaction(message, result);
+                await publishProviderTransaction(message, result, true);
               }
               sendResponse(ok(result));
             }
             return;
           case "provider_request_status":
-            sendResponse(
-              ok(
-                await controller.getProviderRequestStatus(message.requestId, {
+            {
+              const storedRequest = await loadRequestState(message.requestId);
+              const result = await controller.getProviderRequestStatus(
+                message.requestId,
+                {
                   origin: message.origin,
                   consume: message.consume
-                })
-              )
-            );
+                }
+              );
+              const completedRequest = completedProviderRequestMessage(
+                message,
+                storedRequest,
+                result
+              );
+              if (completedRequest && result.status === "fulfilled") {
+                await publishProviderTransaction(completedRequest, result, false);
+              }
+              sendResponse(ok(result));
+            }
             return;
           default:
             throw new Error("unsupported runtime message");

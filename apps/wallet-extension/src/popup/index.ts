@@ -1422,9 +1422,72 @@ async function addTokenToWallet(
 
 /* ── Render dispatch ───────────────────────────────────────── */
 
+interface InlineApprovalUiState {
+  approvalId: string;
+  scrollTop: number;
+  disclosureOpen: boolean;
+  exactTrustChecked: boolean;
+  broadTrustChecked: boolean;
+}
+
+function captureInlineApprovalUiState(): InlineApprovalUiState | null {
+  const view = root.querySelector<HTMLElement>("[data-inline-approval-id]");
+  const walletContent = root.querySelector<HTMLElement>(".wallet-content");
+  const approvalId = view?.dataset.inlineApprovalId;
+  if (!view || !walletContent || !approvalId) {
+    return null;
+  }
+
+  return {
+    approvalId,
+    scrollTop: walletContent.scrollTop,
+    disclosureOpen:
+      view.querySelector<HTMLDetailsElement>("details.disclosure")?.open ?? false,
+    exactTrustChecked:
+      view.querySelector<HTMLInputElement>("[data-trust-inline]")?.checked ?? false,
+    broadTrustChecked:
+      view.querySelector<HTMLInputElement>("[data-trust-broad-inline]")?.checked ?? false
+  };
+}
+
+function restoreInlineApprovalUiState(state: InlineApprovalUiState): void {
+  const restore = () => {
+    const view = root.querySelector<HTMLElement>("[data-inline-approval-id]");
+    const walletContent = root.querySelector<HTMLElement>(".wallet-content");
+    if (
+      !view ||
+      !walletContent ||
+      view.dataset.inlineApprovalId !== state.approvalId
+    ) {
+      return;
+    }
+
+    const disclosure =
+      view.querySelector<HTMLDetailsElement>("details.disclosure");
+    if (disclosure) {
+      disclosure.open = state.disclosureOpen;
+    }
+    const exactTrust =
+      view.querySelector<HTMLInputElement>("[data-trust-inline]");
+    if (exactTrust) {
+      exactTrust.checked = state.exactTrustChecked;
+    }
+    const broadTrust =
+      view.querySelector<HTMLInputElement>("[data-trust-broad-inline]");
+    if (broadTrust) {
+      broadTrust.checked = state.broadTrustChecked;
+    }
+    walletContent.scrollTop = state.scrollTop;
+  };
+
+  restore();
+  requestAnimationFrame(restore);
+}
+
 function render(state: PopupRuntimeState | null): void {
+  const inlineApprovalUiState = captureInlineApprovalUiState();
   const securityScrollTop =
-    activeTab === "security"
+    !inlineApprovalUiState && activeTab === "security"
       ? root.querySelector<HTMLElement>(".wallet-content")?.scrollTop
       : undefined;
 
@@ -1438,7 +1501,9 @@ function render(state: PopupRuntimeState | null): void {
     renderLocked(state);
   } else {
     renderUnlocked(state);
-    if (typeof securityScrollTop === "number" && activeTab === "security") {
+    if (inlineApprovalUiState) {
+      restoreInlineApprovalUiState(inlineApprovalUiState);
+    } else if (typeof securityScrollTop === "number" && activeTab === "security") {
       const walletContent =
         root.querySelector<HTMLElement>(".wallet-content");
       if (walletContent) {
@@ -3361,7 +3426,7 @@ function renderApprovalInline(view: ApprovalView): string {
   const { summaryDetails, feeDetail } = splitFeeDetail(view.details ?? []);
 
   return `
-    <div class="settings-wrap">
+    <div class="settings-wrap" data-inline-approval-id="${escapeAttribute(view.id)}">
       <button class="detail-back" data-close-approval>
         ${ICONS.chevronLeft} Back
       </button>

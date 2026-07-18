@@ -444,8 +444,8 @@ test("approves connect and send-call requests through the injected provider brid
           local_status: "accepted",
           payload: expect.objectContaining({
             kwargs: {
-              to: "bob",
-              amount: "5"
+              to: "carol",
+              amount: "7"
             }
           })
         })
@@ -773,6 +773,97 @@ test("keeps settings position when actions re-render and updates auto-lock expir
       });
   } finally {
     await cleanupExtension(context, userDataDir);
+  }
+});
+
+test("keeps an inline approval scrolled while wallet data refreshes", async () => {
+  const rpc = await startMockRpcServer({
+    chainId: "xian-local",
+    chiRate: 25,
+    chiEstimate: 500,
+    nextNonce: 21,
+    txHash: "INLINE123"
+  });
+  const dapp = await startDappServer();
+  const { context, extensionId, userDataDir } = await launchExtension();
+
+  try {
+    const popup = await openExtensionPage(context, extensionId, "popup.html");
+    await popup.setViewportSize({ width: 420, height: 600 });
+    await createWalletInPopup(popup, "inline approval password");
+
+    await sendRuntimeMessage(popup, {
+      type: "wallet_update_settings",
+      networkName: "Mock local node",
+      expectedChainId: rpc.chainId,
+      rpcUrl: rpc.url,
+      dashboardUrl: rpc.url
+    });
+    await sendRuntimeMessage(popup, {
+      type: "wallet_set_shell_mode",
+      shellMode: "sidePanel"
+    });
+
+    const dappPage = await context.newPage();
+    await dappPage.goto(dapp.url);
+    await waitForInjectedProvider(dappPage);
+
+    await startInjectedProviderRequest(dappPage, "inline-connect", {
+      method: "xian_requestAccounts"
+    });
+    await expect(popup.getByText("Connect wallet")).toBeVisible();
+    await popup.getByRole("button", { name: "Connect" }).click();
+    await expect(await waitForInjectedProviderResult(dappPage, "inline-connect"))
+      .toMatchObject({ status: "fulfilled" });
+
+    await startInjectedProviderRequest(dappPage, "inline-send-call", {
+      method: "xian_sendCall",
+      params: [
+        {
+          intent: {
+            contract: "currency",
+            function: "transfer",
+            kwargs: {
+              to: "bob",
+              amount: "5"
+            }
+          }
+        }
+      ]
+    });
+
+    const inlineApproval = popup.locator("[data-inline-approval-id]");
+    await expect(inlineApproval.getByText("Send contract call")).toBeVisible();
+    await inlineApproval.locator("details.disclosure").evaluate((element) => {
+      (element as HTMLDetailsElement).open = true;
+    });
+    await inlineApproval.locator("[data-trust-inline]").check({ force: true });
+
+    const walletContent = popup.locator(".wallet-content");
+    const scrollTop = await walletContent.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      return element.scrollTop;
+    });
+    expect(scrollTop).toBeGreaterThan(0);
+
+    await popup.locator("[data-refresh]").click();
+    await expect(popup.getByText("Data refreshed.")).toBeVisible();
+    await popup.waitForTimeout(500);
+
+    expect(await walletContent.evaluate((element) => element.scrollTop)).toBe(scrollTop);
+    await expect(inlineApproval.locator("details.disclosure")).toHaveJSProperty(
+      "open",
+      true
+    );
+    await expect(inlineApproval.locator("[data-trust-inline]")).toBeChecked();
+
+    await inlineApproval.getByRole("button", { name: "Approve call" }).click();
+    await expect(await waitForInjectedProviderResult(dappPage, "inline-send-call"))
+      .toMatchObject({ status: "fulfilled" });
+  } finally {
+    await cleanupExtension(context, userDataDir);
+    await dapp.close();
+    await rpc.close();
   }
 });
 
