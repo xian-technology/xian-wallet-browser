@@ -36,7 +36,8 @@ import {
   saveLocalActivityTx,
   saveDexAvailability,
   STORAGE_KEY,
-  SESSION_STORAGE_KEY
+  SESSION_STORAGE_KEY,
+  type StoredLocalActivityTx
 } from "../shared/storage";
 
 const appRoot = document.querySelector<HTMLElement>("#app");
@@ -112,6 +113,7 @@ import {
   truncateHash
 } from "./format";
 import {
+  activityKwargs,
   type ActivityTx,
   type TxCategory,
   type TxClassification,
@@ -122,6 +124,13 @@ import {
   formatTxArgValue,
   formatTxTimestamp,
 } from "./tx-classify";
+import {
+  activityHasTx as activityTxListHasHash,
+  activityTxTimestampMillis,
+  isLocalUnindexedTx,
+  mergeActivityTxs,
+  normalizedActivityTxHash
+} from "./activity";
 import {
   DEFAULT_DEADLINE_MINUTES,
   DEFAULT_SLIPPAGE_BPS,
@@ -2609,36 +2618,6 @@ function activityKey(state: PopupRuntimeState, address: string): string {
   return `${state.activeNetworkId ?? state.rpcUrl}|${state.rpcUrl}|${address}`;
 }
 
-function txTimestampMillis(tx: ActivityTx): number {
-  const raw = tx.created_at ?? tx.block_time;
-  if (typeof raw === "number" && Number.isFinite(raw)) {
-    return raw > 1e12 ? raw : raw * 1000;
-  }
-  if (typeof raw === "string") {
-    const parsed = Date.parse(raw);
-    return Number.isNaN(parsed) ? 0 : parsed;
-  }
-  return 0;
-}
-
-function mergeActivityTxs(
-  indexedTxs: ActivityTx[],
-  localTxs: ActivityTx[]
-): ActivityTx[] {
-  const indexedHashes = new Set(indexedTxs.map((tx) => tx.hash));
-  const seenLocalHashes = new Set<string>();
-  const dedupedLocalTxs = localTxs.filter((tx) => {
-    if (indexedHashes.has(tx.hash) || seenLocalHashes.has(tx.hash)) {
-      return false;
-    }
-    seenLocalHashes.add(tx.hash);
-    return true;
-  });
-  return [...dedupedLocalTxs, ...indexedTxs].sort(
-    (left, right) => txTimestampMillis(right) - txTimestampMillis(left)
-  );
-}
-
 async function loadLocalActivityForKey(networkKey: string): Promise<ActivityTx[]> {
   try {
     return (await loadLocalActivityTxs(networkKey)) as ActivityTx[];
@@ -2655,13 +2634,9 @@ function localActivityStatusLabel(tx: ActivityTx): string {
   return "Success";
 }
 
-function isLocalUnindexedTx(tx: ActivityTx): boolean {
-  return tx.local === true && tx.block_height == null;
-}
-
 function formatActivityListTime(tx: ActivityTx): string {
   const raw = tx.created_at ?? tx.block_time;
-  const timestamp = txTimestampMillis(tx);
+  const timestamp = activityTxTimestampMillis(tx);
   if (timestamp <= 0) {
     return formatTxTimestamp(raw) ?? "";
   }
@@ -2677,7 +2652,7 @@ function formatActivityListTime(tx: ActivityTx): string {
 }
 
 function activitySubtitle(tx: ActivityTx, cls: TxClassification): string {
-  const kwargs = (tx.payload?.kwargs ?? {}) as Record<string, unknown>;
+  const kwargs = activityKwargs(tx);
   const to = typeof kwargs.to === "string" ? kwargs.to : "";
   if (cls.category === "send" || cls.category === "receive") {
     const amount = formatTxAmount(kwargs.amount);
@@ -2852,12 +2827,12 @@ function makeLocalActivityTx(
     function: sendFunction,
     kwargs: sendParsedKwargs ?? {}
   }
-): ActivityTx | null {
+): StoredLocalActivityTx | null {
   if (!state.publicKey || !txHash.trim()) {
     return null;
   }
   return {
-    hash: txHash.trim(),
+    tx_hash: txHash.trim(),
     sender: state.publicKey,
     contract: context.contract,
     function: context.function,
@@ -2877,7 +2852,11 @@ function makeLocalActivityTx(
 
 function upsertActivityTx(tx: ActivityTx): void {
   activityTxs = mergeActivityTxs(
-    activityTxs.filter((item) => item.hash !== tx.hash),
+    activityTxs.filter(
+      (item) =>
+        normalizedActivityTxHash(item.tx_hash) !==
+        normalizedActivityTxHash(tx.tx_hash)
+    ),
     [tx]
   );
 }
@@ -2910,7 +2889,7 @@ async function recordLocalActivityTx(
 }
 
 function activityHasTx(hash: string): boolean {
-  return activityTxs.some((tx) => tx.hash === hash);
+  return activityTxListHasHash(activityTxs, hash);
 }
 
 function refreshActivityAfterTransaction(
@@ -3004,7 +2983,7 @@ let selectedTxHash: string | null = null;
 
 function renderTxDetail(tx: ActivityTx, state: PopupRuntimeState): string {
   const cls = classifyTx(tx);
-  const kwargs = (tx.payload?.kwargs ?? {}) as Record<string, unknown>;
+  const kwargs = activityKwargs(tx);
   const explorerBase = state.dashboardUrl
     ? state.dashboardUrl.replace(/\/+$/, "") + "/explorer/tx/"
     : null;
@@ -3117,8 +3096,8 @@ function renderTxDetail(tx: ActivityTx, state: PopupRuntimeState): string {
 
   // Generic footer rows
   const hashDisplay = explorerBase
-    ? `<a href="${escapeAttribute(explorerBase + tx.hash)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${escapeHtml(truncateHash(tx.hash))}</a>`
-    : escapeHtml(truncateHash(tx.hash));
+    ? `<a href="${escapeAttribute(explorerBase + tx.tx_hash)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${escapeHtml(truncateHash(tx.tx_hash))}</a>`
+    : escapeHtml(truncateHash(tx.tx_hash));
   addRow("Hash", hashDisplay, true);
   addRow("Contract", `${escapeHtml(tx.contract)}.${escapeHtml(tx.function)}`);
   if (tx.block_height !== null && tx.block_height !== undefined) {
@@ -3213,7 +3192,12 @@ function renderTxDetail(tx: ActivityTx, state: PopupRuntimeState): string {
 
 function renderActivityTab(state: PopupRuntimeState): string {
   if (selectedTxHash) {
-    const tx = activityTxs.find((t) => t.hash === selectedTxHash);
+    const expectedHash = selectedTxHash;
+    const tx = activityTxs.find(
+      (item) =>
+        normalizedActivityTxHash(item.tx_hash) ===
+        normalizedActivityTxHash(expectedHash)
+    );
     if (tx) {
       return renderTxDetail(tx, state);
     }
@@ -3254,7 +3238,7 @@ function renderActivityTab(state: PopupRuntimeState): string {
         const subtitle = activitySubtitle(tx, cls);
         const when = formatActivityListTime(tx);
         return `
-          <div class="token-item" data-select-tx="${escapeAttribute(tx.hash)}" style="cursor:pointer">
+          <div class="token-item" data-select-tx="${escapeAttribute(tx.tx_hash)}" style="cursor:pointer">
             <div class="token-icon" style="background:${TX_ACCENT_BG[cls.accent]};color:${TX_ACCENT_FG[cls.accent]}">
               ${cls.icon}
             </div>

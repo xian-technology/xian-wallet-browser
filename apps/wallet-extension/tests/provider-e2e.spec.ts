@@ -435,7 +435,7 @@ test("approves connect and send-call requests through the injected provider brid
       .poll(() => readLocalActivityTxs(popup, networkKey))
       .toEqual([
         expect.objectContaining({
-          hash: "ABC123",
+          tx_hash: "ABC123",
           sender: account,
           contract: "currency",
           function: "transfer",

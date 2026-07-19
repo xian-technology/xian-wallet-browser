@@ -12,6 +12,7 @@ import {
   loadUnlockedSession,
   loadWalletShellMode,
   loadApprovalState,
+  loadLocalActivityTxs,
   loadRequestState,
   loadWalletState,
   saveAutoLock,
@@ -243,6 +244,25 @@ describe("wallet-extension storage", () => {
       }
     });
     expect(approval?.windowId).toBe(42);
+  });
+
+  it("ignores local activity records without canonical tx_hash", async () => {
+    storage.xianWalletLocalActivity = {
+      "local|http://127.0.0.1:26657|sender": [
+        {
+          hash: "legacy-hash",
+          sender: "sender",
+          contract: "currency",
+          function: "transfer",
+          success: true,
+          local: true
+        }
+      ]
+    };
+
+    await expect(
+      loadLocalActivityTxs("local|http://127.0.0.1:26657|sender")
+    ).resolves.toEqual([]);
   });
 
   it("round-trips unlocked session state through chrome.storage.session", async () => {

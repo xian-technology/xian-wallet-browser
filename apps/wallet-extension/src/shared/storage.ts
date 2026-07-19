@@ -764,7 +764,7 @@ const LOCAL_ACTIVITY_STORAGE_KEY = "xianWalletLocalActivity";
 const MAX_LOCAL_ACTIVITY_PER_NETWORK = 50;
 
 export interface StoredLocalActivityTx {
-  hash: string;
+  tx_hash: string;
   sender: string;
   contract: string;
   function: string;
@@ -799,7 +799,7 @@ function normalizeLocalActivityTx(value: unknown): StoredLocalActivityTx | null 
     return null;
   }
   if (
-    typeof value.hash !== "string" ||
+    typeof value.tx_hash !== "string" ||
     typeof value.sender !== "string" ||
     typeof value.contract !== "string" ||
     typeof value.function !== "string"
@@ -847,7 +847,11 @@ export async function saveLocalActivityTx(
 ): Promise<void> {
   const store = await loadLocalActivityStore();
   const current = store[networkKey] ?? [];
-  store[networkKey] = [tx, ...current.filter((item) => item.hash !== tx.hash)]
+  const txHash = tx.tx_hash.trim().toUpperCase();
+  store[networkKey] = [
+    tx,
+    ...current.filter((item) => item.tx_hash.trim().toUpperCase() !== txHash)
+  ]
     .slice(0, MAX_LOCAL_ACTIVITY_PER_NETWORK);
   await saveLocalActivityStore(store);
 }

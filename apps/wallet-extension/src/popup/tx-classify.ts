@@ -5,7 +5,7 @@ import { ICONS } from "./icons";
  * kept optional where the backend has historically omitted them.
  */
 export interface ActivityTx {
-  hash: string;
+  tx_hash: string;
   contract: string;
   function: string;
   sender: string;
@@ -19,18 +19,20 @@ export interface ActivityTx {
   nonce?: number | null;
   status_code?: number | null;
   result?: unknown;
-  payload?: {
-    sender?: string;
-    nonce?: number;
-    contract?: string;
-    function?: string;
-    kwargs?: Record<string, unknown>;
-    stamps_supplied?: number;
-    [key: string]: unknown;
-  } | null;
+  payload?: ActivityPayload | string | null;
   envelope?: unknown;
   local?: boolean;
   local_status?: "accepted" | "finalized";
+}
+
+export interface ActivityPayload {
+  sender?: string;
+  nonce?: number;
+  contract?: string;
+  function?: string;
+  kwargs?: Record<string, unknown>;
+  stamps_supplied?: number;
+  [key: string]: unknown;
 }
 
 export type TxCategory =
@@ -75,10 +77,28 @@ export const TX_ACCENT_FG: Record<TxAccent, string> = {
 const DEX_CONTRACT = "con_dex";
 const TOKEN_FACTORY_CONTRACT = "token_factory";
 
+export function activityPayload(tx: ActivityTx): ActivityPayload | null {
+  if (typeof tx.payload === "string") {
+    try {
+      const parsed = JSON.parse(tx.payload) as unknown;
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as ActivityPayload)
+        : null;
+    } catch {
+      return null;
+    }
+  }
+  return tx.payload ?? null;
+}
+
+export function activityKwargs(tx: ActivityTx): Record<string, unknown> {
+  return activityPayload(tx)?.kwargs ?? {};
+}
+
 export function classifyTx(tx: ActivityTx): TxClassification {
   const contract = tx.contract ?? "";
   const fn = tx.function ?? "";
-  const kwargs = (tx.payload?.kwargs ?? {}) as Record<string, unknown>;
+  const kwargs = activityKwargs(tx);
 
   if (contract === TOKEN_FACTORY_CONTRACT && fn === "create_token") {
     return { category: "create_token", label: "Create token", icon: ICONS.sparkles, accent: "accent" };

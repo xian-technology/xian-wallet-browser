@@ -309,7 +309,7 @@ async function recordProviderTransactionActivity(
   const contract = notification.contract ?? "unknown";
   const functionName = notification.function ?? "transaction";
   const tx: StoredLocalActivityTx = {
-    hash: notification.txHash,
+    tx_hash: notification.txHash,
     sender,
     contract,
     function: functionName,
