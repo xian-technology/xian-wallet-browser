@@ -838,7 +838,7 @@ test("keeps an inline approval scrolled while wallet data refreshes", async () =
       (element as HTMLDetailsElement).open = true;
     });
     const exactTrust = inlineApproval.locator("[data-trust-inline]");
-    await exactTrust.check({ force: true });
+    await inlineApproval.locator("[data-trust-inline-option]").click();
     await expect(exactTrust).toBeChecked();
 
     const walletContent = popup.locator(".wallet-content");

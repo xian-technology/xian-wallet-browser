@@ -3444,7 +3444,7 @@ function renderApprovalTrustOptions(view: ApprovalView): string {
   }
   return `
     <div class="trust-options">
-      <label class="surface trust-option">
+      <label class="surface trust-option" data-trust-inline-option="${escapeAttribute(view.id)}">
         <input data-trust-inline="${escapeAttribute(view.id)}" type="checkbox" />
         <span class="trust-icon" aria-hidden="true">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -3458,7 +3458,7 @@ function renderApprovalTrustOptions(view: ApprovalView): string {
         </span>
         <span class="trust-switch" aria-hidden="true"></span>
       </label>
-      <label class="surface trust-option trust-option-danger">
+      <label class="surface trust-option trust-option-danger" data-trust-broad-inline-option="${escapeAttribute(view.id)}">
         <input data-trust-broad-inline="${escapeAttribute(view.id)}" type="checkbox" />
         <span class="trust-icon" aria-hidden="true">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
