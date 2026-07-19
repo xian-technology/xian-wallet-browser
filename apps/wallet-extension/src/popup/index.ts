@@ -172,6 +172,9 @@ let tokenMetaGeneration = 0;
 let showReceive = false;
 let managingAssets = false;
 let activeApprovalId: string | null = null;
+let inlineApprovalUiState: InlineApprovalUiState | null = null;
+let inlineApprovalRestoreGeneration = 0;
+let pendingInlineApprovalRestoreGeneration: number | null = null;
 let pendingBroadTrustApprovalId: string | null = null;
 let showAccountMenu = false;
 let renamingAccountIndex: number | null = null;
@@ -352,7 +355,7 @@ function resetNoWalletUiState(): void {
   tokenMetaGeneration++;
   showReceive = false;
   managingAssets = false;
-  activeApprovalId = null;
+  setActiveApprovalId(null);
   showAccountMenu = false;
   renamingAccountIndex = null;
   confirmDeleteAccountIndex = null;
@@ -716,7 +719,13 @@ function applyVisibleBalanceUpdate(contract: string, value: unknown): void {
   currentState.detectedAssets = currentState.detectedAssets.map((asset) =>
     asset.contract === contract ? { ...asset, balance: normalized } : asset
   );
-  render(currentState);
+  renderPassiveWalletDataUpdate();
+}
+
+function renderPassiveWalletDataUpdate(): void {
+  if (currentState && activeApprovalId === null) {
+    render(currentState);
+  }
 }
 
 async function syncBalanceSubscriptions(): Promise<void> {
@@ -1087,7 +1096,7 @@ function setActiveTab(tab: PopupTab): void {
   tokenMeta = null;
   tokenMetaLoading = false;
   showReceive = false;
-  activeApprovalId = null;
+  setActiveApprovalId(null);
   revealedPrivateKey = null;
   selectedTxHash = null;
   pendingUnrecognizedRecipient = null;
@@ -1288,12 +1297,12 @@ async function refreshDetectedAssets(): Promise<void> {
         currentState.assetBalances[asset.contract] = asset.balance;
       }
     }
-    render(currentState);
+    renderPassiveWalletDataUpdate();
     void syncBalanceSubscriptions();
   } catch {
     if (currentState) {
       currentState.detectedAssets = [];
-      render(currentState);
+      renderPassiveWalletDataUpdate();
     }
   }
 }
@@ -1333,9 +1342,7 @@ async function refreshBalances(): Promise<void> {
     }
   }
   balancesLoading = false;
-  if (currentState) {
-    render(currentState);
-  }
+  renderPassiveWalletDataUpdate();
 }
 
 async function fetchTokenMeta(contract: string): Promise<void> {
@@ -1439,6 +1446,38 @@ interface InlineApprovalUiState {
   broadTrustChecked: boolean;
 }
 
+function emptyInlineApprovalUiState(approvalId: string): InlineApprovalUiState {
+  return {
+    approvalId,
+    scrollTop: 0,
+    disclosureOpen: false,
+    exactTrustChecked: false,
+    broadTrustChecked: false
+  };
+}
+
+function setActiveApprovalId(approvalId: string | null): void {
+  if (activeApprovalId === approvalId) {
+    return;
+  }
+  activeApprovalId = approvalId;
+  inlineApprovalUiState = approvalId
+    ? emptyInlineApprovalUiState(approvalId)
+    : null;
+  pendingInlineApprovalRestoreGeneration = null;
+}
+
+function updateInlineApprovalUiState(
+  approvalId: string,
+  update: Partial<Omit<InlineApprovalUiState, "approvalId">>
+): void {
+  const current =
+    inlineApprovalUiState?.approvalId === approvalId
+      ? inlineApprovalUiState
+      : emptyInlineApprovalUiState(approvalId);
+  inlineApprovalUiState = { ...current, ...update };
+}
+
 function captureInlineApprovalUiState(): InlineApprovalUiState | null {
   const view = root.querySelector<HTMLElement>("[data-inline-approval-id]");
   const walletContent = root.querySelector<HTMLElement>(".wallet-content");
@@ -1459,17 +1498,47 @@ function captureInlineApprovalUiState(): InlineApprovalUiState | null {
   };
 }
 
-function restoreInlineApprovalUiState(state: InlineApprovalUiState): void {
-  const restore = () => {
+function restoreInlineApprovalUiState(approvalId: string): void {
+  const generation = ++inlineApprovalRestoreGeneration;
+  pendingInlineApprovalRestoreGeneration = generation;
+  let restoredView: HTMLElement | null = null;
+
+  const captureControlsFromRestoredView = () => {
     const view = root.querySelector<HTMLElement>("[data-inline-approval-id]");
-    const walletContent = root.querySelector<HTMLElement>(".wallet-content");
     if (
       !view ||
-      !walletContent ||
-      view.dataset.inlineApprovalId !== state.approvalId
+      view !== restoredView ||
+      view.dataset.inlineApprovalId !== approvalId
     ) {
       return;
     }
+    updateInlineApprovalUiState(approvalId, {
+      disclosureOpen:
+        view.querySelector<HTMLDetailsElement>("details.disclosure")?.open ??
+        false,
+      exactTrustChecked:
+        view.querySelector<HTMLInputElement>("[data-trust-inline]")?.checked ??
+        false,
+      broadTrustChecked:
+        view.querySelector<HTMLInputElement>("[data-trust-broad-inline]")
+          ?.checked ?? false
+    });
+  };
+
+  const restore = () => {
+    const state = inlineApprovalUiState;
+    const view = root.querySelector<HTMLElement>("[data-inline-approval-id]");
+    const walletContent = root.querySelector<HTMLElement>(".wallet-content");
+    if (
+      !state ||
+      state.approvalId !== approvalId ||
+      !view ||
+      !walletContent ||
+      view.dataset.inlineApprovalId !== approvalId
+    ) {
+      return;
+    }
+    restoredView = view;
 
     const disclosure =
       view.querySelector<HTMLDetailsElement>("details.disclosure");
@@ -1490,13 +1559,35 @@ function restoreInlineApprovalUiState(state: InlineApprovalUiState): void {
   };
 
   restore();
-  requestAnimationFrame(restore);
+  requestAnimationFrame(() => {
+    if (pendingInlineApprovalRestoreGeneration !== generation) {
+      return;
+    }
+    captureControlsFromRestoredView();
+    restore();
+    requestAnimationFrame(() => {
+      if (pendingInlineApprovalRestoreGeneration !== generation) {
+        return;
+      }
+      captureControlsFromRestoredView();
+      restore();
+      pendingInlineApprovalRestoreGeneration = null;
+    });
+  });
 }
 
 function render(state: PopupRuntimeState | null): void {
-  const inlineApprovalUiState = captureInlineApprovalUiState();
+  const capturedInlineApprovalUiState =
+    pendingInlineApprovalRestoreGeneration === null
+      ? captureInlineApprovalUiState()
+      : null;
+  if (capturedInlineApprovalUiState) {
+    inlineApprovalUiState = capturedInlineApprovalUiState;
+  }
   const securityScrollTop =
-    !inlineApprovalUiState && activeTab === "security"
+    !capturedInlineApprovalUiState &&
+    activeApprovalId === null &&
+    activeTab === "security"
       ? root.querySelector<HTMLElement>(".wallet-content")?.scrollTop
       : undefined;
 
@@ -1510,8 +1601,11 @@ function render(state: PopupRuntimeState | null): void {
     renderLocked(state);
   } else {
     renderUnlocked(state);
-    if (inlineApprovalUiState) {
-      restoreInlineApprovalUiState(inlineApprovalUiState);
+    if (
+      activeApprovalId &&
+      inlineApprovalUiState?.approvalId === activeApprovalId
+    ) {
+      restoreInlineApprovalUiState(activeApprovalId);
     } else if (typeof securityScrollTop === "number" && activeTab === "security") {
       const walletContent =
         root.querySelector<HTMLElement>(".wallet-content");
@@ -2011,7 +2105,7 @@ function renderTabPanel(state: PopupRuntimeState): string {
     if (approval) {
       return renderApprovalInline(approval);
     }
-    activeApprovalId = null;
+    setActiveApprovalId(null);
   }
   switch (activeTab) {
     case "home":
@@ -6326,7 +6420,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       if (!approvalId) {
         return;
       }
-      activeApprovalId = approvalId;
+      setActiveApprovalId(approvalId);
       clearFlash();
       render(state);
     });
@@ -6335,32 +6429,61 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
   root
     .querySelector<HTMLElement>("[data-close-approval]")
     ?.addEventListener("click", () => {
-      activeApprovalId = null;
+      setActiveApprovalId(null);
       pendingBroadTrustApprovalId = null;
       render(state);
     });
 
+  const inlineApprovalView =
+    root.querySelector<HTMLElement>("[data-inline-approval-id]");
+  const inlineApprovalId = inlineApprovalView?.dataset.inlineApprovalId;
+  if (inlineApprovalView && inlineApprovalId) {
+    root
+      .querySelector<HTMLElement>(".wallet-content")
+      ?.addEventListener("scroll", (event) => {
+        if (pendingInlineApprovalRestoreGeneration !== null) {
+          return;
+        }
+        updateInlineApprovalUiState(inlineApprovalId, {
+          scrollTop: (event.currentTarget as HTMLElement).scrollTop
+        });
+      });
+    inlineApprovalView
+      .querySelector<HTMLDetailsElement>("details.disclosure")
+      ?.addEventListener("toggle", (event) => {
+        updateInlineApprovalUiState(inlineApprovalId, {
+          disclosureOpen: (event.currentTarget as HTMLDetailsElement).open
+        });
+      });
+  }
+
   for (const input of root.querySelectorAll<HTMLInputElement>("[data-trust-inline]")) {
     input.addEventListener("change", () => {
-      if (!input.checked) return;
       const id = input.dataset.trustInline;
       if (!id) return;
       const broad = root.querySelector<HTMLInputElement>(
         `[data-trust-broad-inline="${CSS.escape(id)}"]`
       );
-      if (broad) broad.checked = false;
+      if (input.checked && broad) broad.checked = false;
+      updateInlineApprovalUiState(id, {
+        exactTrustChecked: input.checked,
+        broadTrustChecked: broad?.checked ?? false
+      });
     });
   }
 
   for (const input of root.querySelectorAll<HTMLInputElement>("[data-trust-broad-inline]")) {
     input.addEventListener("change", () => {
-      if (!input.checked) return;
       const id = input.dataset.trustBroadInline;
       if (!id) return;
       const exact = root.querySelector<HTMLInputElement>(
         `[data-trust-inline="${CSS.escape(id)}"]`
       );
-      if (exact) exact.checked = false;
+      if (input.checked && exact) exact.checked = false;
+      updateInlineApprovalUiState(id, {
+        exactTrustChecked: exact?.checked ?? false,
+        broadTrustChecked: input.checked
+      });
     });
   }
 
@@ -6386,7 +6509,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           approved: true,
           trust: "any"
         });
-        activeApprovalId = null;
+        setActiveApprovalId(null);
         await refresh({ tone: "success", message: "Approved." });
       });
     });
@@ -6419,7 +6542,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           approved: true,
           trust
         });
-        activeApprovalId = null;
+        setActiveApprovalId(null);
         await refresh({ tone: "success", message: "Approved." });
       });
     });
@@ -6438,7 +6561,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           approvalId: id,
           approved: false
         });
-        activeApprovalId = null;
+        setActiveApprovalId(null);
         await refresh({ tone: "info", message: "Rejected." });
       });
     });
@@ -6959,7 +7082,7 @@ chrome.runtime.onMessage.addListener(
       runtimeMessage?.type === "approval_notify" &&
       typeof runtimeMessage.approvalId === "string"
     ) {
-      activeApprovalId = runtimeMessage.approvalId;
+      setActiveApprovalId(runtimeMessage.approvalId);
       void refresh(null);
       return;
     }

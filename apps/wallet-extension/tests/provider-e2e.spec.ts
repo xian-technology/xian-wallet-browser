@@ -837,7 +837,9 @@ test("keeps an inline approval scrolled while wallet data refreshes", async () =
     await inlineApproval.locator("details.disclosure").evaluate((element) => {
       (element as HTMLDetailsElement).open = true;
     });
-    await inlineApproval.locator("[data-trust-inline]").check({ force: true });
+    const exactTrust = inlineApproval.locator("[data-trust-inline]");
+    await exactTrust.check({ force: true });
+    await expect(exactTrust).toBeChecked();
 
     const walletContent = popup.locator(".wallet-content");
     const scrollTop = await walletContent.evaluate((element) => {
@@ -845,12 +847,15 @@ test("keeps an inline approval scrolled while wallet data refreshes", async () =
       return element.scrollTop;
     });
     expect(scrollTop).toBeGreaterThan(0);
+    await expect
+      .poll(() => walletContent.evaluate((element) => element.scrollTop))
+      .toBe(scrollTop);
 
     await popup.locator("[data-refresh]").click();
     await expect(popup.getByText("Data refreshed.")).toBeVisible();
-    await popup.waitForTimeout(500);
-
-    expect(await walletContent.evaluate((element) => element.scrollTop)).toBe(scrollTop);
+    await expect
+      .poll(() => walletContent.evaluate((element) => element.scrollTop))
+      .toBe(scrollTop);
     await expect(inlineApproval.locator("details.disclosure")).toHaveJSProperty(
       "open",
       true
