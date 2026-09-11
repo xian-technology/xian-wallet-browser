@@ -26,6 +26,7 @@ import {
   loadWalletShellMode,
   saveUnlockedSession,
   saveApprovalState,
+  claimApprovalExecution,
   saveRequestState,
   saveWalletState,
   saveWalletShellMode,
@@ -380,6 +381,7 @@ const controller = new WalletController({
     listRequestStates,
     loadApprovalState,
     saveApprovalState,
+  claimApprovalExecution,
     deleteApprovalState,
     listApprovalStates
   },

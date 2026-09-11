@@ -550,11 +550,19 @@ async function loadEnvelope(): Promise<WalletStorageEnvelope> {
   return emptyEnvelope();
 }
 
+let envelopeTail: Promise<void> = Promise.resolve();
+
 async function updateEnvelope(
   updater: (envelope: WalletStorageEnvelope) => WalletStorageEnvelope
 ): Promise<void> {
-  const current = await loadEnvelope();
-  await saveEnvelope(updater(current));
+  const previous = envelopeTail;
+  let release!: () => void;
+  envelopeTail = new Promise<void>((resolve) => { release = resolve; });
+  await previous;
+  try {
+    const current = await loadEnvelope();
+    await saveEnvelope(updater(current));
+  } finally { release(); }
 }
 
 export async function loadWalletState(): Promise<StoredWalletState | null> {
@@ -854,4 +862,23 @@ export async function saveLocalActivityTx(
   ]
     .slice(0, MAX_LOCAL_ACTIVITY_PER_NETWORK);
   await saveLocalActivityStore(store);
+}
+
+export async function claimApprovalExecution(approvalId: string, startedAt: number): Promise<{
+  approval: PersistedApproval; request: StoredProviderRequest;
+} | null> {
+  let claimed: { approval: PersistedApproval; request: StoredProviderRequest } | null = null;
+  await updateEnvelope((envelope) => {
+    const approval = envelope.approvals[approvalId];
+    const request = approval && envelope.providerRequests[approval.requestId];
+    if (!approval || !request || request.status !== "pending" || request.execution) return envelope;
+    const executing = { ...request, execution: { startedAt } };
+    const approvals = { ...envelope.approvals };
+    delete approvals[approvalId];
+    claimed = { approval, request: executing };
+    return { ...envelope, approvals, providerRequests: {
+      ...envelope.providerRequests, [request.requestId]: executing
+    } };
+  });
+  return claimed;
 }

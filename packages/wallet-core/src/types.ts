@@ -123,6 +123,7 @@ export interface StoredProviderRequest {
   updatedAt: number;
   status: StoredProviderRequestStatus;
   approvalId?: string;
+  execution?: { startedAt: number; txHash?: string; signedJson?: string };
   result?: unknown;
   error?: WalletSerializedError;
 }
@@ -153,6 +154,10 @@ export interface WalletControllerStore extends WalletStateStore {
   saveApprovalState(state: PersistedApproval): Promise<void>;
   deleteApprovalState(approvalId: string): Promise<void>;
   listApprovalStates(): Promise<PersistedApproval[]>;
+  /** Atomically consume an approval and mark its pending request executing. */
+  claimApprovalExecution?(approvalId: string, startedAt: number): Promise<{
+    approval: PersistedApproval; request: StoredProviderRequest;
+  } | null>;
 }
 
 export interface PopupState {

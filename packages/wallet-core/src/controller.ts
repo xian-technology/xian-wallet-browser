@@ -1,5 +1,8 @@
+import { beginApprovalResolution, isApprovalResolutionActive } from "./approval-execution.js";
 import {
   createXianMessageSigningPayload,
+  prepareTransaction,
+  type PreparedTransaction,
   Ed25519Signer,
   shieldedSyncHintFromViewingPrivateKey,
   type XianShieldedWalletHistoryResult,
@@ -183,6 +186,7 @@ export interface WalletNetworkClient {
     }
   ): Promise<TransactionSubmission>;
   sendTx?(request: {
+    onPreparedTransaction?: (prepared: PreparedTransaction) => Promise<void>;
     sender: string;
     contract: string;
     function: string;
@@ -2076,6 +2080,7 @@ export class WalletController {
       waitForTx?: boolean;
       timeoutMs?: number;
       pollIntervalMs?: number;
+      onPreparedTransaction?: (prepared: PreparedTransaction) => Promise<void>;
     }
   ): Promise<TransactionSubmission> {
     const signer = await this.getUnlockedSigner();
@@ -2142,6 +2147,7 @@ export class WalletController {
       waitForTx?: boolean;
       timeoutMs?: number;
       pollIntervalMs?: number;
+      onPreparedTransaction?: (prepared: PreparedTransaction) => Promise<void>;
     }
   ): Promise<TransactionSubmission> {
     const payload = tx.payload;
@@ -2156,7 +2162,9 @@ export class WalletController {
     this.preparedSendsInFlight.add(scope);
     try {
       const signedTx = await this.signPreparedTransaction(state, tx);
-      return await this.currentClient(state).broadcastTx(signedTx, options);
+      await options?.onPreparedTransaction?.(prepareTransaction(signedTx));
+      const { onPreparedTransaction: _observer, ...broadcastOptions } = options ?? {};
+      return await this.currentClient(state).broadcastTx(signedTx, broadcastOptions);
     } finally {
       this.preparedSendsInFlight.delete(scope);
     }
@@ -2172,6 +2180,16 @@ export class WalletController {
     if (approval) {
       await this.assertApprovalContext(approval, state);
     }
+
+    const onPreparedTransaction = approval ? async (prepared: PreparedTransaction) => {
+      const pending = await this.store.loadRequestState(approval.requestId);
+      if (!pending || pending.status !== "pending" || !pending.execution) {
+        throw new Error("approval execution is no longer active");
+      }
+      await this.store.saveRequestState({ ...pending, execution: {
+        ...pending.execution, txHash: prepared.txHash, signedJson: prepared.json
+      } });
+    } : undefined;
 
     switch (request.method) {
       case "xian_requestAccounts": {
@@ -2286,6 +2304,7 @@ export class WalletController {
           firstParamObject(request.params);
 
         return this.sendPreparedTransaction(state, tx as XianUnsignedTransaction, {
+          onPreparedTransaction,
           mode: mode as BroadcastMode | undefined,
           waitForTx: waitForTx as boolean | undefined,
           timeoutMs: timeoutMs as number | undefined,
@@ -2299,6 +2318,7 @@ export class WalletController {
         const { intent, mode, waitForTx, timeoutMs, pollIntervalMs } =
           firstParamObject(request.params);
         return this.sendCallTransaction(state, intent as XianTransactionIntent, {
+          onPreparedTransaction,
           mode: mode as BroadcastMode | undefined,
           waitForTx: waitForTx as boolean | undefined,
           timeoutMs: timeoutMs as number | undefined,
@@ -2317,6 +2337,7 @@ export class WalletController {
   ): Promise<ProviderRequestStatusResult> {
     const nextState: StoredProviderRequest = {
       ...requestState,
+      execution: (await this.store.loadRequestState(requestState.requestId))?.execution,
       updatedAt: this.now(),
       status: "fulfilled",
       result,
@@ -2338,9 +2359,18 @@ export class WalletController {
     requestState: StoredProviderRequest,
     error: unknown
   ): Promise<ProviderRequestStatusResult> {
+    const execution = (await this.store.loadRequestState(requestState.requestId))?.execution;
     const serialized = this.serializeError(error);
+    if (execution?.txHash) {
+      serialized.data = {
+        ...(isRecord(serialized.data) ? serialized.data : {}),
+        txHash: execution.txHash,
+        submissionMayHaveOccurred: true
+      };
+    }
     const nextState: StoredProviderRequest = {
       ...requestState,
+      execution,
       updatedAt: this.now(),
       status: "rejected",
       result: undefined,
@@ -4027,6 +4057,10 @@ export class WalletController {
           }
         };
       }
+      if (existing.status === "pending" && existing.execution && !isApprovalResolutionActive(this.store, existing.approvalId)) {
+        const recovered = await this.getProviderRequestStatus(requestId);
+        if (recovered.status === "rejected") return recovered;
+      }
       if (existing.status === "pending") {
         return {
           status: "pending",
@@ -4105,6 +4139,14 @@ export class WalletController {
       };
     }
 
+    if (state.status === "pending" && state.execution && !isApprovalResolutionActive(this.store, state.approvalId)) {
+      return this.rejectRequest(state, {
+        name: "SubmissionInterruptedError",
+        message: "Wallet execution was interrupted; check the transaction before creating another request",
+        data: { txHash: state.execution.txHash, submissionMayHaveOccurred: true }
+      });
+    }
+
     if (state.status === "pending") {
       return {
         status: "pending",
@@ -4163,17 +4205,35 @@ export class WalletController {
     approved: boolean,
     options?: { trust?: boolean | XianDappPolicyArgumentScope }
   ): Promise<null> {
-    const approval = await this.store.loadApprovalState(approvalId);
+    const release = beginApprovalResolution(this.store, approvalId);
+    if (!release) return null;
+    try { return await this.resolveClaimedApproval(approvalId, approved, options); }
+    finally { release(); }
+  }
+
+  private async resolveClaimedApproval(
+    approvalId: string,
+    approved: boolean,
+    options?: { trust?: boolean | XianDappPolicyArgumentScope }
+  ): Promise<null> {
+    const claimed = await this.store.claimApprovalExecution?.(approvalId, this.now());
+    if (this.store.claimApprovalExecution && !claimed) return null;
+    const approval = claimed?.approval ?? await this.store.loadApprovalState(approvalId);
     if (!approval) {
-      throw new Error("approval request not found");
+      return null;
     }
-    const requestState = await this.store.loadRequestState(approval.requestId);
+    const requestState = claimed?.request ?? await this.store.loadRequestState(approval.requestId);
     if (!requestState) {
       await this.store.deleteApprovalState(approval.id);
       throw new Error("approval request is no longer active");
     }
 
-    await this.store.deleteApprovalState(approvalId);
+    if (!claimed) {
+      if (requestState.status !== "pending" || requestState.execution) return null;
+      requestState.execution = { startedAt: this.now() };
+      await this.store.saveRequestState(requestState);
+      await this.store.deleteApprovalState(approvalId);
+    }
 
     if (!approved) {
       await this.rejectRequest(
@@ -4212,16 +4272,21 @@ export class WalletController {
     approvalId: string,
     reason: unknown = new ProviderUnauthorizedError("approval dismissed")
   ): Promise<boolean> {
-    const approval = await this.store.loadApprovalState(approvalId);
-    if (!approval) {
-      return false;
+    const release = beginApprovalResolution(this.store, approvalId);
+    if (!release) return false;
+    try {
+      const claimed = await this.store.claimApprovalExecution?.(approvalId, this.now());
+      if (this.store.claimApprovalExecution && !claimed) return false;
+      const approval = claimed?.approval ?? await this.store.loadApprovalState(approvalId);
+      if (!approval) return false;
+      const requestState = claimed?.request ?? await this.store.loadRequestState(approval.requestId);
+      if (!claimed && requestState?.execution) return false;
+      await this.store.deleteApprovalState(approvalId);
+      if (requestState) await this.rejectRequest(requestState, reason);
+      return true;
+    } finally {
+      release();
     }
-    const requestState = await this.store.loadRequestState(approval.requestId);
-    await this.store.deleteApprovalState(approvalId);
-    if (requestState) {
-      await this.rejectRequest(requestState, reason);
-    }
-    return true;
   }
 
   async handleProviderRequest(

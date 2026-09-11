@@ -496,6 +496,8 @@ describe("@xian-tech/wallet-core controller", () => {
     });
   });
 
+
+
   it("rejects concurrent broadcasts of prebuilt transactions with the same nonce", async () => {
     const store = createStore();
     const client = createClient();
@@ -2968,6 +2970,76 @@ def private_helper():
         message: "wallet was removed",
         name: "ProviderUnauthorizedError"
       })
+    });
+  });
+
+
+
+
+});
+
+
+async function pendingSendApproval() {
+  const store = createStore();
+  const client = createClient();
+  client.sendTx = vi.fn(async () => ({
+    submitted: true, accepted: true, finalized: false, txHash: "TX", mode: "checktx",
+    nonce: 7, chiSupplied: 500, response: {}
+  }));
+  const options = {
+    wallet: { id: "xian-wallet", name: "Xian Wallet", rdns: "org.xian.wallet" },
+    version: "test", store, createClient: () => client,
+    onApprovalRequested: vi.fn(async () => undefined),
+    createId: vi.fn().mockReturnValueOnce("connect").mockReturnValueOnce("send")
+  };
+  const controller = new WalletController(options);
+  await controller.createOrImportWallet({ password: "secret", privateKey: PRIVATE_KEY });
+  await controller.startProviderRequest("connect-request", ORIGIN, { method: "xian_requestAccounts" });
+  await controller.resolveApproval("connect", true);
+  await controller.startProviderRequest("send-request", ORIGIN, {
+    method: "xian_sendCall",
+    params: [{ intent: { contract: "currency", function: "transfer", kwargs: { to: "alice", amount: "1" }, chi: 500 } }]
+  });
+  return { store, client, controller, options };
+}
+
+describe("approval execution recovery", () => {
+  it.each(["approve", "reject", "dismiss"])("claims once when approve races with %s", async (action) => {
+    const { controller, client } = await pendingSendApproval();
+    await Promise.all([
+      controller.resolveApproval("send", true),
+      action === "dismiss" ? controller.dismissApproval("send") : controller.resolveApproval("send", action === "approve")
+    ]);
+    expect(client.sendTx).toHaveBeenCalledTimes(1);
+    expect(await controller.getProviderRequestStatus("send-request")).toMatchObject({ status: "fulfilled" });
+  });
+
+  it("persists prepared identity before submission and exposes it on an uncertain failure", async () => {
+    const { controller, client, store, options } = await pendingSendApproval();
+    const secondController = new WalletController(options);
+    client.sendTx = vi.fn(async (request) => {
+      await request.onPreparedTransaction!({ txHash: "KNOWN-HASH", json: "signed-json", rpcHex: "hex" });
+      expect((await store.loadRequestState("send-request"))?.execution).toMatchObject({
+        txHash: "KNOWN-HASH", signedJson: "signed-json"
+      });
+      expect(await secondController.getProviderRequestStatus("send-request")).toMatchObject({ status: "pending" });
+      throw new Error("response lost");
+    });
+    await controller.resolveApproval("send", true);
+    expect(await controller.getProviderRequestStatus("send-request")).toMatchObject({
+      status: "rejected", error: { data: { txHash: "KNOWN-HASH", submissionMayHaveOccurred: true } }
+    });
+  });
+
+  it("recovers a persisted execution after restart without signing a replacement", async () => {
+    const { client, store, options } = await pendingSendApproval();
+    const pending = await store.loadRequestState("send-request");
+    await store.saveRequestState({ ...pending!, execution: { startedAt: 1, txHash: "KNOWN-HASH" } });
+    const restarted = new WalletController(options);
+    await restarted.resolveApproval("send", true);
+    expect(client.sendTx).not.toHaveBeenCalled();
+    expect(await restarted.getProviderRequestStatus("send-request")).toMatchObject({
+      status: "rejected", error: { name: "SubmissionInterruptedError", data: { txHash: "KNOWN-HASH", submissionMayHaveOccurred: true } }
     });
   });
 });

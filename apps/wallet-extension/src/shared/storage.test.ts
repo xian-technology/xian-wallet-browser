@@ -6,6 +6,7 @@ import {
   SESSION_STORAGE_KEY,
   STORAGE_KEY,
   STORAGE_SCHEMA_VERSION,
+  claimApprovalExecution,
   clearWalletState,
   clearUnlockedSession,
   loadAutoLock,
@@ -76,6 +77,22 @@ describe("wallet-extension storage", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("atomically claims an approval once and preserves concurrent request writes", async () => {
+    const request = { requestId: "request", origin: "https://dapp.example", request: { method: "xian_requestAccounts" },
+      createdAt: 1, updatedAt: 1, status: "pending" as const, approvalId: "approval" };
+    const approval = { id: "approval", requestId: "request",
+      record: { id: "approval", kind: "connect" as const, origin: request.origin, request: request.request, createdAt: 1 },
+      view: { id: "approval", kind: "connect" as const, origin: request.origin, title: "Connect", description: "Connect request", payload: "{}", createdAt: 1 } };
+    await Promise.all([saveRequestState(request), saveApprovalState(approval)]);
+    const claims = await Promise.all([claimApprovalExecution("approval", 2), claimApprovalExecution("approval", 3)]);
+    expect(claims.filter(Boolean)).toHaveLength(1);
+    expect(await loadApprovalState("approval")).toBeNull();
+    expect((await loadRequestState("request"))?.execution).toEqual({ startedAt: 2 });
+    await Promise.all(Array.from({ length: 8 }, (_, i) => saveRequestState({ ...request, requestId: `other-${i}` })));
+    for (let i = 0; i < 8; i++) expect(await loadRequestState(`other-${i}`)).not.toBeNull();
+    expect(await claimApprovalExecution("approval", 4)).toBeNull();
   });
 
   it("loads versioned wallet state from the storage envelope", async () => {
