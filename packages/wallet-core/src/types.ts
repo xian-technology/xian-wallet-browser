@@ -69,10 +69,14 @@ export interface ShieldedWalletHistoryStatus {
 }
 
 export interface StoredWalletState {
+  encryptedAccountVault?: string;
+  accountVaultRevision?: number;
   publicKey: string;
   encryptedPrivateKey: string;
   encryptedMnemonic?: string;
   walletEncryptionSalt: string;
+  /** Absent only in legacy vaults, which use 250,000 iterations. */
+  walletEncryptionIterations?: number;
   seedSource: WalletSeedSource;
   mnemonicWordCount?: number;
   accounts?: WalletAccount[];
@@ -348,11 +352,12 @@ export interface WalletCreateResult {
 }
 
 export interface WalletBackupPayload {
+  accountVault?: import("@xian-tech/client").AccountVaultState;
   version: 1;
   type: WalletSeedSource;
   mnemonic?: string;
   privateKey?: string;
-  accounts?: Array<{ index: number; name: string }>;
+  accounts?: Array<{ index: number; name: string; publicKey?: string; privateKey?: string }>;
   activeAccountIndex?: number;
   activeNetworkId?: string;
   networkPresets?: WalletNetworkPreset[];
@@ -365,7 +370,7 @@ export interface WalletBackupPayload {
 }
 
 export interface EncryptedWalletBackup {
-  version: 2;
+  version: 2 | 3;
   kind: "xian-wallet-backup";
   encryption: {
     algorithm: "AES-256-GCM";

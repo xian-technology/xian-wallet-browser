@@ -16,6 +16,7 @@ import {
   loadLocalActivityTxs,
   loadRequestState,
   loadWalletState,
+  saveWalletState,
   saveAutoLock,
   saveUnlockedSession,
   saveWalletShellMode,
@@ -95,6 +96,17 @@ describe("wallet-extension storage", () => {
     expect(await claimApprovalExecution("approval", 4)).toBeNull();
   });
 
+  it("preserves newer account keys when a stale settings write finishes later", async () => {
+    storage[STORAGE_KEY] = { version: STORAGE_SCHEMA_VERSION, wallet: { publicKey: "a".repeat(64), encryptedPrivateKey: "ciphertext", walletEncryptionSalt: "salt", walletEncryptionIterations: 600000, seedSource: "privateKey", rpcUrl: "http://127.0.0.1:26657", activeNetworkId: "xian-local", networkPresets: [], watchedAssets: [], connectedOrigins: [], createdAt: "now" } };
+    const stale = (await loadWalletState())!;
+    await Promise.all([
+      saveWalletState({ ...stale, encryptedAccountVault: "new-encrypted-keys", accountVaultRevision: 1 }),
+      saveWalletState(stale)
+    ]);
+    expect((await loadWalletState())!.encryptedAccountVault).toBe("new-encrypted-keys");
+    expect((await loadWalletState())!.accountVaultRevision).toBe(1);
+  });
+
   it("loads versioned wallet state from the storage envelope", async () => {
     storage[STORAGE_KEY] = {
       version: STORAGE_SCHEMA_VERSION,
@@ -102,6 +114,7 @@ describe("wallet-extension storage", () => {
         publicKey: "a".repeat(64),
         encryptedPrivateKey: "ciphertext",
         walletEncryptionSalt: "salt",
+        walletEncryptionIterations: 600_000,
         seedSource: "privateKey",
         rpcUrl: "http://custom-rpc",
         dashboardUrl: "http://custom-dashboard",
@@ -175,6 +188,23 @@ describe("wallet-extension storage", () => {
         activeNetworkId: "custom-network"
       })
     });
+  });
+
+  it.each([250_000, 600_000, undefined, 2_000_001, "600000"])("preserves or rejects stored work factor %s", async (iterations) => {
+    storage[STORAGE_KEY] = {
+      version: STORAGE_SCHEMA_VERSION,
+      wallet: {
+        publicKey: "a".repeat(64), encryptedPrivateKey: "ciphertext",
+        walletEncryptionSalt: "salt", walletEncryptionIterations: iterations
+      }, providerRequests: {}, approvals: {}
+    };
+    const state = await loadWalletState();
+    if (iterations === 2_000_001 || typeof iterations === "string") {
+      expect(state).toBeNull();
+    } else {
+      expect(state).not.toBeNull();
+      expect(state?.walletEncryptionIterations).toBe(iterations);
+    }
   });
 
   it("ignores unversioned wallet state", async () => {

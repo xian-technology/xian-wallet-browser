@@ -1656,7 +1656,7 @@ function renderAccountMenu(state: PopupRuntimeState): string {
           `;
         })
         .join("")}
-      <button class="account-menu-item account-menu-add" data-add-account-prompt>
+      <button class="account-menu-item account-menu-add" data-add-account-prompt ${state.seedSource !== "mnemonic" ? "disabled" : ""}>
         <span class="account-menu-name">${ICONS.plus} Add account</span>
       </button>
     </div>
@@ -1745,7 +1745,7 @@ function parseWalletBackupJson(text: string): WalletBackup {
     version?: unknown;
     kind?: unknown;
   };
-  if (candidate.version !== 2 || candidate.kind !== "xian-wallet-backup") {
+  if (![2, 3].includes(candidate.version as number) || candidate.kind !== "xian-wallet-backup") {
     throw new Error("Invalid backup JSON.");
   }
 
@@ -2051,7 +2051,7 @@ function renderUnlocked(state: PopupRuntimeState): void {
         <div class="header-left">
           <img src="icon.png" alt="Xian" class="header-logo" />
           ${
-            isMnemonic
+            (isMnemonic || hasMultipleAccounts)
               ? `<button class="header-account" data-toggle-account-menu title="Switch account">${escapeHtml(accountLabel)} ${ICONS.chevronDown}</button>`
               : `<span class="header-account-label">${escapeHtml(accountLabel)}</span>`
           }
@@ -4942,6 +4942,33 @@ function renderSecurityTab(state: PopupRuntimeState): string {
   return `
     <div class="settings-wrap">
       ${networkWarnings.join("")}
+      <div class="s-card">
+        <div class="s-card-head"><div><h3 class="s-card-title">Hybrid account security</h3>
+          <p class="s-card-desc">Keep your address and balances. Upgrading replaces account signing keys. Your old seed alone will no longer restore this account.</p></div></div>
+        <div class="s-card-body stack">
+          <p class="muted text-sm">Save one master backup and keep it offline. It restores spending and recovery. Reopen that file before submitting. Without optional password encryption, anyone with the file controls the account. Enrollment must be enabled by the network.</p>
+          <label>Account address <input id="account-sender" value="${escapeAttribute(state.publicKey ?? '')}" /></label>
+          <label>Operation <select id="account-operation"><option value="enroll">Enroll this account</option><option value="rotate">Replace active and recovery keys</option><option value="recover">Recover using a master backup</option></select></label>
+          <label>Current master or older recovery file (recovery only) <input id="account-authority" type="file" accept=".json" /></label>
+          <label>Current backup password (if encrypted) <input id="account-old-password" type="password" autocomplete="off" /></label>
+          <button class="secondary full-width" data-account-action="begin">1. Prepare new keys</button>
+          <label>Optional backup password (12+ characters; leave empty for one secret) <input id="account-password" type="password" autocomplete="new-password" /></label>
+          <button class="secondary full-width" data-account-action="export">2. Save master backup</button>
+          <label>Reopen master backup <input id="account-master" type="file" accept=".json" /></label>
+          <button class="secondary full-width" data-account-action="verify">Verify master backup</button>
+          <button class="full-width" data-account-action="submit" disabled>3. Submit verified transition</button>
+          <p class="muted text-sm">Submission may still be pending. Check the committed account before using the new keys. Keep the previous and replacement master backups until commitment is confirmed.</p>
+          <button class="secondary full-width" data-account-action="status">Check committed account</button>
+          <button class="secondary full-width" data-account-action="retry">Retry saved transaction</button>
+          <button class="secondary full-width" data-account-action="archive">Archive failed attempt (retain its keys)</button>
+          <p class="muted text-sm">Archiving does not cancel a broadcast. Its keys stay in the encrypted wallet in case it commits later.</p>
+          <button class="secondary full-width" data-account-action="activate">Use confirmed account</button>
+          <button class="secondary full-width" data-account-action="restore">Restore reopened master backup</button>
+          <p class="muted text-sm">On a new device, create a local wallet first, connect to the original chain, then restore the master file here. Older active/recovery files remain importable for their respective roles. Recovery creates one replacement master backup that must be saved and verified.</p>
+          <p id="account-result" role="status"></p>
+        </div>
+      </div>
+
 
       <!-- Status -->
       <div class="s-card">
@@ -4967,7 +4994,7 @@ function renderSecurityTab(state: PopupRuntimeState): string {
         </div>
       </div>
 
-      ${state.seedSource === "mnemonic" ? renderAccountsCard(state) : ""}
+      ${state.seedSource === "mnemonic" || state.accounts.length > 1 ? renderAccountsCard(state) : ""}
 
       <!-- Networks -->
       <div class="s-card">
@@ -5097,7 +5124,7 @@ function renderAccountsCard(state: PopupRuntimeState): string {
       <div class="s-card-head">
         <div>
           <h3 class="s-card-title">Accounts</h3>
-          <p class="s-card-desc">${state.accounts.length} derived from recovery seed.</p>
+          <p class="s-card-desc">${state.accounts.length} stored accounts.</p>
         </div>
       </div>
       <div class="s-card-body stack">
@@ -5115,7 +5142,7 @@ function renderAccountsCard(state: PopupRuntimeState): string {
             if (confirmDeleteAccountIndex === a.index) {
               return `
                 <div class="contact-edit-row" style="flex-direction: column; align-items: stretch; gap: 8px">
-                  <div class="banner banner-warning">Remove <strong>${escapeHtml(a.name)}</strong>? You can re-derive it later from the recovery seed.</div>
+                  <div class="banner banner-warning">Remove <strong>${escapeHtml(a.name)}</strong>? Keep a full wallet backup and any hybrid account backups before removing it.</div>
                   <div style="display: flex; gap: 8px">
                     <button class="ghost-sm full-width" data-confirm-delete-account="${a.index}" style="color: var(--danger)">Remove</button>
                     <button class="ghost-sm full-width" data-cancel-delete-account>Cancel</button>
@@ -5380,6 +5407,37 @@ function bindSetupEvents(): void {
 }
 
 function bindUnlockedEvents(state: PopupRuntimeState): void {
+  for (const button of root.querySelectorAll<HTMLButtonElement>("[data-account-action]")) {
+    button.addEventListener("click", () => { void (async () => {
+      const result = root.querySelector<HTMLElement>("#account-result")!;
+      const submit = root.querySelector<HTMLButtonElement>('[data-account-action="submit"]')!;
+      const action = button.dataset.accountAction as "begin" | "export" | "verify" | "submit" | "status" | "retry" | "restore" | "activate" | "archive";
+      const readFile = async (id: string) => {
+        const f = root.querySelector<HTMLInputElement>(id)?.files?.[0];
+        if (!f || f.size > 100000) throw new Error("Choose the saved account backup file (maximum 100 KB).");
+        return f.text();
+      };
+      button.disabled = true; result.textContent = "Working…";
+      try {
+        const role = button.dataset.role as "active" | "recovery" | undefined;
+        const operation = value("#account-operation") as "enroll" | "rotate" | "recover";
+        if (action === "begin" || action === "verify") submit.disabled = true;
+        const file = action === "verify" ? await readFile("#account-master") : action === "restore" ? await readFile("#account-master") : action === "begin" && operation === "recover" ? await readFile("#account-authority") : undefined;
+        const response = await sendRuntimeMessage<{ ready?: boolean; sender?: string; status?: string; accepted?: boolean; message?: string } | string>({ type: "wallet_account_security", input: { action, operation, role, file, sender: value("#account-sender"), password: action === "begin" ? value("#account-old-password") : value("#account-password") } });
+        if (action === "export" && typeof response === "string") {
+          downloadJsonText(response, `xian-account-master-${new Date().toISOString().slice(0,10)}.json`);
+          result.textContent = "Saved. Reopen this file and verify it below.";
+        } else {
+          if (typeof response !== "string" && response.sender) root.querySelector<HTMLInputElement>("#account-sender")!.value = response.sender;
+          if (typeof response !== "string" && response.ready) submit.disabled = false;
+          result.textContent = action === "submit" || action === "retry" ? typeof response !== "string" && response.accepted === false ? `Submission rejected: ${response.message ?? "Check status or archive the failed attempt."}` : "Submission attempted. Check the committed account; keep your backups." : typeof response !== "string" && response.status ? `Account status: ${response.status}` : "Backup step complete.";
+          if (action === "restore" || action === "activate") { result.textContent += " Reopen the wallet to refresh the selected account."; }
+        }
+      } catch (error) { result.textContent = error instanceof Error ? error.message : String(error); }
+      finally { if (action !== "submit") button.disabled = false; }
+    })(); });
+  }
+
   bindTokenIconFallbacks();
   bindAppFaviconFallbacks();
 

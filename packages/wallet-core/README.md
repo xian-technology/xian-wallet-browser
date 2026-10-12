@@ -32,3 +32,11 @@ flowchart LR
   Core --> Provider["Provider enforcement"]
   Provider --> Client["@xian-tech/client"]
 ```
+
+## Recovery scope
+
+Indexed BIP39 account derivation matches the mobile wallet and Python's
+`Wallet.from_mnemonic`. Hybrid custody delegates to the SDK `AccountVault`:
+one independently generated master backup per account and chain, verified
+before transitions, with active-only credentials encrypted in ordinary storage.
+Mnemonic recovery alone cannot restore an enrolled account's hybrid keys.

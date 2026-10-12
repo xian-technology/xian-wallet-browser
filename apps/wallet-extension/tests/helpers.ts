@@ -196,6 +196,7 @@ export async function waitForInjectedProvider(page: Page): Promise<void> {
 }
 
 export async function startMockRpcServer(options?: {
+  accountRegistry?: boolean;
   chainId?: string;
   contractIrs?: Record<string, string | null>;
   contractMethods?: Record<
@@ -223,6 +224,19 @@ export async function startMockRpcServer(options?: {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     requests.push(`${request.method ?? "GET"} ${url.pathname}${url.search}`);
 
+    if (url.pathname === "/" && request.method === "POST") {
+      let body = "";
+      request.on("data", chunk => { body += chunk; });
+      request.on("end", () => {
+        const rpc = JSON.parse(body);
+        if (rpc.method === "broadcast_tx_sync") {
+          requests.push("JSON-RPC broadcast_tx_sync");
+          json(response, 200, { jsonrpc: "2.0", id: rpc.id, result: { code: 0, hash: txHash } });
+        } else json(response, 400, { error: "unsupported method" });
+      });
+      return;
+    }
+
     switch (url.pathname) {
       case "/genesis":
         json(response, 200, {
@@ -245,6 +259,10 @@ export async function startMockRpcServer(options?: {
       case "/abci_query": {
         const rawPath = url.searchParams.get("path") ?? "\"\"";
         const queryPath = rawPath.replace(/^"/, "").replace(/"$/, "");
+        if (options?.accountRegistry && queryPath === "/get/_accounts.policy") {
+          json(response, 200, { result: { response: { code: 0, value: base64(JSON.stringify({ version: 1, enrollment_open: true, transition_chi: 1000 })) } } });
+          return;
+        }
         if (queryPath.startsWith("/get_next_nonce/")) {
           json(response, 200, {
             result: {

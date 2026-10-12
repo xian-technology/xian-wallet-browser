@@ -366,6 +366,7 @@ export type RuntimeMessage =
   | WalletSwitchAccountRuntimeMessage
   | WalletRenameAccountRuntimeMessage
   | WalletRemoveAccountRuntimeMessage
+  | WalletAccountSecurityMessage
   | WalletExportRuntimeMessage
   | WalletImportBackupRuntimeMessage
   | WalletSaveShieldedSnapshotRuntimeMessage
@@ -500,3 +501,5 @@ export function popupStateBanner(state: PopupState): string {
   }
   return `Wallet unlocked on ${state.activeNetworkName ?? "the active preset"} (${state.chainId ?? "unknown chain"}).`;
 }
+
+export interface WalletAccountSecurityMessage { type: "wallet_account_security"; input: Parameters<import("@xian-tech/wallet-core").WalletController["accountSecurity"]>[0] }

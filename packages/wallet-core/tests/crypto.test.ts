@@ -11,6 +11,7 @@ import {
   decryptWalletBackup,
   deriveWalletSessionKey,
   derivePrivateKeyFromMnemonic,
+  encryptWalletBackupPayload,
   encryptMnemonic,
   encryptMnemonicWithSessionKey,
   encryptPrivateKey,
@@ -53,7 +54,8 @@ describe("@xian-tech/wallet-core crypto helpers", () => {
     const material = await createWalletSessionKey("secret-password");
     const sameSessionKey = await deriveWalletSessionKey(
       "secret-password",
-      material.walletEncryptionSalt
+      material.walletEncryptionSalt,
+      material.walletEncryptionIterations
     );
 
     expect(sameSessionKey).toBe(material.sessionKey);
@@ -150,5 +152,18 @@ describe("@xian-tech/wallet-core crypto helpers", () => {
         "unused"
       )
     ).rejects.toThrow("invalid wallet backup");
+  });
+});
+
+
+describe("bounded wallet KDF parameters", () => {
+  it.each([0, 249_999, 2_000_001, 1.5, NaN, Infinity])("rejects work factor %s", async (iterations) => {
+    await expect(deriveWalletSessionKey("password", btoa("s".repeat(16)), iterations)).rejects.toThrow("invalid wallet encryption parameters");
+  });
+  it("exports at the current work factor and rejects excessive backup work", async () => {
+    const backup = await encryptWalletBackupPayload({ version: 1, type: "privateKey", privateKey: "11".repeat(32) }, "password");
+    expect(backup.encryption.iterations).toBe(600_000);
+    backup.encryption.iterations = 2_000_001;
+    await expect(decryptWalletBackup(backup, "password")).rejects.toThrow("invalid wallet backup encryption parameters");
   });
 });

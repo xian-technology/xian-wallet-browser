@@ -624,6 +624,10 @@ chrome.runtime.onMessage.addListener(
           case "wallet_remove_account":
             sendResponse(ok(await controller.removeAccount(message.index)));
             return;
+          case "wallet_account_security":
+            if (!(_sender as { url?: string }).url?.startsWith(chrome.runtime.getURL(""))) throw new Error("account security is only available in the wallet UI");
+            sendResponse(ok(await controller.accountSecurity(message.input)));
+            return;
           case "wallet_export":
             sendResponse(ok(await controller.exportWallet(message.password)));
             return;

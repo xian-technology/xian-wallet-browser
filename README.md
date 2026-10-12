@@ -68,7 +68,7 @@ Typical user-facing flows covered by this repo:
 | Create / restore wallet | `wallet-core`, popup UI | mnemonic and private-key handling stays inside the wallet |
 | Lock / unlock | `wallet-core`, extension storage | UI transport must not expose secrets while locked |
 | Connect dapp | content / inpage bridge, approval UI | exposes `window.xian` / provider methods from `xian-js` |
-| Sign message | provider bridge, approval UI | signs the v1 chain/account-bound Xian message envelope; dapps receive only the signature |
+| Sign message | provider bridge, approval UI | unenrolled accounts sign the v1 chain/account-bound envelope; enrolled accounts reject this method |
 | Prepare / sign / send tx | provider bridge, `@xian-tech/client` | automatic sends reserve ordered nonces; prebuilt same-nonce broadcasts cannot run concurrently |
 | Swap tokens | `wallet-core`, popup UI | in-wallet DEX swap through `con_dex` with reserve-based quotes, slippage, deadline, and automatic approval |
 | Watch asset | provider bridge, token registry UI | lets dapps request token tracking |
@@ -160,3 +160,27 @@ npm run test:visual  --workspace xian-wallet-extension
 - [docs/QA_CHECKLIST.md](docs/QA_CHECKLIST.md) — pre-release QA checklist
 - [docs/UX_REVIEW.md](docs/UX_REVIEW.md) — UX review notes
 - [`../xian-js/README.md`](../xian-js/README.md) — official JS / TS SDK consumed by this repo
+
+### Hybrid account backups
+
+**Settings → Hybrid account security** saves one master backup and requires
+reopening it before enrollment, key replacement or recovery. It restores both
+spending and recovery at the original address. Password encryption is optional;
+the plaintext file is the secret and belongs offline. The everyday vault and
+full wallet export contain only active/pending/retained credentials, not master
+or recovery secrets. Older role backups remain importable. See the
+[recovery guide](../xian-docs-web/concepts/hybrid-account-recovery.md).
+Enrollment is disabled in the checked-in node policies.
+
+## HD accounts and backup scope
+
+Mnemonic wallets derive multiple indexed accounts. Browser and mobile wallets
+use the same derivation as Python's `Wallet.from_mnemonic(phrase, account_index=n)`.
+The phrase and account index restore the original address.
+
+Hybrid authorization uses an independently generated master for each account
+and chain. Keep that account's verified master backup after enrollment; the
+original mnemonic does not recreate its active or recovery keys. Key replacement
+creates a new master backup while preserving the address and balances. An
+encrypted full-wallet export holds everyday credentials and settings, but does
+not replace the offline master backup.

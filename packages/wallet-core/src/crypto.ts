@@ -1,6 +1,6 @@
 import { generateMnemonic, mnemonicToSeed, validateMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
-import { Ed25519Signer, isValidEd25519Key } from "@xian-tech/client";
+import { encodeRuntime, decodeRuntime, Ed25519Signer, isValidEd25519Key } from "@xian-tech/client";
 
 import type {
   EncryptedWalletBackup,
@@ -11,7 +11,28 @@ import type {
 
 const ENCODER = new TextEncoder();
 const DECODER = new TextDecoder();
-const ITERATIONS = 250_000;
+export const WALLET_KDF_ITERATIONS = 600_000;
+export const LEGACY_WALLET_KDF_ITERATIONS = 250_000;
+export const MAX_WALLET_KDF_ITERATIONS = 2_000_000;
+const ITERATIONS = WALLET_KDF_ITERATIONS;
+
+export function assertWalletKdfIterations(iterations: number): void {
+  if (
+    !Number.isSafeInteger(iterations) ||
+    iterations < LEGACY_WALLET_KDF_ITERATIONS ||
+    iterations > MAX_WALLET_KDF_ITERATIONS
+  ) {
+    throw new Error("invalid wallet encryption parameters");
+  }
+}
+
+function decodeWalletSalt(value: string): Uint8Array {
+  const salt = base64ToBytes(value);
+  if (salt.length !== 16) {
+    throw new Error("invalid wallet encryption parameters");
+  }
+  return salt;
+}
 const SESSION_KEY_LENGTH = 32;
 const MNEMONIC_STRENGTH_BY_WORD_COUNT = new Map<number, number>([
   [12, 128],
@@ -56,6 +77,7 @@ async function deriveKey(
   salt: Uint8Array,
   iterations: number = ITERATIONS
 ): Promise<CryptoKey> {
+  assertWalletKdfIterations(iterations);
   const passwordKey = await getWebCrypto().subtle.importKey(
     "raw",
     ENCODER.encode(password),
@@ -85,6 +107,7 @@ async function deriveSessionKeyBytes(
   salt: Uint8Array,
   iterations: number = ITERATIONS
 ): Promise<Uint8Array> {
+  assertWalletKdfIterations(iterations);
   const passwordKey = await getWebCrypto().subtle.importKey(
     "raw",
     ENCODER.encode(password),
@@ -149,22 +172,22 @@ async function decryptText(payload: string, password: string): Promise<string> {
     iv: string;
     ciphertext: string;
   };
-  const iterations =
-    typeof parsed.iterations === "number" &&
-    Number.isSafeInteger(parsed.iterations) &&
-    parsed.iterations > 0
-      ? parsed.iterations
-      : ITERATIONS;
-  const key = await deriveKey(
-    password,
-    base64ToBytes(parsed.salt),
-    iterations
-  );
+  // Metadata-free payloads were written with the original work factor.
+  const iterations = parsed.iterations === undefined
+    ? LEGACY_WALLET_KDF_ITERATIONS
+    : parsed.iterations;
+  const salt = decodeWalletSalt(parsed.salt);
+  const iv = base64ToBytes(parsed.iv);
+  const ciphertext = base64ToBytes(parsed.ciphertext);
+  if (iv.length !== 12 || ciphertext.length < 16) {
+    throw new Error("invalid wallet encryption parameters");
+  }
+  const key = await deriveKey(password, salt, iterations);
   try {
     const plaintext = await getWebCrypto().subtle.decrypt(
-      { name: "AES-GCM", iv: toArrayBuffer(base64ToBytes(parsed.iv)) },
+      { name: "AES-GCM", iv: toArrayBuffer(iv) },
       key,
-      toArrayBuffer(base64ToBytes(parsed.ciphertext))
+      toArrayBuffer(ciphertext)
     );
     return DECODER.decode(plaintext);
   } catch {
@@ -348,6 +371,7 @@ export async function decryptPrivateKey(
 
 export async function createWalletSessionKey(password: string): Promise<{
   walletEncryptionSalt: string;
+  walletEncryptionIterations: number;
   sessionKey: string;
 }> {
   const walletEncryptionSalt = bytesToBase64(
@@ -355,17 +379,20 @@ export async function createWalletSessionKey(password: string): Promise<{
   );
   return {
     walletEncryptionSalt,
-    sessionKey: await deriveWalletSessionKey(password, walletEncryptionSalt)
+    walletEncryptionIterations: ITERATIONS,
+    sessionKey: await deriveWalletSessionKey(password, walletEncryptionSalt, ITERATIONS)
   };
 }
 
 export async function deriveWalletSessionKey(
   password: string,
-  walletEncryptionSalt: string
+  walletEncryptionSalt: string,
+  iterations: number = LEGACY_WALLET_KDF_ITERATIONS
 ): Promise<string> {
   const sessionKeyBytes = await deriveSessionKeyBytes(
     password,
-    base64ToBytes(walletEncryptionSalt)
+    decodeWalletSalt(walletEncryptionSalt),
+    iterations
   );
   return bytesToBase64(sessionKeyBytes);
 }
@@ -437,7 +464,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isEncryptedWalletBackup(value: unknown): value is EncryptedWalletBackup {
   return (
     isRecord(value) &&
-    value.version === 2 &&
+    (value.version === 2 || value.version === 3) &&
     value.kind === "xian-wallet-backup" &&
     isRecord(value.encryption) &&
     value.encryption.algorithm === "AES-256-GCM" &&
@@ -464,7 +491,7 @@ export async function encryptWalletBackupPayload(
   password: string
 ): Promise<EncryptedWalletBackup> {
   const encrypted = JSON.parse(
-    await encryptText(JSON.stringify(backup), password)
+    await encryptText(encodeRuntime(backup), password)
   ) as {
     algorithm: string;
     iterations: number;
@@ -473,7 +500,7 @@ export async function encryptWalletBackupPayload(
     ciphertext: string;
   };
   return {
-    version: 2,
+    version: backup.accountVault ? 3 : 2,
     kind: "xian-wallet-backup",
     encryption: {
       algorithm: "AES-256-GCM",
@@ -496,7 +523,8 @@ export async function decryptWalletBackup(
 
   if (
     !Number.isSafeInteger(backup.encryption.iterations) ||
-    backup.encryption.iterations <= 0
+    backup.encryption.iterations < LEGACY_WALLET_KDF_ITERATIONS ||
+    backup.encryption.iterations > MAX_WALLET_KDF_ITERATIONS
   ) {
     throw new Error("invalid wallet backup encryption parameters");
   }
@@ -509,9 +537,11 @@ export async function decryptWalletBackup(
     ciphertext: backup.ciphertext
   });
   try {
-    return assertWalletBackupPayload(
-      JSON.parse(await decryptText(encryptedText, password))
+    const payload = assertWalletBackupPayload(
+      decodeRuntime(await decryptText(encryptedText, password))
     );
+    if ((backup.version === 3) !== Boolean(payload.accountVault)) throw new Error("wallet backup version does not match account custody data");
+    return payload;
   } catch (error) {
     if (error instanceof Error && error.message === "invalid password") {
       throw error;

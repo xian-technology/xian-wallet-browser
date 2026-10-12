@@ -1,3 +1,4 @@
+import { decryptSecretTextWithSessionKey, encryptSecretTextWithSessionKey, deriveWalletSessionKey } from "../src/crypto";
 import { describe, expect, it, vi } from "vitest";
 
 import type {
@@ -103,6 +104,7 @@ function createStore(): MemoryStore {
 function createClient(): WalletNetworkClient {
   return {
     getChainId: vi.fn(async () => "xian-local"),
+    getState: vi.fn(async () => null),
     getBalance: vi.fn(async () => "12"),
     getTokenBalances: vi.fn(async () => ({
       available: true,
@@ -385,21 +387,14 @@ describe("@xian-tech/wallet-core controller", () => {
         chi: 500
       })
     );
-    expect(client.signTx).toHaveBeenCalledWith(
-      expect.objectContaining({
-        payload: expect.objectContaining({
-          sender: store.current()?.publicKey
-        })
-      }) as XianUnsignedTransaction,
-      expect.objectContaining({ address: store.current()?.publicKey })
-    );
+    expect(client.getState).toHaveBeenCalledWith("_accounts", "records", [store.current()?.publicKey]);
     expect(client.broadcastTx).toHaveBeenCalledWith(
       expect.objectContaining({
         payload: expect.objectContaining({
           sender: store.current()?.publicKey
         }),
         metadata: expect.objectContaining({
-          signature: "signed"
+          signature: expect.stringMatching(/^[0-9a-f]{128}$/)
         })
       }) as XianSignedTransaction,
       {
@@ -3042,4 +3037,271 @@ describe("approval execution recovery", () => {
       status: "rejected", error: { name: "SubmissionInterruptedError", data: { txHash: "KNOWN-HASH", submissionMayHaveOccurred: true } }
     });
   });
+});
+
+
+describe("vault KDF migration", () => {
+  async function legacyWallet() {
+    const store = createStore();
+    const controller = new WalletController({
+      wallet: { id: "test", name: "Test", rdns: "org.xian.test" },
+      version: "test", store, createClient: () => createClient()
+    });
+    await controller.createOrImportWallet({ password: "secret", createWithMnemonic: true });
+    await controller.addAccount();
+    await controller.saveShieldedWalletSnapshot(SHIELDED_STATE_SNAPSHOT);
+    const state = structuredClone(store.current()!);
+    const currentKey = store.currentSession()!.sessionKey!;
+    const legacyKey = await deriveWalletSessionKey("secret", state.walletEncryptionSalt, 250_000);
+    const reencrypt = async (value: string) => encryptSecretTextWithSessionKey(
+      await decryptSecretTextWithSessionKey(value, currentKey), legacyKey
+    );
+    state.encryptedPrivateKey = await reencrypt(state.encryptedPrivateKey);
+    state.encryptedMnemonic = await reencrypt(state.encryptedMnemonic!);
+    for (const account of state.accounts!) account.encryptedPrivateKey = await reencrypt(account.encryptedPrivateKey);
+    for (const snapshot of state.shieldedWalletSnapshots!) snapshot.encryptedStateSnapshot = await reencrypt(snapshot.encryptedStateSnapshot);
+    delete state.walletEncryptionIterations;
+    await controller.lockWallet();
+    await store.saveState(state);
+    return { store, controller, state, legacyKey };
+  }
+
+  it("upgrades all secrets without changing accounts and survives a second unlock", async () => {
+    const { store, controller, state, legacyKey } = await legacyWallet();
+    await controller.unlockWallet("secret");
+    const upgraded = store.current()!;
+    expect(upgraded.walletEncryptionIterations).toBe(600_000);
+    expect(upgraded.walletEncryptionSalt).not.toBe(state.walletEncryptionSalt);
+    expect(upgraded.publicKey).toBe(state.publicKey);
+    expect(upgraded.accounts!.map(a => a.publicKey)).toEqual(state.accounts!.map(a => a.publicKey));
+    const key = store.currentSession()!.sessionKey!;
+    const fields = ["encryptedPrivateKey", "encryptedMnemonic"] as const;
+    for (const field of fields) {
+      expect(await decryptSecretTextWithSessionKey(upgraded[field]!, key)).toBe(
+        await decryptSecretTextWithSessionKey(state[field]!, legacyKey)
+      );
+    }
+    for (let i = 0; i < state.accounts!.length; i++) {
+      expect(await decryptSecretTextWithSessionKey(upgraded.accounts![i]!.encryptedPrivateKey, key)).toBe(
+        await decryptSecretTextWithSessionKey(state.accounts![i]!.encryptedPrivateKey, legacyKey)
+      );
+    }
+    expect(await decryptSecretTextWithSessionKey(upgraded.shieldedWalletSnapshots![0]!.encryptedStateSnapshot, key)).toBe(SHIELDED_STATE_SNAPSHOT);
+    await controller.lockWallet();
+    await controller.unlockWallet("secret");
+    expect(store.current()!.walletEncryptionSalt).toBe(upgraded.walletEncryptionSalt);
+  });
+
+  it("leaves the legacy record intact after a wrong password or corrupt secondary secret", async () => {
+    const { store, controller, state } = await legacyWallet();
+    await expect(controller.unlockWallet("wrong")).rejects.toThrow();
+    expect(store.current()).toEqual(state);
+    state.accounts![0]!.encryptedPrivateKey = "corrupt";
+    const before = structuredClone(state);
+    await expect(controller.unlockWallet("secret")).rejects.toThrow();
+    expect(store.current()).toEqual(before);
+    expect(store.currentSession()).toBeNull();
+  });
+
+  it("does not replace a legacy vault when persistence fails", async () => {
+    const { store, controller, state } = await legacyWallet();
+    vi.spyOn(store, "saveState").mockRejectedValueOnce(new Error("disk full"));
+    await expect(controller.unlockWallet("secret")).rejects.toThrow("disk full");
+    expect(store.current()).toEqual(state);
+    expect(store.currentSession()).toBeNull();
+    await controller.unlockWallet("secret");
+    expect(store.current()!.walletEncryptionIterations).toBe(600_000);
+  });
+
+  it("does not absorb a user lock into the internal KDF migration session reset", async () => {
+    const { store, controller } = await legacyWallet();
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    const clear = store.clearUnlockedSession.bind(store);
+    vi.spyOn(store, "clearUnlockedSession").mockImplementationOnce(async () => {
+      entered(); await gate; await clear();
+    });
+    const unlocking = controller.unlockWallet("secret");
+    const rejected = expect(unlocking).rejects.toThrow(/locked|changed/);
+    await waiting;
+    const locking = controller.lockWallet();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    release();
+    await Promise.all([rejected, locking]);
+    expect(store.currentSession()).toBeNull();
+    expect((await controller.getPopupState()).unlocked).toBe(false);
+    expect((await controller.unlockWallet("secret")).unlocked).toBe(true);
+  });
+});
+
+describe("hybrid wallet migration and recovery", { timeout: 60000 }, () => {
+  it("keeps lock effective across delayed session writes and a controller restart", async () => {
+    const store = createStore(), client = createClient();
+    const make = () => new WalletController({ wallet: { id: "xian-wallet", name: "Xian", rdns: "org.xian.wallet" }, version: "test", store, createClient: () => client });
+    const controller = make();
+    await controller.createOrImportWallet({ password: "wallet-password", privateKey: PRIVATE_KEY });
+    await controller.lockWallet();
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    const save = store.saveUnlockedSession.bind(store);
+    vi.spyOn(store, "saveUnlockedSession").mockImplementationOnce(async session => {
+      entered(); await gate; await save(session);
+    });
+    const unlocking = controller.unlockWallet("wallet-password");
+    const rejected = expect(unlocking).rejects.toThrow(/locked|changed/);
+    await waiting;
+    const locking = controller.lockWallet();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    release();
+    await Promise.all([rejected, locking]);
+    expect(store.currentSession()).toBeNull();
+    expect((await make().getPopupState()).unlocked).toBe(false);
+    // Cancellation does not corrupt the encrypted wallet or its password.
+    expect((await controller.unlockWallet("wallet-password")).unlocked).toBe(true);
+  });
+
+  it("does not restore a stale session read that finishes after locking", async () => {
+    const store = createStore(), client = createClient();
+    const make = () => new WalletController({ wallet: { id: "xian-wallet", name: "Xian", rdns: "org.xian.wallet" }, version: "test", store, createClient: () => client });
+    await make().createOrImportWallet({ password: "wallet-password", privateKey: PRIVATE_KEY });
+    const controller = make();
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    const stale = store.currentSession();
+    vi.spyOn(store, "loadUnlockedSession").mockImplementationOnce(async () => {
+      entered(); await gate; return stale;
+    });
+    const restoring = controller.getPopupState();
+    await waiting;
+    await controller.lockWallet();
+    release();
+    expect((await restoring).unlocked).toBe(false);
+    expect(store.currentSession()).toBeNull();
+    expect((await make().getPopupState()).unlocked).toBe(false);
+  });
+
+  it("verifies files, preserves the sender, survives timeout, and restores on a fresh wallet", async () => {
+    const { importAccountMaster, verifyAccountAuthorization } = await import("@xian-tech/client");
+    const store = createStore(), client = createClient();
+    let record: unknown = null;
+    client.getState = vi.fn(async (_contract, variable) => variable === "policy" ? { version: 1, enrollment_open: true, transition_chi: 1000 } : record);
+    const make = (s: MemoryStore) => new WalletController({ wallet: { id: "xian-wallet", name: "Xian", rdns: "org.xian.wallet" }, version: "test", store: s, createClient: () => client });
+    let controller = make(store);
+    await controller.createOrImportWallet({ password: "wallet-password", privateKey: PRIVATE_KEY });
+    const sender = store.current()!.publicKey, password = "";
+    await controller.accountSecurity({ action: "begin", operation: "enroll" });
+    await expect(controller.accountSecurity({ action: "submit" })).rejects.toThrow(/master/);
+    expect(client.broadcastTx).not.toHaveBeenCalled();
+    // Rejected submission discards the draft; a new draft requires fresh backups.
+    await controller.accountSecurity({ action: "begin", operation: "enroll" });
+    const active = await controller.accountSecurity({ action: "export", role: "active", password }) as string;
+    const recovery = active; // One master restores either role.
+    await controller.accountSecurity({ action: "verify", role: "active", file: active, password });
+    client.broadcastTx = vi.fn(async () => { expect(store.current()!.encryptedAccountVault).toBeTruthy(); throw new Error("timeout"); });
+    await expect(controller.accountSecurity({ action: "submit" })).rejects.toThrow("timeout");
+    expect(store.current()!.publicKey).toBe(sender);
+    expect(store.current()!.encryptedAccountVault).not.toContain('"ed25519_seed"');
+    controller = make(store);
+    expect(await controller.accountSecurity({ action: "status" })).toEqual({ sender, status: "pending" });
+    record = (await importAccountMaster(active, password)).record;
+    expect(await controller.accountSecurity({ action: "status" })).toEqual({ sender, status: "active" });
+    // Fresh wallet has neither the original Ed seed nor the active keys.
+    const freshStore = createStore(), fresh = make(freshStore);
+    await fresh.createOrImportWallet({ password: "fresh-password", privateKey: "44".repeat(32) });
+    await fresh.accountSecurity({ action: "restore", file: active, password });
+    expect(freshStore.current()!.publicKey).toBe(sender);
+    await fresh.accountSecurity({ action: "begin", operation: "recover", file: recovery, password });
+    const nextActive = await fresh.accountSecurity({ action: "export", role: "active", password }) as string;
+
+    await fresh.accountSecurity({ action: "verify", role: "active", file: nextActive, password });
+    client.broadcastTx = vi.fn(async tx => {
+      const old = (await importAccountMaster(recovery, password)).record;
+      expect(verifyAccountAuthorization(old.recovery, old.epoch, tx.payload, tx.metadata.auth!.signature, "authority")).toBe(true);
+      record = tx.payload.kwargs.record;
+      return { submitted: true, accepted: true, finalized: false };
+    });
+    await fresh.accountSecurity({ action: "submit" });
+    await fresh.accountSecurity({ action: "activate", sender });
+    expect(freshStore.current()!.publicKey).toBe(sender);
+    await fresh.lockWallet(); await fresh.unlockWallet("fresh-password");
+    expect((await fresh.getPopupState()).unlocked).toBe(true);
+    // A recovered account's local identity anchor must survive subsequent rotations.
+    await fresh.accountSecurity({ action: "begin", operation: "rotate" });
+    for (const role of ["active"] as const) {
+      const file = await fresh.accountSecurity({ action: "export", role, password }) as string;
+      await fresh.accountSecurity({ action: "verify", role, file, password });
+    }
+    client.broadcastTx = vi.fn(async tx => {
+      record = tx.payload.kwargs.record;
+      return { submitted: true, accepted: true, finalized: false };
+    });
+    await fresh.accountSecurity({ action: "submit" });
+    await fresh.accountSecurity({ action: "status" });
+    await fresh.lockWallet(); await fresh.unlockWallet("fresh-password");
+    expect((await fresh.getPopupState()).unlocked).toBe(true);
+    const full = await fresh.exportWallet("full-backup-password");
+    expect(full.version).toBe(3);
+    await expect(decryptWalletBackup({ ...full, version: 2 }, "full-backup-password")).rejects.toThrow();
+    const restoredStore = createStore(), restored = make(restoredStore);
+    await restored.importWalletBackup(full, "full-backup-password");
+    await restored.lockWallet(); await restored.unlockWallet("full-backup-password");
+    expect(restoredStore.current()!.publicKey).toBe(sender);
+    expect((await restored.getPopupState()).unlocked).toBe(true);
+    expect(await restored.accountSecurity({ action: "status" })).toEqual({ sender, status: "active" });
+    await restored.accountSecurity({ action: "begin", operation: "rotate" });
+    for (const role of ["active"] as const) {
+      const file = await restored.accountSecurity({ action: "export", role, password }) as string;
+      await restored.accountSecurity({ action: "verify", role, file, password });
+    }
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    const build = client.buildTx.bind(client);
+    client.buildTx = vi.fn(async request => { entered(); await gate; return build(request); });
+    const callsBefore = vi.mocked(client.broadcastTx).mock.calls.length;
+    const submission = restored.accountSecurity({ action: "submit" });
+    const rejected = expect(submission).rejects.toThrow(/locked|changed/);
+    await waiting;
+    await restored.lockWallet();
+    release();
+    await rejected;
+    expect(client.broadcastTx).toHaveBeenCalledTimes(callsBefore);
+    await restored.unlockWallet("full-backup-password");
+    expect(await restored.accountSecurity({ action: "status" })).toEqual({ sender, status: "active" });
+
+  });
+  it.each(["export", "state-read"])("does not release a master backup when locking interrupts %s", async (phase) => {
+    const { MasterAccountTransitionDraft } = await import("@xian-tech/client");
+    const store = createStore(), client = createClient();
+    client.getState = vi.fn(async (_contract, variable) => variable === "policy" ? { version: 1, enrollment_open: true, transition_chi: 1000 } : null);
+    const controller = new WalletController({ wallet: { id: "xian-wallet", name: "Xian", rdns: "org.xian.wallet" }, version: "test", store, createClient: () => client });
+    await controller.createOrImportWallet({ password: "wallet-password", privateKey: PRIVATE_KEY });
+    await controller.accountSecurity({ action: "begin", operation: "enroll" });
+    let release!: (file: string) => void, entered!: () => void;
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    let stateSpy: ReturnType<typeof vi.spyOn> | undefined;
+    const spy = vi.spyOn(MasterAccountTransitionDraft.prototype, "exportMasterBackup").mockImplementation(() => {
+      if (phase === "state-read") {
+        const saved = store.current();
+        stateSpy = vi.spyOn(store, "loadState").mockImplementationOnce(async () => {
+          entered();
+          await new Promise<string>(resolve => { release = resolve; });
+          return saved;
+        });
+        return Promise.resolve("secret backup must not escape");
+      }
+      entered(); return new Promise<string>(resolve => { release = resolve; });
+    });
+    try {
+      const exporting = controller.accountSecurity({ action: "export" });
+      const rejected = expect(exporting).rejects.toThrow(/locked|changed/);
+      await waiting; await controller.lockWallet(); release("secret backup must not escape");
+      await rejected;
+      expect(client.broadcastTx).not.toHaveBeenCalled();
+    } finally { spy.mockRestore(); stateSpy?.mockRestore(); }
+  });
+
 });

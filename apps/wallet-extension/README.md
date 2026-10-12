@@ -67,14 +67,12 @@ apps/wallet-extension/dist
 3. Click `Load unpacked`
 4. Select `apps/wallet-extension/dist`
 
-## Current Scope
+## Wallet Workflows
 
-This is the real wallet app foundation, but it is not a finished production
-wallet yet.
-
-It currently supports:
+The extension supports:
 
 - wallet creation and import from a private-key seed or BIP39 recovery phrase
+- indexed mnemonic accounts and verified per-account hybrid master backups
 - recovery-phrase reveal with password confirmation
 - password-based encryption for local persistence
 - shielded `state_snapshot` storage, direct export/removal, and inclusion in
@@ -84,13 +82,8 @@ It currently supports:
 - per-origin connect permissions
 - provider methods for wallet info, asset watching, tx preparation, signing,
   sending, and intent-based send calls
-- a reusable wallet controller in `@xian-tech/wallet-core` so future wallet UIs can
+- a reusable wallet controller in `@xian-tech/wallet-core` so wallet UIs can
   share custody and approval logic
-
-It does not yet include:
-
-- hardware wallets
-- portfolio valuation views
 
 ## Manual Review
 

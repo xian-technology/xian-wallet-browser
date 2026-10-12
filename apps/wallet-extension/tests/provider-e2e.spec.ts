@@ -1353,3 +1353,36 @@ test("pushes chainChanged events to connected pages when the active network pres
     await localRpc.close();
   }
 });
+
+
+test("requires one exported master backup to be reopened before enrollment", async ({}, testInfo) => {
+  test.setTimeout(120000);
+  const rpc = await startMockRpcServer({ accountRegistry: true });
+  const { context, extensionId, userDataDir } = await launchExtension();
+  try {
+    const popup = await openExtensionPage(context, extensionId, "popup.html");
+    await createWalletInPopup(popup, "correct horse battery");
+    await sendRuntimeMessage(popup, { type: "wallet_update_settings", networkName: "Registry test", expectedChainId: rpc.chainId, rpcUrl: rpc.url, dashboardUrl: rpc.url });
+    await popup.getByRole("button", { name: "Settings", exact: true }).click();
+    await popup.locator('[data-account-action="begin"]').click();
+    await expect(popup.locator("#account-result")).toHaveText("Backup step complete.");
+    const submit = popup.locator('[data-account-action="submit"]');
+    await expect(submit).toBeDisabled();
+    const downloadEvent = popup.waitForEvent("download");
+    await popup.locator('[data-account-action="export"]').click();
+    const download = await downloadEvent;
+    const file = testInfo.outputPath("account-master.json");
+    await download.saveAs(file);
+    await expect(submit).toBeDisabled();
+    await popup.locator("#account-master").setInputFiles(file);
+    await popup.locator('[data-account-action="verify"]').click();
+    await expect(popup.locator("#account-result")).toHaveText("Backup step complete.");
+    await expect(submit).toBeEnabled();
+    await expectNoHorizontalOverflow(popup);
+    await popup.locator('[data-account-action="begin"]').scrollIntoViewIfNeeded();
+    await popup.screenshot({ path: testInfo.outputPath("hybrid-account-settings.png") });
+    await submit.click();
+    await expect(popup.locator("#account-result")).toContainText("Check the committed account");
+    expect(rpc.requests.filter(r => r === "JSON-RPC broadcast_tx_sync")).toHaveLength(1);
+  } finally { await cleanupExtension(context, userDataDir); await rpc.close(); }
+});

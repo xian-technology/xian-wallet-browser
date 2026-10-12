@@ -1,5 +1,7 @@
 import {
   DEFAULT_NETWORK_PRESETS,
+  LEGACY_WALLET_KDF_ITERATIONS,
+  MAX_WALLET_KDF_ITERATIONS,
   DEFAULT_DASHBOARD_URL,
   DEFAULT_RPC_URL,
   LOCAL_NETWORK_PRESET_ID,
@@ -395,7 +397,12 @@ function normalizeWalletState(value: unknown): StoredWalletState | null {
   if (
     typeof value.publicKey !== "string" ||
     typeof value.encryptedPrivateKey !== "string" ||
-    typeof value.walletEncryptionSalt !== "string"
+    typeof value.walletEncryptionSalt !== "string" ||
+    (value.walletEncryptionIterations !== undefined &&
+      (typeof value.walletEncryptionIterations !== "number" ||
+        !Number.isSafeInteger(value.walletEncryptionIterations) ||
+        value.walletEncryptionIterations < LEGACY_WALLET_KDF_ITERATIONS ||
+        value.walletEncryptionIterations > MAX_WALLET_KDF_ITERATIONS))
   ) {
     return null;
   }
@@ -459,6 +466,9 @@ function normalizeWalletState(value: unknown): StoredWalletState | null {
         ? value.encryptedMnemonic
         : undefined,
     walletEncryptionSalt: value.walletEncryptionSalt,
+    walletEncryptionIterations: value.walletEncryptionIterations as number | undefined,
+    encryptedAccountVault: typeof value.encryptedAccountVault === "string" ? value.encryptedAccountVault : undefined,
+    accountVaultRevision: typeof value.accountVaultRevision === "number" && Number.isSafeInteger(value.accountVaultRevision) ? value.accountVaultRevision : 0,
     seedSource: value.seedSource === "mnemonic" ? "mnemonic" : "privateKey",
     mnemonicWordCount:
       typeof value.mnemonicWordCount === "number" ? value.mnemonicWordCount : undefined,
@@ -572,7 +582,9 @@ export async function loadWalletState(): Promise<StoredWalletState | null> {
 export async function saveWalletState(state: StoredWalletState): Promise<void> {
   await updateEnvelope((envelope) => ({
     ...envelope,
-    wallet: state
+    wallet: envelope.wallet?.walletEncryptionSalt === state.walletEncryptionSalt && (envelope.wallet.accountVaultRevision ?? 0) > (state.accountVaultRevision ?? 0)
+      ? { ...state, encryptedAccountVault: envelope.wallet.encryptedAccountVault, accountVaultRevision: envelope.wallet.accountVaultRevision }
+      : state
   }));
 }
 
