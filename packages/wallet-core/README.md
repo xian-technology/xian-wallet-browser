@@ -32,3 +32,21 @@ flowchart LR
   Core --> Provider["Provider enforcement"]
   Provider --> Client["@xian-tech/client"]
 ```
+
+## Wallet encryption and session persistence
+
+New wallets and version-2 encrypted backups use PBKDF2-SHA256 at 600,000
+iterations with AES-256-GCM. Wallets lacking stored iteration metadata use the
+original 250,000 iterations. Password unlock prepares every account key,
+mnemonic and shielded snapshot before replacing a legacy encrypted record.
+
+Custom `WalletStateStore` implementations can enable migration with
+`replaceState(expected, next)`, which must compare and replace atomically with
+respect to ordinary saves and deletion. Return `false` if the expected record
+changed. Stores without this capability keep legacy wallets readable at their
+existing work factor. Ordinary writers must reject changed encryption contexts and removed records.
+The controller marks explicit setup/import with `saveState(state, { replace: true })`
+so a deliberate wallet replacement remains possible.
+
+Session persistence serializes saves and deletion. Lock invalidates pending
+reads and writes, so an earlier operation cannot restore an obsolete session.

@@ -8,6 +8,9 @@ import type {
 
 import {
   decryptWalletBackup,
+  encryptSecretTextWithSessionKey,
+  decryptSecretTextWithSessionKey,
+  deriveWalletSessionKey,
   UNLOCKED_SESSION_TIMEOUT_MS,
   WalletController,
   type PersistedApproval,
@@ -48,6 +51,11 @@ function createStore(): MemoryStore {
     },
     async saveState(nextState) {
       state = nextState;
+    },
+    async replaceState(expected, next) {
+      if (JSON.stringify(state) !== JSON.stringify(expected)) return false;
+      state = next;
+      return true;
     },
     async clearState() {
       state = null;
@@ -3042,4 +3050,177 @@ describe("approval execution recovery", () => {
       status: "rejected", error: { name: "SubmissionInterruptedError", data: { txHash: "KNOWN-HASH", submissionMayHaveOccurred: true } }
     });
   });
+});
+
+describe("vault KDF migration", () => {
+  async function legacyWallet() {
+    const store = createStore();
+    const controller = new WalletController({
+      wallet: { id: "test", name: "Test", rdns: "org.xian.test" },
+      version: "test", store, createClient: () => createClient()
+    });
+    await controller.createOrImportWallet({ password: "secret", createWithMnemonic: true });
+    await controller.addAccount();
+    await controller.saveShieldedWalletSnapshot(SHIELDED_STATE_SNAPSHOT);
+    const state = structuredClone(store.current()!);
+    const currentKey = store.currentSession()!.sessionKey!;
+    const legacyKey = await deriveWalletSessionKey("secret", state.walletEncryptionSalt, 250_000);
+    const reencrypt = async (value: string) => encryptSecretTextWithSessionKey(
+      await decryptSecretTextWithSessionKey(value, currentKey), legacyKey
+    );
+    state.encryptedPrivateKey = await reencrypt(state.encryptedPrivateKey);
+    state.encryptedMnemonic = await reencrypt(state.encryptedMnemonic!);
+    for (const account of state.accounts!) account.encryptedPrivateKey = await reencrypt(account.encryptedPrivateKey);
+    for (const snapshot of state.shieldedWalletSnapshots!) snapshot.encryptedStateSnapshot = await reencrypt(snapshot.encryptedStateSnapshot);
+    delete state.walletEncryptionIterations;
+    await controller.lockWallet();
+    await store.saveState(state);
+    return { store, controller, state, legacyKey };
+  }
+
+  it("upgrades all secrets without changing accounts and survives a second unlock", async () => {
+    const { store, controller, state, legacyKey } = await legacyWallet();
+    await controller.unlockWallet("secret");
+    const upgraded = store.current()!;
+    expect(upgraded.walletEncryptionIterations).toBe(600_000);
+    expect(upgraded.walletEncryptionSalt).not.toBe(state.walletEncryptionSalt);
+    expect(upgraded.publicKey).toBe(state.publicKey);
+    expect(upgraded.accounts!.map(a => a.publicKey)).toEqual(state.accounts!.map(a => a.publicKey));
+    const key = store.currentSession()!.sessionKey!;
+    const fields = ["encryptedPrivateKey", "encryptedMnemonic"] as const;
+    for (const field of fields) {
+      expect(await decryptSecretTextWithSessionKey(upgraded[field]!, key)).toBe(
+        await decryptSecretTextWithSessionKey(state[field]!, legacyKey)
+      );
+    }
+    for (let i = 0; i < state.accounts!.length; i++) {
+      expect(await decryptSecretTextWithSessionKey(upgraded.accounts![i]!.encryptedPrivateKey, key)).toBe(
+        await decryptSecretTextWithSessionKey(state.accounts![i]!.encryptedPrivateKey, legacyKey)
+      );
+    }
+    expect(await decryptSecretTextWithSessionKey(upgraded.shieldedWalletSnapshots![0]!.encryptedStateSnapshot, key)).toBe(SHIELDED_STATE_SNAPSHOT);
+    await controller.lockWallet();
+    await controller.unlockWallet("secret");
+    expect(store.current()!.walletEncryptionSalt).toBe(upgraded.walletEncryptionSalt);
+  });
+
+  it("leaves the legacy record intact after a wrong password or corrupt secondary secret", async () => {
+    const { store, controller, state } = await legacyWallet();
+    await expect(controller.unlockWallet("wrong")).rejects.toThrow();
+    expect(store.current()).toEqual(state);
+    state.accounts![0]!.encryptedPrivateKey = "corrupt";
+    const before = structuredClone(state);
+    await expect(controller.unlockWallet("secret")).rejects.toThrow();
+    expect(store.current()).toEqual(before);
+    expect(store.currentSession()).toBeNull();
+  });
+
+  it("does not replace a legacy vault when persistence fails", async () => {
+    const { store, controller, state } = await legacyWallet();
+    vi.spyOn(store, "replaceState").mockRejectedValueOnce(new Error("disk full"));
+    await expect(controller.unlockWallet("secret")).rejects.toThrow("disk full");
+    expect(store.current()).toEqual(state);
+    expect(store.currentSession()).toBeNull();
+    await controller.unlockWallet("secret");
+    expect(store.current()!.walletEncryptionIterations).toBe(600_000);
+  });
+
+  it("unlocks older custom stores without an unsafe migration write", async () => {
+    const { store, controller, state } = await legacyWallet();
+    delete store.replaceState;
+    const save = vi.spyOn(store, "saveState");
+    expect((await controller.unlockWallet("secret")).unlocked).toBe(true);
+    expect(store.current()).toEqual(state);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("does not resurrect a removed wallet during the migration session reset", async () => {
+    const { store, controller } = await legacyWallet();
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    const clear = store.clearUnlockedSession.bind(store);
+    vi.spyOn(store, "clearUnlockedSession").mockImplementationOnce(async () => {
+      entered(); await gate; await clear();
+    });
+    const unlocking = controller.unlockWallet("secret");
+    const result = unlocking.then(() => null, error => error);
+    await waiting;
+    await store.clearState();
+    release();
+    expect(await result).toBeInstanceOf(Error);
+    expect(store.current()).toBeNull();
+    expect(store.currentSession()).toBeNull();
+  });
+
+  it("does not absorb a user lock into the internal KDF migration session reset", async () => {
+    const { store, controller } = await legacyWallet();
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    const clear = store.clearUnlockedSession.bind(store);
+    vi.spyOn(store, "clearUnlockedSession").mockImplementationOnce(async () => {
+      entered(); await gate; await clear();
+    });
+    const unlocking = controller.unlockWallet("secret");
+    const rejected = expect(unlocking).rejects.toThrow(/locked|changed/);
+    await waiting;
+    const locking = controller.lockWallet();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    release();
+    await Promise.all([rejected, locking]);
+    expect(store.currentSession()).toBeNull();
+    expect((await controller.getPopupState()).unlocked).toBe(false);
+    expect((await controller.unlockWallet("secret")).unlocked).toBe(true);
+  });
+});
+
+describe("wallet session cancellation", () => {
+  it("keeps lock effective across delayed session writes and a controller restart", async () => {
+    const store = createStore(), client = createClient();
+    const make = () => new WalletController({ wallet: { id: "xian-wallet", name: "Xian", rdns: "org.xian.wallet" }, version: "test", store, createClient: () => client });
+    const controller = make();
+    await controller.createOrImportWallet({ password: "wallet-password", privateKey: PRIVATE_KEY });
+    await controller.lockWallet();
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    const save = store.saveUnlockedSession.bind(store);
+    vi.spyOn(store, "saveUnlockedSession").mockImplementationOnce(async session => {
+      entered(); await gate; await save(session);
+    });
+    const unlocking = controller.unlockWallet("wallet-password");
+    const rejected = expect(unlocking).rejects.toThrow(/locked|changed/);
+    await waiting;
+    const locking = controller.lockWallet();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    release();
+    await Promise.all([rejected, locking]);
+    expect(store.currentSession()).toBeNull();
+    expect((await make().getPopupState()).unlocked).toBe(false);
+    // Cancellation does not corrupt the encrypted wallet or its password.
+    expect((await controller.unlockWallet("wallet-password")).unlocked).toBe(true);
+  });
+
+  it("does not restore a stale session read that finishes after locking", async () => {
+    const store = createStore(), client = createClient();
+    const make = () => new WalletController({ wallet: { id: "xian-wallet", name: "Xian", rdns: "org.xian.wallet" }, version: "test", store, createClient: () => client });
+    await make().createOrImportWallet({ password: "wallet-password", privateKey: PRIVATE_KEY });
+    const controller = make();
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    const stale = store.currentSession();
+    vi.spyOn(store, "loadUnlockedSession").mockImplementationOnce(async () => {
+      entered(); await gate; return stale;
+    });
+    const restoring = controller.getPopupState();
+    await waiting;
+    await controller.lockWallet();
+    release();
+    expect((await restoring).unlocked).toBe(false);
+    expect(store.currentSession()).toBeNull();
+    expect((await make().getPopupState()).unlocked).toBe(false);
+  });
+
 });

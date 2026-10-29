@@ -29,6 +29,7 @@ import {
   claimApprovalExecution,
   saveRequestState,
   saveWalletState,
+  replaceWalletState,
   saveWalletShellMode,
   deleteRequestState,
   clearUnlockedSession,
@@ -371,6 +372,7 @@ const controller = new WalletController({
   store: {
     loadState: loadWalletState,
     saveState: saveWalletState,
+    replaceState: replaceWalletState,
     clearState: clearWalletState,
     loadUnlockedSession,
     saveUnlockedSession,

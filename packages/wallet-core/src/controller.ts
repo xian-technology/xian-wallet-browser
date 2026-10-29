@@ -40,8 +40,11 @@ import {
   UNLOCKED_SESSION_TIMEOUT_MS
 } from "./constants.js";
 import { assertRpcTransportAllowed } from "./network.js";
+import { reencryptWalletState } from "./wallet-encryption.js";
 import {
   createWalletSessionKey,
+  WALLET_KDF_ITERATIONS,
+  LEGACY_WALLET_KDF_ITERATIONS,
   decryptSecretTextWithSessionKey,
   createWalletSecret,
   decryptMnemonicWithSessionKey,
@@ -1037,68 +1040,81 @@ export class WalletController {
     };
   }
 
+  private sessionGeneration = 0;
+
+  private resetSessionSecrets(): void {
+    this.unlockedPrivateKey = null;
+    this.unlockedSigner = null;
+    this.unlockedMnemonic = null;
+    this.unlockedSessionKey = null;
+    this.unlockedSessionExpiresAt = null;
+  }
+
+  private async discardRestoredSession(generation: number): Promise<false> {
+    if (generation === this.sessionGeneration) {
+      await this.clearUnlockedSession();
+    }
+    return false;
+  }
+
+  private async restoreSessionSecrets(
+    session: StoredUnlockedSession & { sessionKey: string },
+    generation: number
+  ): Promise<boolean> {
+    try {
+      const state = await this.loadWalletState();
+      if (!state || state.publicKey !== session.publicKey) {
+        return this.discardRestoredSession(generation);
+      }
+      const privateKey = await decryptPrivateKeyWithSessionKey(
+        state.encryptedPrivateKey, session.sessionKey
+      );
+      const signer = new Ed25519Signer(privateKey);
+      if (signer.address !== session.publicKey) {
+        return this.discardRestoredSession(generation);
+      }
+      const mnemonic = state.encryptedMnemonic
+        ? await decryptMnemonicWithSessionKey(state.encryptedMnemonic, session.sessionKey).catch(() => null)
+        : null;
+      if (generation !== this.sessionGeneration) return false;
+      this.unlockedPrivateKey = privateKey;
+      this.unlockedSigner = signer;
+      this.unlockedSessionKey = session.sessionKey;
+      this.unlockedMnemonic = mnemonic;
+      return true;
+    } catch {
+      return this.discardRestoredSession(generation);
+    }
+  }
+
   private async restoreUnlockedSession(): Promise<boolean> {
+    // Let a lock clear an in-flight save before restoring persisted credentials.
+    const generation = this.sessionGeneration;
+    await this.automaticSendTails.get("wallet-session");
+    if (generation !== this.sessionGeneration) return false;
     const session = await this.store.loadUnlockedSession();
+    if (generation !== this.sessionGeneration) return false;
     if (!session) {
-      this.unlockedPrivateKey = null;
-      this.unlockedSigner = null;
-      this.unlockedMnemonic = null;
-      this.unlockedSessionKey = null;
-      this.unlockedSessionExpiresAt = null;
+      this.resetSessionSecrets();
       return false;
     }
-
     if (session.expiresAt <= this.now()) {
       await this.expireUnlockedSession();
       return false;
     }
-
-    if ((!this.unlockedPrivateKey || !this.unlockedSessionKey) && session.sessionKey) {
-      const state = await this.loadWalletState();
-      if (!state || state.publicKey !== session.publicKey) {
-        await this.clearUnlockedSession();
-        return false;
-      }
-      try {
-        const privateKey = await decryptPrivateKeyWithSessionKey(
-          state.encryptedPrivateKey,
-          session.sessionKey
-        );
-        const signer = new Ed25519Signer(privateKey);
-        if (signer.address !== session.publicKey) {
-          await this.clearUnlockedSession();
-          return false;
-        }
-        this.unlockedPrivateKey = privateKey;
-        this.unlockedSigner = signer;
-        this.unlockedSessionKey = session.sessionKey;
-        if (state.encryptedMnemonic) {
-          this.unlockedMnemonic = await decryptMnemonicWithSessionKey(
-            state.encryptedMnemonic,
-            session.sessionKey
-          ).catch(() => null);
-        } else {
-          this.unlockedMnemonic = null;
-        }
-      } catch {
-        await this.clearUnlockedSession();
-        return false;
-      }
-    }
-
     if (!this.unlockedPrivateKey || !this.unlockedSessionKey) {
-      await this.clearUnlockedSession();
-      return false;
+      if (!session.sessionKey) return this.discardRestoredSession(generation);
+      if (!await this.restoreSessionSecrets({ ...session, sessionKey: session.sessionKey }, generation)) return false;
     }
+    return this.acceptRestoredSession(session, generation);
+  }
 
-    if (!this.unlockedSigner) {
-      this.unlockedSigner = new Ed25519Signer(this.unlockedPrivateKey);
-    }
+  private async acceptRestoredSession(session: StoredUnlockedSession, generation: number): Promise<boolean> {
+    if (generation !== this.sessionGeneration) return false;
+    this.unlockedSigner ??= new Ed25519Signer(this.unlockedPrivateKey!);
     if (this.unlockedSigner.address !== session.publicKey) {
-      await this.clearUnlockedSession();
-      return false;
+      return this.discardRestoredSession(generation);
     }
-
     this.unlockedSessionExpiresAt = session.expiresAt;
     return true;
   }
@@ -1111,34 +1127,50 @@ export class WalletController {
       : now + UNLOCKED_SESSION_TIMEOUT_MS;
   }
 
+  private assertSessionCurrent(generation: number, publicKey: string, sessionKey: string): void {
+    if (generation !== this.sessionGeneration || this.unlockedSigner?.address !== publicKey ||
+        this.unlockedSessionKey !== sessionKey) {
+      throw new ProviderUnauthorizedError("wallet locked or changed during session save");
+    }
+  }
+
+  private async sessionExpiry(publicKey: string, expiresAt?: number): Promise<number> {
+    const resolved = expiresAt ?? await this.resolveUnlockedSessionExpiry();
+    const current = await this.store.loadUnlockedSession();
+    return current?.publicKey === publicKey && current.expiresAt > resolved ? current.expiresAt : resolved;
+  }
+
+  private async saveCurrentSession(generation: number, publicKey: string, sessionKey: string, expiresAt?: number): Promise<void> {
+    this.assertSessionCurrent(generation, publicKey, sessionKey);
+    const nextExpiresAt = await this.sessionExpiry(publicKey, expiresAt);
+    this.assertSessionCurrent(generation, publicKey, sessionKey);
+    await this.store.saveUnlockedSession({ publicKey, expiresAt: nextExpiresAt, sessionKey });
+    try {
+      this.assertSessionCurrent(generation, publicKey, sessionKey);
+    } catch (error) {
+      // Still inside the session queue: cleanup cannot erase a newer save.
+      await this.store.clearUnlockedSession();
+      throw error;
+    }
+    this.unlockedSessionExpiresAt = nextExpiresAt;
+  }
+
   private async persistUnlockedSession(expiresAt?: number): Promise<void> {
     if (!this.unlockedSigner || !this.unlockedSessionKey) {
       throw new ProviderUnauthorizedError("wallet is locked");
     }
-    const resolvedExpiresAt =
-      expiresAt ?? (await this.resolveUnlockedSessionExpiry());
-    const currentSession = await this.store.loadUnlockedSession();
-    const nextExpiresAt =
-      currentSession?.publicKey === this.unlockedSigner.address &&
-      currentSession.expiresAt > resolvedExpiresAt
-        ? currentSession.expiresAt
-        : resolvedExpiresAt;
-    const session: StoredUnlockedSession = {
-      publicKey: this.unlockedSigner.address,
-      expiresAt: nextExpiresAt,
-      sessionKey: this.unlockedSessionKey
-    };
-    await this.store.saveUnlockedSession(session);
-    this.unlockedSessionExpiresAt = nextExpiresAt;
+    const generation = this.sessionGeneration;
+    const publicKey = this.unlockedSigner.address;
+    const sessionKey = this.unlockedSessionKey;
+    await this.runAutomaticSendExclusive("wallet-session", () =>
+      this.saveCurrentSession(generation, publicKey, sessionKey, expiresAt)
+    );
   }
 
   private async clearUnlockedSession(): Promise<void> {
-    this.unlockedPrivateKey = null;
-    this.unlockedSigner = null;
-    this.unlockedMnemonic = null;
-    this.unlockedSessionKey = null;
-    this.unlockedSessionExpiresAt = null;
-    await this.store.clearUnlockedSession();
+    this.sessionGeneration++;
+    this.resetSessionSecrets();
+    await this.runAutomaticSendExclusive("wallet-session", () => this.store.clearUnlockedSession());
   }
 
   private async expireUnlockedSession(): Promise<void> {
@@ -1281,7 +1313,11 @@ export class WalletController {
     state: StoredWalletState,
     password: string
   ): Promise<string> {
-    return deriveWalletSessionKey(password, state.walletEncryptionSalt);
+    return deriveWalletSessionKey(
+      password,
+      state.walletEncryptionSalt,
+      state.walletEncryptionIterations
+    );
   }
 
   private async decryptPrivateKeyForState(
@@ -1649,9 +1685,10 @@ export class WalletController {
   }
 
   private async persistWalletState(
-    state: StoredWalletState
+    state: StoredWalletState,
+    replace = false
   ): Promise<PopupState> {
-    await this.store.saveState(normalizeStoredWalletNetworks(state));
+    await this.store.saveState(normalizeStoredWalletNetworks(state), { replace });
     return this.getPopupState();
   }
 
@@ -3283,7 +3320,7 @@ export class WalletController {
       createWithMnemonic: input.createWithMnemonic
     });
     const signer = new Ed25519Signer(secret.privateKey);
-    const { walletEncryptionSalt, sessionKey } = await createWalletSessionKey(
+    const { walletEncryptionSalt, walletEncryptionIterations, sessionKey } = await createWalletSessionKey(
       input.password
     );
     const encryptedPrivateKey = await encryptPrivateKeyWithSessionKey(
@@ -3351,6 +3388,7 @@ export class WalletController {
       encryptedPrivateKey,
       encryptedMnemonic,
       walletEncryptionSalt,
+      walletEncryptionIterations,
       seedSource: secret.seedSource,
       mnemonicWordCount: secret.mnemonicWordCount,
       accounts: [initialAccount],
@@ -3377,7 +3415,7 @@ export class WalletController {
       connectedDappMetadata: {},
       connectedOrigins: [],
       createdAt: new Date().toISOString()
-    });
+    }, true);
 
     return {
       popupState,
@@ -3386,9 +3424,31 @@ export class WalletController {
     };
   }
 
+  private async upgradeWalletEncryption(
+    state: StoredWalletState,
+    password: string,
+    sessionKey: string,
+    generation: number
+  ): Promise<{ state: StoredWalletState; sessionKey: string; generation: number }> {
+    const iterations = state.walletEncryptionIterations ?? LEGACY_WALLET_KDF_ITERATIONS;
+    if (iterations >= WALLET_KDF_ITERATIONS || !this.store.replaceState) {
+      return { state, sessionKey, generation };
+    }
+    const upgraded = await reencryptWalletState(state, password, sessionKey);
+    if (generation !== this.sessionGeneration) throw new Error("wallet locked during unlock");
+    generation++;
+    await this.clearUnlockedSession();
+    if (generation !== this.sessionGeneration) throw new Error("wallet locked during unlock");
+    if (!await this.store.replaceState(state, upgraded.state)) {
+      throw new Error("wallet changed during unlock; please retry");
+    }
+    return { ...upgraded, generation };
+  }
+
   async unlockWallet(password: string): Promise<PopupState> {
-    const state = this.requireStoredWallet(await this.loadWalletState());
-    const sessionKey = await this.sessionKeyForState(state, password);
+    let generation = this.sessionGeneration;
+    let state = this.requireStoredWallet(await this.loadWalletState());
+    let sessionKey = await this.sessionKeyForState(state, password);
     const privateKey = await decryptPrivateKeyWithSessionKey(
       state.encryptedPrivateKey,
       sessionKey
@@ -3398,22 +3458,28 @@ export class WalletController {
       throw new Error("decrypted private key does not match stored wallet");
     }
 
-    this.unlockedPrivateKey = privateKey;
-    this.unlockedSigner = signer;
-    this.unlockedSessionKey = sessionKey;
+    ({ state, sessionKey, generation } = await this.upgradeWalletEncryption(
+      state, password, sessionKey, generation
+    ));
 
     // Decrypt mnemonic into session for account switching
+    let mnemonic: string | null = null;
     if (state.encryptedMnemonic) {
       try {
-        this.unlockedMnemonic = await decryptMnemonicWithSessionKey(
+        mnemonic = await decryptMnemonicWithSessionKey(
           state.encryptedMnemonic,
           sessionKey
         );
       } catch {
-        this.unlockedMnemonic = null;
+        mnemonic = null;
       }
     }
 
+    if (generation !== this.sessionGeneration) throw new Error("wallet locked during unlock");
+    this.unlockedPrivateKey = privateKey;
+    this.unlockedSigner = signer;
+    this.unlockedSessionKey = sessionKey;
+    this.unlockedMnemonic = mnemonic;
     await this.persistUnlockedSession();
     void this.notifyUnlockedOrigins(state);
 
@@ -3488,7 +3554,7 @@ export class WalletController {
       throw new Error("backup must contain a mnemonic or private key");
     }
 
-    const { walletEncryptionSalt, sessionKey } = await createWalletSessionKey(password);
+    const { walletEncryptionSalt, walletEncryptionIterations, sessionKey } = await createWalletSessionKey(password);
     const nowIso = new Date().toISOString();
     const encryptedMnemonic = mnemonic
       ? await encryptMnemonicWithSessionKey(mnemonic, sessionKey)
@@ -3573,6 +3639,7 @@ export class WalletController {
       encryptedPrivateKey: activeAccount.encryptedPrivateKey,
       encryptedMnemonic,
       walletEncryptionSalt,
+      walletEncryptionIterations,
       seedSource: decryptedBackup.type,
       mnemonicWordCount: mnemonic ? mnemonic.split(" ").length : undefined,
       accounts,
@@ -3588,7 +3655,7 @@ export class WalletController {
       connectedDappMetadata: {},
       connectedOrigins: [],
       createdAt: nowIso
-    });
+    }, true);
 
     return this.getPopupState();
   }

@@ -16,6 +16,8 @@ import {
   loadLocalActivityTxs,
   loadRequestState,
   loadWalletState,
+  saveWalletState,
+  replaceWalletState,
   saveAutoLock,
   saveUnlockedSession,
   saveWalletShellMode,
@@ -175,6 +177,70 @@ describe("wallet-extension storage", () => {
         activeNetworkId: "custom-network"
       })
     });
+  });
+
+  it("replaces only the expected normalized wallet record", async () => {
+    storage[STORAGE_KEY] = {
+      version: STORAGE_SCHEMA_VERSION,
+      wallet: { publicKey: "a".repeat(64), encryptedPrivateKey: "ciphertext", walletEncryptionSalt: "salt" }
+    };
+    const original = (await loadWalletState())!;
+    const upgraded = { ...original, walletEncryptionIterations: 600_000 };
+    expect(await replaceWalletState(original, upgraded)).toBe(true);
+    await expect(saveWalletState(original)).rejects.toThrow("stale wallet encryption state");
+    expect((await loadWalletState())!.walletEncryptionIterations).toBe(600_000);
+    const settings = { ...upgraded, createdAt: "new-settings-revision" };
+    await saveWalletState(settings);
+    expect(await replaceWalletState(upgraded, original)).toBe(false);
+    expect((await loadWalletState())!.createdAt).toBe(settings.createdAt);
+    await clearWalletState();
+    expect(await replaceWalletState(settings, upgraded)).toBe(false);
+    expect(await loadWalletState()).toBeNull();
+  });
+
+  it("allows an explicit wallet replacement after a stronger imported work factor", async () => {
+    storage[STORAGE_KEY] = {
+      version: STORAGE_SCHEMA_VERSION,
+      wallet: { publicKey: "a".repeat(64), encryptedPrivateKey: "ciphertext", walletEncryptionSalt: "salt", walletEncryptionIterations: 2_000_000 }
+    };
+    const current = (await loadWalletState())!;
+    const replacement = { ...current, publicKey: "b".repeat(64), walletEncryptionIterations: 600_000 };
+    await expect(saveWalletState(replacement)).rejects.toThrow("stale wallet encryption state");
+    await saveWalletState(replacement, { replace: true });
+    expect((await loadWalletState())!.publicKey).toBe(replacement.publicKey);
+    expect((await loadWalletState())!.walletEncryptionIterations).toBe(600_000);
+  });
+
+  it("rejects stale saves after removal or same-work-factor replacement", async () => {
+    storage[STORAGE_KEY] = {
+      version: STORAGE_SCHEMA_VERSION,
+      wallet: { publicKey: "a".repeat(64), encryptedPrivateKey: "ciphertext", walletEncryptionSalt: "old-salt", walletEncryptionIterations: 600_000 }
+    };
+    const stale = (await loadWalletState())!;
+    await clearWalletState();
+    await expect(saveWalletState(stale)).rejects.toThrow("stale wallet encryption state");
+    expect(await loadWalletState()).toBeNull();
+    const replacement = { ...stale, walletEncryptionSalt: "new-salt" };
+    await saveWalletState(replacement, { replace: true });
+    await expect(saveWalletState(stale)).rejects.toThrow("stale wallet encryption state");
+    expect((await loadWalletState())!.walletEncryptionSalt).toBe("new-salt");
+  });
+
+  it.each([250_000, 600_000, undefined, 2_000_001, "600000"])("preserves or rejects stored work factor %s", async (iterations) => {
+    storage[STORAGE_KEY] = {
+      version: STORAGE_SCHEMA_VERSION,
+      wallet: {
+        publicKey: "a".repeat(64), encryptedPrivateKey: "ciphertext",
+        walletEncryptionSalt: "salt", walletEncryptionIterations: iterations
+      }, providerRequests: {}, approvals: {}
+    };
+    const state = await loadWalletState();
+    if (iterations === 2_000_001 || typeof iterations === "string") {
+      expect(state).toBeNull();
+    } else {
+      expect(state).not.toBeNull();
+      expect(state?.walletEncryptionIterations).toBe(iterations);
+    }
   });
 
   it("ignores unversioned wallet state", async () => {

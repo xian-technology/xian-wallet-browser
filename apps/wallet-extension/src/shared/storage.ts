@@ -1,5 +1,7 @@
 import {
   DEFAULT_NETWORK_PRESETS,
+  LEGACY_WALLET_KDF_ITERATIONS,
+  isValidWalletKdfIterations,
   DEFAULT_DASHBOARD_URL,
   DEFAULT_RPC_URL,
   LOCAL_NETWORK_PRESET_ID,
@@ -395,7 +397,9 @@ function normalizeWalletState(value: unknown): StoredWalletState | null {
   if (
     typeof value.publicKey !== "string" ||
     typeof value.encryptedPrivateKey !== "string" ||
-    typeof value.walletEncryptionSalt !== "string"
+    typeof value.walletEncryptionSalt !== "string" ||
+    (value.walletEncryptionIterations !== undefined &&
+      !isValidWalletKdfIterations(value.walletEncryptionIterations))
   ) {
     return null;
   }
@@ -459,6 +463,7 @@ function normalizeWalletState(value: unknown): StoredWalletState | null {
         ? value.encryptedMnemonic
         : undefined,
     walletEncryptionSalt: value.walletEncryptionSalt,
+    walletEncryptionIterations: value.walletEncryptionIterations as number | undefined,
     seedSource: value.seedSource === "mnemonic" ? "mnemonic" : "privateKey",
     mnemonicWordCount:
       typeof value.mnemonicWordCount === "number" ? value.mnemonicWordCount : undefined,
@@ -569,11 +574,35 @@ export async function loadWalletState(): Promise<StoredWalletState | null> {
   return (await loadEnvelope()).wallet;
 }
 
-export async function saveWalletState(state: StoredWalletState): Promise<void> {
-  await updateEnvelope((envelope) => ({
-    ...envelope,
-    wallet: state
-  }));
+export async function saveWalletState(
+  state: StoredWalletState,
+  options?: { replace?: boolean }
+): Promise<void> {
+  await updateEnvelope(envelope => {
+    const currentIterations = envelope.wallet?.walletEncryptionIterations ?? LEGACY_WALLET_KDF_ITERATIONS;
+    const nextIterations = state.walletEncryptionIterations ?? LEGACY_WALLET_KDF_ITERATIONS;
+    // Ordinary saves belong to one encryption context; only explicit setup
+    // and import may replace it or recreate a removed wallet.
+    if (!options?.replace && (!envelope.wallet ||
+        state.walletEncryptionSalt !== envelope.wallet.walletEncryptionSalt ||
+        nextIterations !== currentIterations)) {
+      throw new Error("stale wallet encryption state");
+    }
+    return { ...envelope, wallet: state };
+  });
+}
+
+export async function replaceWalletState(
+  expected: StoredWalletState,
+  next: StoredWalletState
+): Promise<boolean> {
+  let replaced = false;
+  await updateEnvelope(envelope => {
+    if (JSON.stringify(envelope.wallet) !== JSON.stringify(expected)) return envelope;
+    replaced = true;
+    return { ...envelope, wallet: next };
+  });
+  return replaced;
 }
 
 export async function clearWalletState(): Promise<void> {

@@ -11,7 +11,29 @@ import type {
 
 const ENCODER = new TextEncoder();
 const DECODER = new TextDecoder();
-const ITERATIONS = 250_000;
+export const WALLET_KDF_ITERATIONS = 600_000;
+export const LEGACY_WALLET_KDF_ITERATIONS = 250_000;
+export const MAX_WALLET_KDF_ITERATIONS = 2_000_000;
+const ITERATIONS = WALLET_KDF_ITERATIONS;
+
+export function isValidWalletKdfIterations(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) &&
+    value >= LEGACY_WALLET_KDF_ITERATIONS && value <= MAX_WALLET_KDF_ITERATIONS;
+}
+
+export function assertWalletKdfIterations(iterations: number): void {
+  if (!isValidWalletKdfIterations(iterations)) {
+    throw new Error("invalid wallet encryption parameters");
+  }
+}
+
+function decodeWalletSalt(value: string): Uint8Array {
+  const salt = base64ToBytes(value);
+  if (salt.length !== 16) {
+    throw new Error("invalid wallet encryption parameters");
+  }
+  return salt;
+}
 const SESSION_KEY_LENGTH = 32;
 const MNEMONIC_STRENGTH_BY_WORD_COUNT = new Map<number, number>([
   [12, 128],
@@ -56,6 +78,7 @@ async function deriveKey(
   salt: Uint8Array,
   iterations: number = ITERATIONS
 ): Promise<CryptoKey> {
+  assertWalletKdfIterations(iterations);
   const passwordKey = await getWebCrypto().subtle.importKey(
     "raw",
     ENCODER.encode(password),
@@ -85,6 +108,7 @@ async function deriveSessionKeyBytes(
   salt: Uint8Array,
   iterations: number = ITERATIONS
 ): Promise<Uint8Array> {
+  assertWalletKdfIterations(iterations);
   const passwordKey = await getWebCrypto().subtle.importKey(
     "raw",
     ENCODER.encode(password),
@@ -149,22 +173,22 @@ async function decryptText(payload: string, password: string): Promise<string> {
     iv: string;
     ciphertext: string;
   };
-  const iterations =
-    typeof parsed.iterations === "number" &&
-    Number.isSafeInteger(parsed.iterations) &&
-    parsed.iterations > 0
-      ? parsed.iterations
-      : ITERATIONS;
-  const key = await deriveKey(
-    password,
-    base64ToBytes(parsed.salt),
-    iterations
-  );
+  // Metadata-free payloads were written with the original work factor.
+  const iterations = parsed.iterations === undefined
+    ? LEGACY_WALLET_KDF_ITERATIONS
+    : parsed.iterations;
+  const salt = decodeWalletSalt(parsed.salt);
+  const iv = base64ToBytes(parsed.iv);
+  const ciphertext = base64ToBytes(parsed.ciphertext);
+  if (iv.length !== 12 || ciphertext.length < 16) {
+    throw new Error("invalid wallet encryption parameters");
+  }
+  const key = await deriveKey(password, salt, iterations);
   try {
     const plaintext = await getWebCrypto().subtle.decrypt(
-      { name: "AES-GCM", iv: toArrayBuffer(base64ToBytes(parsed.iv)) },
+      { name: "AES-GCM", iv: toArrayBuffer(iv) },
       key,
-      toArrayBuffer(base64ToBytes(parsed.ciphertext))
+      toArrayBuffer(ciphertext)
     );
     return DECODER.decode(plaintext);
   } catch {
@@ -348,6 +372,7 @@ export async function decryptPrivateKey(
 
 export async function createWalletSessionKey(password: string): Promise<{
   walletEncryptionSalt: string;
+  walletEncryptionIterations: number;
   sessionKey: string;
 }> {
   const walletEncryptionSalt = bytesToBase64(
@@ -355,17 +380,20 @@ export async function createWalletSessionKey(password: string): Promise<{
   );
   return {
     walletEncryptionSalt,
-    sessionKey: await deriveWalletSessionKey(password, walletEncryptionSalt)
+    walletEncryptionIterations: ITERATIONS,
+    sessionKey: await deriveWalletSessionKey(password, walletEncryptionSalt, ITERATIONS)
   };
 }
 
 export async function deriveWalletSessionKey(
   password: string,
-  walletEncryptionSalt: string
+  walletEncryptionSalt: string,
+  iterations: number = LEGACY_WALLET_KDF_ITERATIONS
 ): Promise<string> {
   const sessionKeyBytes = await deriveSessionKeyBytes(
     password,
-    base64ToBytes(walletEncryptionSalt)
+    decodeWalletSalt(walletEncryptionSalt),
+    iterations
   );
   return bytesToBase64(sessionKeyBytes);
 }
@@ -494,10 +522,7 @@ export async function decryptWalletBackup(
     throw new Error("invalid wallet backup");
   }
 
-  if (
-    !Number.isSafeInteger(backup.encryption.iterations) ||
-    backup.encryption.iterations <= 0
-  ) {
+  if (!isValidWalletKdfIterations(backup.encryption.iterations)) {
     throw new Error("invalid wallet backup encryption parameters");
   }
 

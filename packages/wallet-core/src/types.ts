@@ -73,6 +73,8 @@ export interface StoredWalletState {
   encryptedPrivateKey: string;
   encryptedMnemonic?: string;
   walletEncryptionSalt: string;
+  /** Absent in older wallets, which use 250,000 iterations. */
+  walletEncryptionIterations?: number;
   seedSource: WalletSeedSource;
   mnemonicWordCount?: number;
   accounts?: WalletAccount[];
@@ -92,8 +94,10 @@ export interface StoredWalletState {
 
 export interface WalletStateStore {
   loadState(): Promise<StoredWalletState | null>;
-  saveState(state: StoredWalletState): Promise<void>;
+  saveState(state: StoredWalletState, options?: { replace?: boolean }): Promise<void>;
   clearState(): Promise<void>;
+  /** Atomically replace a matching record; enables safe password-KDF migration. */
+  replaceState?(expected: StoredWalletState, next: StoredWalletState): Promise<boolean>;
 }
 
 export interface WalletSerializedError {

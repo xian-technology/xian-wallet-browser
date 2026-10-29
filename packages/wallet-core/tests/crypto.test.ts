@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { createCipheriv, pbkdf2Sync } from "node:crypto";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createWalletSessionKey,
@@ -11,6 +12,7 @@ import {
   decryptWalletBackup,
   deriveWalletSessionKey,
   derivePrivateKeyFromMnemonic,
+  encryptWalletBackupPayload,
   encryptMnemonic,
   encryptMnemonicWithSessionKey,
   encryptPrivateKey,
@@ -53,7 +55,8 @@ describe("@xian-tech/wallet-core crypto helpers", () => {
     const material = await createWalletSessionKey("secret-password");
     const sameSessionKey = await deriveWalletSessionKey(
       "secret-password",
-      material.walletEncryptionSalt
+      material.walletEncryptionSalt,
+      material.walletEncryptionIterations
     );
 
     expect(sameSessionKey).toBe(material.sessionKey);
@@ -150,5 +153,49 @@ describe("@xian-tech/wallet-core crypto helpers", () => {
         "unused"
       )
     ).rejects.toThrow("invalid wallet backup");
+  });
+});
+
+
+describe("bounded wallet KDF parameters", () => {
+  it.each([0, 249_999, 2_000_001, 1.5, NaN, Infinity])("rejects work factor %s", async (iterations) => {
+    await expect(deriveWalletSessionKey("password", btoa("s".repeat(16)), iterations)).rejects.toThrow("invalid wallet encryption parameters");
+  });
+  it("exports at the current work factor and rejects excessive backup work", async () => {
+    const backup = await encryptWalletBackupPayload({ version: 1, type: "privateKey", privateKey: "11".repeat(32) }, "password");
+    expect(backup.encryption.iterations).toBe(600_000);
+    backup.encryption.iterations = 2_000_001;
+    await expect(decryptWalletBackup(backup, "password")).rejects.toThrow("invalid wallet backup encryption parameters");
+  });
+});
+
+
+describe("wallet backup compatibility", () => {
+  it("imports an independently encrypted 250,000-iteration v2 backup", async () => {
+    const salt = Buffer.alloc(16, 7), iv = Buffer.alloc(12, 9);
+    const key = pbkdf2Sync("old-password", salt, 250_000, 32, "sha256");
+    const plaintext = { version: 1 as const, type: "privateKey" as const, privateKey: "11".repeat(32) };
+    const cipher = createCipheriv("aes-256-gcm", key, iv);
+    const ciphertext = Buffer.concat([cipher.update(JSON.stringify(plaintext)), cipher.final(), cipher.getAuthTag()]);
+    const backup = { version: 2 as const, kind: "xian-wallet-backup" as const,
+      encryption: { algorithm: "AES-256-GCM" as const, kdf: "PBKDF2-SHA256" as const,
+        iterations: 250_000, salt: salt.toString("base64"), iv: iv.toString("base64") },
+      ciphertext: ciphertext.toString("base64") };
+    expect(await decryptWalletBackup(backup, "old-password")).toEqual(plaintext);
+  });
+
+  it.each(["salt", "iv", "ciphertext"] as const)("rejects malformed %s before password derivation", async field => {
+    const backup = await encryptWalletBackupPayload({ version: 1, type: "privateKey", privateKey: "11".repeat(32) }, "password");
+    if (field === "ciphertext") backup.ciphertext = "AA==";
+    else backup.encryption[field] = "AA==";
+    const derive = vi.spyOn(globalThis.crypto.subtle, "deriveKey");
+    try {
+      await expect(decryptWalletBackup(backup, "password")).rejects.toThrow("invalid wallet backup");
+      expect(derive).not.toHaveBeenCalled();
+    } finally { derive.mockRestore(); }
+  });
+
+  it.each([250_000, 2_000_000])("accepts the bounded work factor %s", async iterations => {
+    await expect(deriveWalletSessionKey("password", btoa("s".repeat(16)), iterations)).resolves.toHaveLength(44);
   });
 });
