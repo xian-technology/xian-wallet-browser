@@ -19,9 +19,49 @@ function makeRecord(
 describe("@xian-tech/wallet-core approvals", () => {
   it("formats chi with the same approximate XIAN cost label used by send review", () => {
     expect(formatChiWithXianCost(500, 25)).toBe("500 (~20 XIAN)");
-    expect(formatChiWithXianCost(16, 25)).toBe("16 (~0.64 XIAN)");
+    expect(formatChiWithXianCost(16, 25)).toBe(`16 (~${(0.64).toLocaleString()} XIAN)`);
     expect(formatChiWithXianCost(16, null)).toBe("16");
   });
+
+  it.each(["signTransaction", "sendTransaction", "sendCall"] as const)(
+    "renders %s approvals with exact nested runtime values",
+    (kind) => {
+      const amount = 9007199254740993n;
+      const kwargs = { amounts: [amount], memo: new Uint8Array([0, 255]) };
+      const call = { contract: "currency", function: "transfer", kwargs };
+      const params =
+        kind === "sendCall"
+          ? { intent: { ...call, chi: 500 } }
+          : {
+              tx: {
+                payload: {
+                  ...call,
+                  sender: "a".repeat(64),
+                  chain_id: "xian-local",
+                  nonce: amount,
+                  chi_supplied: 500
+                }
+              }
+            };
+      const view = buildApprovalView(
+        makeRecord(kind, {
+          method: `xian_${kind}`,
+          params: [params]
+        })
+      );
+      const payload = JSON.parse(view.payload);
+      const renderedCall = kind === "sendCall" ? payload.intent : payload.tx.payload;
+      expect(renderedCall.kwargs).toEqual({
+        amounts: [{ __big_int__: "9007199254740993" }],
+        memo: { __bytes__: "00ff" }
+      });
+      if (kind !== "sendCall") {
+        expect(view.details).toContainEqual(
+          expect.objectContaining({ label: "Nonce", value: "9007199254740993" })
+        );
+      }
+    }
+  );
 
   it("builds a structured connect approval view", () => {
     const view = buildApprovalView(

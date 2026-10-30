@@ -1,3 +1,4 @@
+import { encodeRuntime } from "@xian-tech/client";
 import type { XianProviderRequest } from "@xian-tech/provider";
 
 import type {
@@ -9,7 +10,7 @@ import type {
 } from "./types.js";
 
 function prettyJson(value: unknown): string {
-  return JSON.stringify(value, null, 2);
+  return JSON.stringify(JSON.parse(encodeRuntime(value)), null, 2);
 }
 
 function payloadForRequest(request: XianProviderRequest): unknown {
