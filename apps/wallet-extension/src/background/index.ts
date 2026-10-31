@@ -1,3 +1,4 @@
+import { authorizeRuntimeMessage, type MessageSender } from "./message-sender";
 import {
   UNLOCKED_SESSION_TIMEOUT_MS,
   WalletController
@@ -503,7 +504,7 @@ chrome.windows.onRemoved.addListener((windowId: number) => {
 chrome.runtime.onMessage.addListener(
   (
     message: RuntimeMessage,
-    _sender: unknown,
+    sender: MessageSender,
     sendResponse: (response: ReturnType<typeof ok> | ReturnType<typeof fail>) => void
   ) => {
     // This message is broadcast by this background worker for popup/side-panel
@@ -517,6 +518,7 @@ chrome.runtime.onMessage.addListener(
 
     void (async () => {
       try {
+        message = authorizeRuntimeMessage(message, sender, chrome.runtime.id);
         if (
           message.type !== "approval_get" &&
           message.type !== "approval_resolve"

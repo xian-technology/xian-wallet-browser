@@ -160,3 +160,8 @@ npm run test:visual  --workspace xian-wallet-extension
 - [docs/QA_CHECKLIST.md](docs/QA_CHECKLIST.md) — pre-release QA checklist
 - [docs/UX_REVIEW.md](docs/UX_REVIEW.md) — UX review notes
 - [`../xian-js/README.md`](../xian-js/README.md) — official JS / TS SDK consumed by this repo
+
+The background service worker binds provider calls and status polling to the
+browser-supplied frame origin. Content scripts can send only those provider
+messages; wallet management and approval controls require the extension’s
+packaged popup or approval page. Opaque frame origins are rejected.
