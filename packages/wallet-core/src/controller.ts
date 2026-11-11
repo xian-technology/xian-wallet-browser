@@ -1215,6 +1215,7 @@ export class WalletController {
     const client = this.options.createClient
       ? this.options.createClient(state)
       : new XianClient({
+          vmProfile: "xian_vm_v2",
           rpcUrl: state.rpcUrl,
           dashboardUrl: state.dashboardUrl
         });
@@ -2199,7 +2200,7 @@ export class WalletController {
     this.preparedSendsInFlight.add(scope);
     try {
       const signedTx = await this.signPreparedTransaction(state, tx);
-      await options?.onPreparedTransaction?.(prepareTransaction(signedTx));
+      await options?.onPreparedTransaction?.(prepareTransaction(signedTx, "xian_vm_v2"));
       const { onPreparedTransaction: _observer, ...broadcastOptions } = options ?? {};
       return await this.currentClient(state).broadcastTx(signedTx, broadcastOptions);
     } finally {
@@ -3098,9 +3099,9 @@ export class WalletController {
       id,
       token0,
       token1,
-      reserve0: numberFromUnknown(reserve0),
-      reserve1: numberFromUnknown(reserve1),
-      totalSupply: numberFromUnknown(totalSupply),
+      reserve0: String(reserve0 ?? 0),
+      reserve1: String(reserve1 ?? 0),
+      totalSupply: String(totalSupply ?? 0),
       blockTimestampLast:
         blockTimestampLast == null ? null : String(blockTimestampLast),
       creationTime: creationTime == null ? null : String(creationTime)
@@ -3179,8 +3180,8 @@ export class WalletController {
       logoUrl: metadata.logoUrl,
       logoSvg: metadata.logoSvg,
       precision,
-      balance: numberFromUnknown(balanceRaw),
-      allowance: numberFromUnknown(allowanceRaw),
+      balance: String(balanceRaw ?? 0),
+      allowance: String(allowanceRaw ?? 0),
       feeOnTransfer: feeOnTransferRaw === true
     };
   }

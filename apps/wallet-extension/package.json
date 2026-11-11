@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@xian-tech/provider": "0.3.2",
+    "@xian-tech/client": "0.3.3",
+    "@xian-tech/dex": "0.3.3",
+    "@xian-tech/provider": "0.3.3",
     "@xian-tech/wallet-core": "0.4.3",
     "uqr": "^0.1.3"
   },

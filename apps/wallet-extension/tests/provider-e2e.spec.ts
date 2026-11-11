@@ -399,7 +399,7 @@ test("approves connect and send-call requests through the injected provider brid
             function: "transfer",
             kwargs: {
               to: "carol",
-              amount: "7"
+              amount: 9007199254740993n
             },
             chi: 500
           }
@@ -445,7 +445,7 @@ test("approves connect and send-call requests through the injected provider brid
           payload: expect.objectContaining({
             kwargs: {
               to: "carol",
-              amount: "7"
+              amount: { __xianType: "bigint", value: "9007199254740993" }
             }
           })
         })
@@ -879,7 +879,7 @@ test("filters advanced methods by export decorator and formats structured review
         {
           name: "transfer",
           arguments: [
-            { name: "amount", type: "float" },
+            { name: "amount", type: "decimal" },
             { name: "to", type: "str" }
           ]
         },
@@ -896,7 +896,7 @@ test("filters advanced methods by export decorator and formats structured review
     contractSources: {
       currency: `
 @export
-def transfer(amount: float, to: str):
+def transfer(amount: decimal, to: str):
     pass
 
 @export(typecheck=False)
@@ -933,7 +933,8 @@ def private_helper():
     await expect(functionSelect).not.toContainText("private_helper");
 
     await functionSelect.selectOption("transfer");
-    await popup.locator(".arg-value").nth(0).fill("1.25");
+    const exact = "9007199254740993.000000000000000000000000000001";
+    await popup.locator(".arg-value").nth(0).fill(exact);
     await popup.locator(".arg-value").nth(1).fill("bob");
     await popup.locator("[data-chi-mode='manual']").check();
     await popup.locator("#send-chi").fill("50000");
@@ -949,7 +950,7 @@ def private_helper():
     ]);
     await expect(summary.locator(".s-section-label")).toHaveText("Arguments");
     await expect(
-      summary.locator(".s-row").filter({ hasText: "amount" }).getByText("1.25")
+      summary.locator(".s-row").filter({ hasText: "amount" }).getByText(exact)
     ).toBeVisible();
     await expect(
       summary.locator(".s-row").filter({ hasText: "to" }).getByText("bob")

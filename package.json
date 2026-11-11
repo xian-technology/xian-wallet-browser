@@ -14,10 +14,12 @@
   ],
   "dependencies": {
     "@xian-tech/client": "file:../xian-js/packages/client",
+    "@xian-tech/dex": "file:../xian-js/packages/dex",
     "@xian-tech/provider": "file:../xian-js/packages/provider"
   },
   "overrides": {
     "@xian-tech/client": "file:../xian-js/packages/client",
+    "@xian-tech/dex": "file:../xian-js/packages/dex",
     "@xian-tech/provider": "file:../xian-js/packages/provider"
   },
   "scripts": {

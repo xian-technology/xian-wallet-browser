@@ -1479,22 +1479,22 @@ describe("@xian-tech/wallet-core controller", () => {
         id: 1,
         token0: "currency",
         token1: "con_token",
-        reserve0: 100,
-        reserve1: 50
+        reserve0: "100",
+        reserve1: "50"
       })
     ]);
     expect(snapshot.tokens).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           contract: "currency",
-          balance: 42,
-          allowance: 25,
+          balance: "42",
+          allowance: "25",
           feeOnTransfer: false
         }),
         expect.objectContaining({
           contract: "con_token",
-          balance: 7,
-          allowance: 0,
+          balance: "7",
+          allowance: "0",
           feeOnTransfer: true
         })
       ])
@@ -1538,7 +1538,7 @@ describe("@xian-tech/wallet-core controller", () => {
       {
         name: "transfer",
         arguments: [
-          { name: "amount", type: "float" },
+          { name: "amount", type: "decimal" },
           { name: "to", type: "str" }
         ]
       },
@@ -1553,7 +1553,7 @@ describe("@xian-tech/wallet-core controller", () => {
     ]);
     client.getContractSource = vi.fn(async () => `
 @export
-def transfer(amount: float, to: str):
+def transfer(amount: decimal, to: str):
     pass
 
 @export(typecheck=False)
@@ -1584,7 +1584,7 @@ def private_helper():
       {
         name: "transfer",
         arguments: [
-          { name: "amount", type: "float" },
+          { name: "amount", type: "decimal" },
           { name: "to", type: "str" }
         ]
       },
@@ -1606,7 +1606,7 @@ def private_helper():
       {
         name: "transfer",
         arguments: [
-          { name: "amount", type: "float" },
+          { name: "amount", type: "decimal" },
           { name: "to", type: "str" }
         ]
       },
@@ -1654,7 +1654,7 @@ def private_helper():
       {
         name: "transfer",
         arguments: [
-          { name: "amount", type: "float" },
+          { name: "amount", type: "decimal" },
           { name: "to", type: "str" }
         ]
       },
@@ -1677,7 +1677,7 @@ def private_helper():
       {
         name: "transfer",
         arguments: [
-          { name: "amount", type: "float" },
+          { name: "amount", type: "decimal" },
           { name: "to", type: "str" }
         ]
       },
@@ -1702,7 +1702,7 @@ def seed():
     pass
 
 @export
-def transfer(amount: float, to: str):
+def transfer(amount: decimal, to: str):
     pass
 
 def private_helper():
@@ -1729,7 +1729,7 @@ def private_helper():
       {
         name: "transfer",
         arguments: [
-          { name: "amount", type: "float" },
+          { name: "amount", type: "decimal" },
           { name: "to", type: "str" }
         ]
       }

@@ -6,6 +6,12 @@ concrete browser-extension wallet that consumes it. The official JS / TS
 SDK lives in the sibling [`xian-js`](../xian-js) repo; this repo is the
 *product* on top of those primitives.
 
+Transfers and contract calls target `xian_vm_v2`. Enter exact amounts as decimal
+text. The trade screen uses the SDK's fixed-point quotes, compares balances
+and allowances exactly, and displays the minimum amount included in the swap.
+Dapps can pass tagged numeric arguments on all supported browsers. Native
+`bigint` in extension messages uses structured cloning on Chromium 148 and newer.
+
 ## Product Shape
 
 ```mermaid
@@ -23,7 +29,7 @@ flowchart LR
 
 ## Quick Start
 
-This repo consumes `@xian-tech/client` and `@xian-tech/provider` from the
+This repo consumes `@xian-tech/client`, `@xian-tech/dex`, and `@xian-tech/provider` from the
 sibling `xian-js` checkout. The expected local layout is:
 
 ```text

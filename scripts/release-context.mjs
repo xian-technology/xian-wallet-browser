@@ -43,6 +43,7 @@ const POLICIES = {
         repository: "xian-technology/xian-js",
         packages: {
           "@xian-tech/client": "packages/client/package.json",
+          "@xian-tech/dex": "packages/dex/package.json",
           "@xian-tech/provider": "packages/provider/package.json",
         },
       },

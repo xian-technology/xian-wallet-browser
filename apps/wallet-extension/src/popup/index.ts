@@ -1,4 +1,5 @@
-import { XianClient, type WatchSubscription } from "@xian-tech/client";
+import { fixedUnits } from "@xian-tech/dex";
+import { fixed, XianClient, type WatchSubscription } from "@xian-tech/client";
 import {
   assertRpcTransportAllowed,
   formatChiWithXianCost,
@@ -139,7 +140,6 @@ import {
   buildDexQuote,
   deadlineFromNow,
   minReceived,
-  runtimeFixedFromNumber,
   runtimeFixedFromString,
   sortedDexTokens,
   tokenByContract,
@@ -197,7 +197,7 @@ const shieldedHistoryStatus = new Map<
 >();
 /* ── Send tab state ────────────────────────────────────────── */
 
-type TxArgType = "str" | "int" | "float" | "bool" | "dict" | "list" | "datetime" | "timedelta" | "Any";
+type TxArgType = "str" | "int" | "decimal" | "bool" | "dict" | "list" | "datetime" | "timedelta" | "Any";
 type SendMode = "simple" | "advanced";
 type SendStep = "draft" | "review" | "sending";
 
@@ -552,8 +552,8 @@ function mapContractType(annotation: string): TxArgType {
       return "str";
     case "int":
       return "int";
-    case "float":
-      return "float";
+    case "decimal":
+      return "decimal";
     case "bool":
       return "bool";
     case "dict":
@@ -692,6 +692,7 @@ function ensureBalanceWatchClient(state: PopupRuntimeState): XianClient | null {
   const nextKey = `${state.rpcUrl}|${state.dashboardUrl}`;
   if (!balanceWatchClient || balanceWatchClientKey !== nextKey) {
     balanceWatchClient = new XianClient({
+      vmProfile: "xian_vm_v2",
       rpcUrl: state.rpcUrl,
       dashboardUrl: state.dashboardUrl
     });
@@ -3895,7 +3896,7 @@ function renderArgValueInput(arg: TxArg): string {
 const ARG_TYPE_OPTIONS: TxArgType[] = [
   "str",
   "int",
-  "float",
+  "decimal",
   "bool",
   "dict",
   "list",
@@ -4087,7 +4088,8 @@ function renderSendSending(): string {
    TRADE TAB
    ═══════════════════════════════════════════════════════════ */
 
-function formatTradeNumber(value: number, maxDecimals = 6): string {
+function formatTradeNumber(value: number | string, maxDecimals = 6): string {
+  if (typeof value === "string") return value;
   if (!Number.isFinite(value)) return "0";
   if (value === 0) return "0";
   const abs = Math.abs(value);
@@ -4142,8 +4144,8 @@ function currentTradeQuote(): {
   if (!tradeSnapshot?.available) {
     return { quote: null, error: null };
   }
-  const amount = Number(tradeAmount);
-  if (!Number.isFinite(amount) || amount <= 0) {
+  const amount = runtimeFixedFromString(tradeAmount);
+  if (!amount || amount.__fixed__ === "0") {
     return { quote: null, error: null };
   }
   if (!tradeFromToken || !tradeToToken) {
@@ -4156,7 +4158,7 @@ function currentTradeQuote(): {
     tradeSnapshot,
     tradeFromToken,
     tradeToToken,
-    amount
+    amount.__fixed__
   );
   return quote
     ? { quote, error: null }
@@ -4261,7 +4263,7 @@ function renderTradeQuoteSummary(quote: DexQuote): string {
   const fromToken = tokenByContract(tradeSnapshot, tradeFromToken);
   const toToken = tokenByContract(tradeSnapshot, tradeToToken);
   const minOut = minReceived(quote, tradeSlippageBps);
-  const priceImpactPct = quote.priceImpact * 100;
+  const priceImpactPct = Number(quote.priceImpact) * 100;
   const priceImpactClass =
     priceImpactPct >= 5 ? "danger" : priceImpactPct >= 1.5 ? "warning" : "muted";
   const blocked = blockedIntermediateToken(tradeSnapshot, quote);
@@ -4269,7 +4271,7 @@ function renderTradeQuoteSummary(quote: DexQuote): string {
 
   return `
     <div class="trade-summary">
-      ${renderSummaryRow("Rate", `1 ${tokenSymbol(fromToken)} ≈ ${formatTradeNumber(quote.amountOut / Math.max(quote.amountIn, 1e-12))} ${tokenSymbol(toToken)}`)}
+      ${renderSummaryRow("Rate", `1 ${tokenSymbol(fromToken)} ≈ ${formatTradeNumber(Number(quote.amountOut) / Number(quote.amountIn))} ${tokenSymbol(toToken)}`)}
       ${renderSummaryRow(`Min received (${formatBps(tradeSlippageBps)} slippage)`, `${formatTradeNumber(minOut)} ${tokenSymbol(toToken)}`)}
       ${renderSummaryRow("Price impact", formatTradePercent(-priceImpactPct, 2), { title: `${priceImpactPct.toFixed(4)}%` }).replace("s-row-val", `s-row-val ${priceImpactClass}`)}
       ${renderSummaryRow("DEX fee", formatBps(quote.feeBps))}
@@ -4337,9 +4339,9 @@ function renderTradeForm(state: PopupRuntimeState): string {
   const { quote, error: quoteError } = currentTradeQuote();
   const blocked = tradeSnapshot && quote ? blockedIntermediateToken(tradeSnapshot, quote) : null;
   const needsApproval =
-    Boolean(fromToken && quote && fromToken.allowance < quote.amountIn);
+    Boolean(fromToken && quote && fixedUnits(fromToken.allowance) < fixedUnits(quote.amountIn));
   const insufficient =
-    Boolean(fromToken && quote && fromToken.balance < quote.amountIn);
+    Boolean(fromToken && quote && fixedUnits(fromToken.balance) < fixedUnits(quote.amountIn));
   const canReview =
     Boolean(quote && !blocked && !needsApproval && !insufficient);
   const approvalNotice =
@@ -4437,7 +4439,7 @@ function renderTradeReview(state: PopupRuntimeState): string {
   const fromToken = tokenByContract(tradeSnapshot, tradeFromToken);
   const toToken = tokenByContract(tradeSnapshot, tradeToToken);
   const quote = tradeQuoteForReview;
-  const minOut = Number(tradeKwargsForReview.amountOutMin);
+  const minOut = (tradeKwargsForReview.amountOutMin as { __fixed__: string }).__fixed__;
   const chiLabel = tradeEstimate
     ? formatChiWithXianCost(tradeEstimate.estimated, tradeChiRate) ?? "Not available"
     : "Not available";
@@ -4460,7 +4462,7 @@ function renderTradeReview(state: PopupRuntimeState): string {
           ${renderSummaryRow("From", `${formatTradeNumber(quote.amountIn)} ${tokenSymbol(fromToken)}`)}
           ${renderSummaryRow("To", `~${formatTradeNumber(quote.amountOut)} ${tokenSymbol(toToken)}`)}
           ${renderSummaryRow("Minimum received", `${formatTradeNumber(minOut)} ${tokenSymbol(toToken)}`)}
-          ${renderSummaryRow("Price impact", formatTradePercent(-(quote.priceImpact * 100), 2))}
+          ${renderSummaryRow("Price impact", formatTradePercent(-(Number(quote.priceImpact) * 100), 2))}
           <div class="s-section-label">Route</div>
           <div class="s-row">
             <span class="s-row-key">Path</span>
@@ -4552,13 +4554,8 @@ function buildTradeSwapKwargs(
   quote: DexQuote
 ): Record<string, unknown> {
   return {
-    amountIn:
-      runtimeFixedFromString(tradeAmount) ??
-      runtimeFixedFromNumber(quote.amountIn),
-    amountOutMin: runtimeFixedFromNumber(
-      minReceived(quote, tradeSlippageBps),
-      { floor: true }
-    ),
+    amountIn: fixed(quote.amountIn),
+    amountOutMin: fixed(minReceived(quote, tradeSlippageBps)),
     path: quote.path,
     src: tradeFromToken,
     to: state.publicKey,
@@ -4584,9 +4581,7 @@ async function handleTradeApproval(state: PopupRuntimeState): Promise<void> {
   }
 
   const kwargs = {
-    amount:
-      runtimeFixedFromString(tradeAmount) ??
-      runtimeFixedFromNumber(quote.amountIn),
+    amount: fixed(quote.amountIn),
     to: DEX_ROUTER
   };
   const notificationState = currentState?.unlocked ? currentState : state;
@@ -4674,12 +4669,12 @@ async function handleTradeReview(state: PopupRuntimeState): Promise<void> {
     return;
   }
   const fromToken = tokenByContract(tradeSnapshot, tradeFromToken);
-  if (fromToken && fromToken.balance < quote.amountIn) {
+  if (fromToken && fixedUnits(fromToken.balance) < fixedUnits(quote.amountIn)) {
     setFlash(`Insufficient ${tokenSymbol(fromToken)} balance.`, "warning");
     render(currentState?.unlocked ? currentState : state);
     return;
   }
-  if (fromToken && fromToken.allowance < quote.amountIn) {
+  if (fromToken && fixedUnits(fromToken.allowance) < fixedUnits(quote.amountIn)) {
     setFlash(`Approve ${tokenSymbol(fromToken)} first.`, "warning");
     render(currentState?.unlocked ? currentState : state);
     return;
@@ -6117,7 +6112,13 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
         return;
       }
 
-      sendParsedKwargs = buildSendKwargs();
+      try {
+        sendParsedKwargs = buildSendKwargs();
+      } catch (error) {
+        setFlash(formatError(error), "warning");
+        render(state);
+        return;
+      }
 
       if (sendEstimateMode) {
         try {

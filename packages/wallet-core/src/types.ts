@@ -298,9 +298,9 @@ export interface WalletDexPairInfo {
   id: number;
   token0: string;
   token1: string;
-  reserve0: number;
-  reserve1: number;
-  totalSupply: number;
+  reserve0: string;
+  reserve1: string;
+  totalSupply: string;
   blockTimestampLast: string | null;
   creationTime: string | null;
 }
@@ -312,8 +312,8 @@ export interface WalletDexTokenInfo {
   logoUrl: string | null;
   logoSvg: string | null;
   precision: number | null;
-  balance: number;
-  allowance: number;
+  balance: string;
+  allowance: string;
   feeOnTransfer: boolean;
 }
 

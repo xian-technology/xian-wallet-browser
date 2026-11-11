@@ -10,7 +10,7 @@ import {
 describe("runtime input parsing", () => {
   it("keeps integer amounts as JSON integers", () => {
     expect(parseRuntimeNumberInput("42")).toBe(42);
-    expect(parseRuntimeNumberInput("9007199254740993")).toBe(9007199254740993n);
+    expect(parseRuntimeNumberInput("9007199254740993")).toEqual({ __big_int__: "9007199254740993" });
   });
 
   it("encodes decimal amounts as runtime fixed values", () => {
@@ -20,10 +20,15 @@ describe("runtime input parsing", () => {
     expect(isPositiveRuntimeAmount({ __fixed__: "0" })).toBe(false);
   });
 
-  it("encodes typed float arguments as runtime fixed values", () => {
-    expect(parseArgValue("0.0001", "float")).toEqual({ __fixed__: "0.0001" });
-    expect(parseArgValue("5", "float")).toEqual({ __fixed__: "5" });
-    expect(parseArgValue("5oops", "float")).toBe("5oops");
+  it("encodes typed decimal arguments as runtime fixed values", () => {
+    expect(parseArgValue("0.0001", "decimal")).toEqual({ __fixed__: "0.0001" });
+    expect(parseArgValue("5", "decimal")).toEqual({ __fixed__: "5" });
+    expect(() => parseArgValue("5oops", "decimal")).toThrow();
+  });
+
+  it("preserves nested contract numbers before JSON can round them", () => {
+    const nested = parseArgValue('[1.000000000000000000000000000001,9007199254740993,"1.23"]', "list");
+    expect(nested).toEqual([{ __fixed__: "1.000000000000000000000000000001" }, { __big_int__: "9007199254740993" }, "1.23"]);
   });
 
   it("recognizes normal Xian recipients without requiring extra confirmation", () => {

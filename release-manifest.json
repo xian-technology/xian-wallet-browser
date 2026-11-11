@@ -3,24 +3,28 @@
   "components": {
     "xian-js": {
       "repository": "xian-technology/xian-js",
-      "ref": "15410f350289261cf6c06d53534c83b37b4ef95c",
+      "ref": "39812da81a19a8d58584ea0f544c13d57c98b6e7",
       "packages": {
         "@xian-tech/client": {
-          "version": "0.3.2",
+          "version": "0.3.3",
           "path": "packages/client/package.json"
         },
+        "@xian-tech/dex": {
+          "version": "0.3.3",
+          "path": "packages/dex/package.json"
+        },
         "@xian-tech/provider": {
-          "version": "0.3.2",
+          "version": "0.3.3",
           "path": "packages/provider/package.json"
         }
       }
     },
     "xian-contracting": {
       "repository": "xian-technology/xian-contracting",
-      "ref": "d250e988019556fe872c56732b55dc3ca04f10d8",
+      "ref": "12b1c31f98d535a278b0c00e40dd90584f6b52f4",
       "packages": {
         "@xian-tech/compiler": {
-          "version": "0.2.0",
+          "version": "0.2.1",
           "path": "packages/xian-compiler-core/npm/package.json"
         }
       }

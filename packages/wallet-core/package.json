@@ -30,7 +30,7 @@
   },
   "dependencies": {
     "@scure/bip39": "^2.2.0",
-    "@xian-tech/client": "0.3.2",
-    "@xian-tech/provider": "0.3.2"
+    "@xian-tech/client": "0.3.3",
+    "@xian-tech/provider": "0.3.3"
   }
 }
