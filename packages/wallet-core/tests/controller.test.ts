@@ -3241,4 +3241,280 @@ describe("wallet session cancellation", () => {
     expect((await make().getPopupState()).unlocked).toBe(false);
   });
 
+  describe("unlock session activity", () => {
+    function makeClockedController(store: MemoryStore, client: WalletNetworkClient) {
+      const clock = { now: 1_000_000 };
+      let id = 0;
+      const controller = new WalletController({
+        wallet: { id: "xian-wallet", name: "Xian Wallet", rdns: "org.xian.wallet" },
+        version: "0.1.0-test",
+        store,
+        createClient: () => client,
+        onApprovalRequested: vi.fn(async () => undefined),
+        onProviderEvent: vi.fn(async () => undefined),
+        createId: () => `id-${id++}`,
+        now: () => clock.now
+      });
+      return { controller, clock };
+    }
+
+    async function connect(controller: WalletController): Promise<void> {
+      const start = await controller.startProviderRequest("connect", ORIGIN, {
+        method: "xian_requestAccounts"
+      });
+      if (start.status !== "pending") throw new Error("expected a connect approval");
+      await controller.resolveApproval(start.approvalId, true);
+    }
+
+    it("does not let dapp requests keep the wallet unlocked", async () => {
+      const store = createStore();
+      const { controller, clock } = makeClockedController(store, createClient());
+      await controller.createOrImportWallet({ password: "secret", privateKey: PRIVATE_KEY });
+      await connect(controller);
+      const expiresAt = store.currentSession()?.expiresAt;
+
+      clock.now += 4 * 60 * 1000;
+      await expect(
+        controller.startProviderRequest("poll-1", ORIGIN, { method: "xian_requestAccounts" })
+      ).resolves.toMatchObject({ status: "fulfilled" });
+      expect(store.currentSession()?.expiresAt).toBe(expiresAt);
+
+      clock.now += 2 * 60 * 1000;
+      await expect(
+        controller.startProviderRequest("poll-2", ORIGIN, { method: "xian_requestAccounts" })
+      ).resolves.toMatchObject({ status: "rejected" });
+      expect((await controller.getPopupState()).unlocked).toBe(false);
+    });
+
+    it("extends the session when the user resolves an approval", async () => {
+      const store = createStore();
+      const { controller, clock } = makeClockedController(store, createClient());
+      await controller.createOrImportWallet({ password: "secret", privateKey: PRIVATE_KEY });
+      await connect(controller);
+
+      clock.now += 4 * 60 * 1000;
+      const start = await controller.startProviderRequest("send", ORIGIN, {
+        method: "xian_sendCall",
+        params: [{ intent: { contract: "currency", function: "transfer", kwargs: {}, chi: 500 } }]
+      });
+      if (start.status !== "pending") throw new Error("expected a send approval");
+      await controller.resolveApproval(start.approvalId, true);
+
+      expect(store.currentSession()?.expiresAt).toBe(clock.now + UNLOCKED_SESSION_TIMEOUT_MS);
+    });
+
+    it("extends an unlocked session only on explicit wallet activity", async () => {
+      const store = createStore();
+      const { controller, clock } = makeClockedController(store, createClient());
+      await controller.createOrImportWallet({ password: "secret", privateKey: PRIVATE_KEY });
+
+      clock.now += 4 * 60 * 1000;
+      await expect(controller.touchUnlockedSession()).resolves.toBe(true);
+      expect(store.currentSession()?.expiresAt).toBe(clock.now + UNLOCKED_SESSION_TIMEOUT_MS);
+
+      await controller.lockWallet();
+      await expect(controller.touchUnlockedSession()).resolves.toBe(false);
+      expect(store.currentSession()).toBeNull();
+    });
+  });
+
+  describe("auto-approval chi caps", () => {
+    function makeController(store: MemoryStore, client: WalletNetworkClient) {
+      let id = 0;
+      return new WalletController({
+        wallet: { id: "xian-wallet", name: "Xian Wallet", rdns: "org.xian.wallet" },
+        version: "0.1.0-test",
+        store,
+        createClient: () => client,
+        onApprovalRequested: vi.fn(async () => undefined),
+        onProviderEvent: vi.fn(async () => undefined),
+        createId: () => `id-${id++}`
+      });
+    }
+
+    const uncappedCall = {
+      method: "xian_sendCall",
+      params: [{ intent: { contract: "currency", function: "transfer", kwargs: {} } }]
+    };
+
+    it("does not create a trust rule for an approval without a chi limit", async () => {
+      const store = createStore();
+      const client = createClient();
+      vi.mocked(client.estimateChi).mockRejectedValue(new Error("simulation unavailable"));
+      const controller = makeController(store, client);
+      await controller.createOrImportWallet({ password: "secret", privateKey: PRIVATE_KEY });
+      const connect = await controller.startProviderRequest("connect", ORIGIN, {
+        method: "xian_requestAccounts"
+      });
+      await controller.resolveApproval((connect as { approvalId: string }).approvalId, true);
+
+      const start = await controller.startProviderRequest("send", ORIGIN, uncappedCall);
+      await controller.resolveApproval((start as { approvalId: string }).approvalId, true, {
+        trust: "any"
+      });
+
+      expect(store.current()?.trustedDappPolicies ?? []).toEqual([]);
+    });
+
+    it("ignores stored trust rules that have no chi cap", async () => {
+      const store = createStore();
+      const client = createClient();
+      const controller = makeController(store, client);
+      await controller.createOrImportWallet({ password: "secret", privateKey: PRIVATE_KEY });
+      const connect = await controller.startProviderRequest("connect", ORIGIN, {
+        method: "xian_requestAccounts"
+      });
+      await controller.resolveApproval((connect as { approvalId: string }).approvalId, true);
+      const state = store.current()!;
+      await store.saveState({
+        ...state,
+        trustedDappPolicies: [{
+          id: "legacy",
+          origin: ORIGIN,
+          account: state.publicKey,
+          chainId: "xian-local",
+          methods: ["xian_sendCall"],
+          contract: "currency",
+          function: "transfer",
+          argumentScope: "any",
+          createdAt: 0
+        }]
+      });
+
+      await expect(
+        controller.startProviderRequest("send", ORIGIN, {
+          method: "xian_sendCall",
+          params: [{ intent: { contract: "currency", function: "transfer", kwargs: {}, chi: 999_999 } }]
+        })
+      ).resolves.toMatchObject({ status: "pending" });
+      expect(client.broadcastTx).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("pending approval limits", () => {
+    function makeController(store: MemoryStore) {
+      let id = 0;
+      return new WalletController({
+        wallet: { id: "xian-wallet", name: "Xian Wallet", rdns: "org.xian.wallet" },
+        version: "0.1.0-test",
+        store,
+        createClient: () => createClient(),
+        onApprovalRequested: vi.fn(async () => undefined),
+        onProviderEvent: vi.fn(async () => undefined),
+        createId: () => `id-${id++}`
+      });
+    }
+
+    const signRequest = (message: string) => ({
+      method: "xian_signMessage",
+      params: [{ message }]
+    });
+
+    it("keeps one pending connect request per site", async () => {
+      const store = createStore();
+      const controller = makeController(store);
+      await controller.createOrImportWallet({ password: "secret", privateKey: PRIVATE_KEY });
+
+      const [first, second] = await Promise.all([
+        controller.startProviderRequest("c1", ORIGIN, { method: "xian_requestAccounts" }),
+        controller.startProviderRequest("c2", ORIGIN, { method: "xian_requestAccounts" })
+      ]);
+
+      expect([first.status, second.status].sort()).toEqual(["pending", "rejected"]);
+      const rejected = first.status === "rejected" ? first : second;
+      expect(rejected).toMatchObject({
+        error: { code: -32002, message: "a connect request from this site is already pending" }
+      });
+      expect(Object.keys(store.currentApprovals())).toHaveLength(1);
+      await expect(
+        controller.startProviderRequest("c3", "https://other.example", {
+          method: "xian_requestAccounts"
+        })
+      ).resolves.toMatchObject({ status: "pending" });
+    });
+
+    it("caps other pending approvals per site", async () => {
+      const store = createStore();
+      const controller = makeController(store);
+      await controller.createOrImportWallet({ password: "secret", privateKey: PRIVATE_KEY });
+      const connect = await controller.startProviderRequest("connect", ORIGIN, {
+        method: "xian_requestAccounts"
+      });
+      await controller.resolveApproval((connect as { approvalId: string }).approvalId, true);
+
+      const starts = await Promise.all(
+        [1, 2, 3, 4].map((index) =>
+          controller.startProviderRequest(`s${index}`, ORIGIN, signRequest(`m${index}`))
+        )
+      );
+
+      expect(starts.filter((start) => start.status === "pending")).toHaveLength(3);
+      expect(starts.find((start) => start.status === "rejected")).toMatchObject({
+        error: { code: -32002, message: "too many requests from this site are already pending" }
+      });
+      const pending = starts.find((start) => start.status === "pending") as { approvalId: string };
+      await controller.resolveApproval(pending.approvalId, false);
+      await expect(
+        controller.startProviderRequest("s5", ORIGIN, signRequest("m5"))
+      ).resolves.toMatchObject({ status: "pending" });
+    });
+  });
+
+  describe("chi headroom", () => {
+    function makeController(store: MemoryStore, client: WalletNetworkClient) {
+      let id = 0;
+      return new WalletController({
+        wallet: { id: "xian-wallet", name: "Xian Wallet", rdns: "org.xian.wallet" },
+        version: "0.1.0-test",
+        store,
+        createClient: () => client,
+        onApprovalRequested: vi.fn(async () => undefined),
+        onProviderEvent: vi.fn(async () => undefined),
+        createId: () => `id-${id++}`
+      });
+    }
+
+    it("supplies the suggested chi, not the bare estimate, for dapp calls", async () => {
+      const store = createStore();
+      const client = createClient();
+      vi.mocked(client.estimateChi).mockResolvedValue({ estimated: 500, suggested: 525 });
+      const controller = makeController(store, client);
+      await controller.createOrImportWallet({ password: "secret", privateKey: PRIVATE_KEY });
+      const connect = await controller.startProviderRequest("connect", ORIGIN, {
+        method: "xian_requestAccounts"
+      });
+      await controller.resolveApproval((connect as { approvalId: string }).approvalId, true);
+
+      const start = await controller.startProviderRequest("send", ORIGIN, {
+        method: "xian_sendCall",
+        params: [{ intent: { contract: "currency", function: "transfer", kwargs: {} } }]
+      });
+      const approvalId = (start as { approvalId: string }).approvalId;
+      await expect(controller.getApprovalView(approvalId)).resolves.toEqual(
+        expect.objectContaining({
+          details: expect.arrayContaining([expect.objectContaining({ label: "Chi", value: "525" })])
+        })
+      );
+      await controller.resolveApproval(approvalId, true);
+
+      expect(client.buildTx).toHaveBeenCalledWith(expect.objectContaining({ chi: 525 }));
+    });
+
+    it("reports both the estimate and the chi to supply for wallet sends", async () => {
+      const store = createStore();
+      const client = createClient();
+      vi.mocked(client.estimateChi).mockResolvedValue({ estimated: 500, suggested: 525 });
+      const controller = makeController(store, client);
+      await controller.createOrImportWallet({ password: "secret", privateKey: PRIVATE_KEY });
+
+      await expect(
+        controller.estimateTransactionChi({ contract: "currency", function: "transfer", kwargs: {} })
+      ).resolves.toEqual({ estimated: 500, suggested: 525 });
+      vi.mocked(client.estimateChi).mockResolvedValue({ estimated: 500 });
+      await expect(
+        controller.estimateTransactionChi({ contract: "currency", function: "transfer", kwargs: {} })
+      ).resolves.toEqual({ estimated: 500, suggested: 500 });
+    });
+  });
 });
+

@@ -8,6 +8,10 @@ import type {
   ApprovalView,
   PendingApprovalRecord
 } from "./types.js";
+import {
+  HIDDEN_CHARACTERS_WARNING,
+  revealHiddenCharacters
+} from "./text-safety.js";
 
 function prettyJson(value: unknown): string {
   return JSON.stringify(JSON.parse(encodeRuntime(value)), null, 2);
@@ -216,311 +220,390 @@ export function approvalKindFromMethod(method: string): ApprovalKind {
   }
 }
 
+export interface ApprovalViewOptions {
+  account?: string;
+  chainId?: string;
+  targetChainId?: string;
+  chiRate?: number | null;
+}
+
+type ApprovalViewBody = Omit<
+  ApprovalView,
+  "id" | "origin" | "kind" | "account" | "chainId" | "createdAt"
+>;
+
+type ApprovalViewBuilder = (
+  approval: PendingApprovalRecord,
+  payload: unknown,
+  options: ApprovalViewOptions | undefined
+) => ApprovalViewBody;
+
+function connectView(
+  approval: PendingApprovalRecord,
+  _payload: unknown,
+  options: ApprovalViewOptions | undefined
+): ApprovalViewBody {
+  return {
+    title: "Connect wallet",
+    description:
+      "Allow this site to view your active address and request wallet actions.",
+    approveLabel: "Connect",
+    details: compactDetails([
+      siteDetail(approval),
+      compactDetail("Account", options?.account, { monospace: true }),
+      compactDetail("Network", options?.chainId),
+      compactDetail("Access", "View your address and request approvals")
+    ]),
+    highlights: [
+      "Connection does not send a transaction or move funds.",
+      "Future signing and transaction requests will still need explicit approval."
+    ],
+    warnings: [
+      "Only connect sites you trust. You can revoke site access from the wallet at any time."
+    ],
+    payload: prettyJson({
+      origin: approval.origin,
+      account: options?.account ?? null,
+      chainId: options?.chainId ?? null
+    }),
+    payloadLabel: "Connection request"
+  };
+}
+
+function requestedChainId(
+  payload: unknown,
+  options: ApprovalViewOptions | undefined
+): string | undefined {
+  const chainId = payloadRecord(payload).chainId;
+  return options?.targetChainId ?? (typeof chainId === "string" ? chainId : undefined);
+}
+
+function switchChainView(
+  approval: PendingApprovalRecord,
+  payload: unknown,
+  options: ApprovalViewOptions | undefined
+): ApprovalViewBody {
+  const targetChainId = requestedChainId(payload, options);
+  return {
+    title: "Switch network",
+    description:
+      "Allow this site to change the wallet network used by every connected site.",
+    approveLabel: "Switch network",
+    details: compactDetails([
+      siteDetail(approval),
+      compactDetail("Account", options?.account, { monospace: true }),
+      compactDetail("Current network", options?.chainId),
+      compactDetail("Requested network", targetChainId)
+    ]),
+    highlights: [
+      `Switch from ${stringifyValue(options?.chainId)} to ${stringifyValue(
+        targetChainId
+      )}`
+    ],
+    warnings: [
+      "Switching changes the signing and transaction context for all connected sites."
+    ],
+    payload: prettyJson({
+      origin: approval.origin,
+      account: options?.account ?? null,
+      fromChainId: options?.chainId ?? null,
+      toChainId: targetChainId ?? null
+    }),
+    payloadLabel: "Network switch request"
+  };
+}
+
+function signMessageView(
+  approval: PendingApprovalRecord,
+  payload: unknown,
+  options: ApprovalViewOptions | undefined
+): ApprovalViewBody {
+  const message =
+    typeof payload === "object" && payload != null
+      ? String((payload as { message?: unknown }).message ?? "")
+      : String(payload ?? "");
+  return {
+    title: "Sign message",
+    description:
+      "Review the exact message carefully. Message signing should never be used as a substitute for transaction approval.",
+    approveLabel: "Sign message",
+    details: compactDetails([
+      siteDetail(approval),
+      compactDetail("Account", options?.account, { monospace: true }),
+      compactDetail("Network", options?.chainId),
+      compactDetail("Length", `${message.length} characters`),
+      compactDetail("Preview", messagePreview(message))
+    ]),
+    highlights: message.length > 0 ? [messagePreview(message)] : [],
+    warnings: [
+      "Do not sign messages you do not understand.",
+      "Never sign a message that looks like a transaction payload or seed phrase request."
+    ],
+    payload: message,
+    payloadLabel: "Full message"
+  };
+}
+
+function exactMarkerText(value: Record<string, unknown>): string | null {
+  const keys = Object.keys(value);
+  if (keys.length !== 1) {
+    return null;
+  }
+  const marker = value.__fixed__ ?? value.__big_int__;
+  return typeof marker === "string" ? marker : null;
+}
+
+function argumentText(value: unknown): string {
+  if (value === null) {
+    return "null";
+  }
+  if (typeof value === "object" && !Array.isArray(value)) {
+    const marker = exactMarkerText(value as Record<string, unknown>);
+    if (marker != null) {
+      return marker;
+    }
+  }
+  return stringifyValue(value);
+}
+
+function argumentDetails(kwargs: unknown): ApprovalDetail[] {
+  if (typeof kwargs !== "object" || kwargs == null || Array.isArray(kwargs)) {
+    return [];
+  }
+  return Object.entries(kwargs).map(([name, value]) => ({
+    label: `Argument: ${name}`,
+    value: argumentText(value),
+    monospace: true
+  }));
+}
+
+function preparedTransactionDetails(
+  approval: PendingApprovalRecord,
+  txPayload: Record<string, unknown>,
+  options: ApprovalViewOptions | undefined,
+  chiTone: ApprovalDetail["tone"]
+): ApprovalDetail[] {
+  return compactDetails([
+    siteDetail(approval),
+    compactDetail("Sender", txPayload.sender, { monospace: true }),
+    compactDetail("Contract", txPayload.contract, { monospace: true }),
+    compactDetail("Function", txPayload.function),
+    compactDetail("Network", txPayload.chain_id ?? options?.chainId),
+    compactDetail("Nonce", txPayload.nonce),
+    compactDetail(
+      "Chi",
+      formatChiWithXianCost(txPayload.chi_supplied, options?.chiRate),
+      { tone: chiTone }
+    ),
+    ...argumentDetails(txPayload.kwargs)
+  ]);
+}
+
+function targetTrustSuggestion(
+  target: Record<string, unknown>,
+  requestLabel: string
+): ApprovalTrustSuggestion | undefined {
+  return typeof target.contract === "string" &&
+    typeof target.function === "string"
+    ? trustedDappSuggestion(target.contract, target.function, requestLabel)
+    : undefined;
+}
+
+function signTransactionView(
+  approval: PendingApprovalRecord,
+  payload: unknown,
+  options: ApprovalViewOptions | undefined
+): ApprovalViewBody {
+  const txPayload = txPayloadFromRequestPayload(payload);
+  return {
+    title: "Sign prepared transaction",
+    description:
+      "The site already prepared a full transaction payload. Verify the sender, target contract, function, and chi budget before signing.",
+    approveLabel: "Sign transaction",
+    details: preparedTransactionDetails(approval, txPayload, options, undefined),
+    highlights: [targetLabel(txPayload)],
+    warnings: [
+      "Prepared transactions may perform arbitrary contract actions. Inspect the raw payload if anything looks unfamiliar."
+    ],
+    trustSuggestion: targetTrustSuggestion(txPayload, "prepared-signature requests"),
+    payload: prettyJson(payload),
+    payloadLabel: "Raw transaction"
+  };
+}
+
+function sendTransactionView(
+  approval: PendingApprovalRecord,
+  payload: unknown,
+  options: ApprovalViewOptions | undefined
+): ApprovalViewBody {
+  const txPayload = txPayloadFromRequestPayload(payload);
+  return {
+    title: "Send prepared transaction",
+    description:
+      "The site supplied a full unsigned transaction. Approving will sign and broadcast it from your wallet.",
+    approveLabel: "Send transaction",
+    details: preparedTransactionDetails(approval, txPayload, options, "warning"),
+    highlights: ["This request can broadcast immediately after approval."],
+    warnings: [
+      "Broadcasting a transaction may move funds or execute irreversible contract logic."
+    ],
+    trustSuggestion: targetTrustSuggestion(
+      txPayload,
+      "prepared-transaction broadcasts"
+    ),
+    payload: prettyJson(payload),
+    payloadLabel: "Raw transaction"
+  };
+}
+
+const SEND_CALL_INTENT_WARNING =
+  "The wallet will fill the sender and nonce at approval time. Confirm the contract and arguments match your intent.";
+const UNKNOWN_CHI_WARNING =
+  "The wallet could not estimate chi for this call. The chi limit will be chosen when it is sent.";
+
+function intentKwargs(
+  intent: Record<string, unknown>
+): Record<string, unknown> | undefined {
+  return typeof intent.kwargs === "object" && intent.kwargs != null
+    ? (intent.kwargs as Record<string, unknown>)
+    : undefined;
+}
+
+function targetLabel(target: Record<string, unknown>): string {
+  return `${stringifyValue(target.contract ?? "unknown")}.${stringifyValue(
+    target.function ?? "unknown"
+  )}`;
+}
+
+function sendCallChiDetail(
+  chi: unknown,
+  options: ApprovalViewOptions | undefined
+): ApprovalDetail | null {
+  return chi == null || chi === ""
+    ? compactDetail("Chi", "Not estimated", { tone: "danger" })
+    : compactDetail("Chi", formatChiWithXianCost(chi, options?.chiRate), {
+        tone: "warning"
+      });
+}
+
+function sendCallView(
+  approval: PendingApprovalRecord,
+  payload: unknown,
+  options: ApprovalViewOptions | undefined
+): ApprovalViewBody {
+  const intent = intentFromRequestPayload(payload);
+  const kwargs = intentKwargs(intent);
+  const chiDetail = sendCallChiDetail(intent.chiSupplied ?? intent.chi, options);
+  const chiKnown = chiDetail?.tone === "warning";
+  return {
+    title: "Send contract call",
+    description:
+      "The wallet will prepare, sign, and broadcast this intent on your behalf using the active account and latest nonce.",
+    approveLabel: "Approve call",
+    details: compactDetails([
+      siteDetail(approval),
+      compactDetail("Account", options?.account, { monospace: true }),
+      compactDetail("Contract", intent.contract),
+      compactDetail("Function", intent.function),
+      compactDetail("Network", intent.chainId ?? options?.chainId),
+      chiDetail,
+      compactDetail(
+        "Arguments",
+        kwargs ? `${Object.keys(kwargs).length} field(s)` : undefined
+      ),
+      ...argumentDetails(kwargs)
+    ]),
+    highlights: [targetLabel(intent)],
+    warnings: chiKnown
+      ? [SEND_CALL_INTENT_WARNING]
+      : [SEND_CALL_INTENT_WARNING, UNKNOWN_CHI_WARNING],
+    // An auto-approval rule needs a chi cap, so none is offered without one.
+    trustSuggestion: chiKnown
+      ? targetTrustSuggestion(intent, "contract calls")
+      : undefined,
+    payload: prettyJson(payload),
+    payloadLabel: "Raw call intent"
+  };
+}
+
+function watchAssetView(
+  approval: PendingApprovalRecord,
+  payload: unknown,
+  _options: ApprovalViewOptions | undefined
+): ApprovalViewBody {
+  const asset = assetFromRequestPayload(payload);
+  return {
+    title: "Add asset to wallet",
+    description:
+      "Allow this site to add an asset to your wallet list. This does not verify the asset’s legitimacy.",
+    approveLabel: "Add asset",
+    details: compactDetails([
+      siteDetail(approval),
+      compactDetail("Name", asset.name),
+      compactDetail("Symbol", asset.symbol),
+      compactDetail("Contract", asset.contract, { monospace: true }),
+      compactDetail("Decimals", asset.decimals)
+    ]),
+    highlights: [
+      "Always verify the asset contract from an independent trusted source."
+    ],
+    warnings: [
+      "Token metadata can be spoofed. Matching names and symbols do not prove authenticity."
+    ],
+    payload: prettyJson(payload),
+    payloadLabel: "Asset metadata"
+  };
+}
+
+const APPROVAL_VIEW_BUILDERS: Record<ApprovalKind, ApprovalViewBuilder> = {
+  connect: connectView,
+  switchChain: switchChainView,
+  signMessage: signMessageView,
+  signTransaction: signTransactionView,
+  sendTransaction: sendTransactionView,
+  sendCall: sendCallView,
+  watchAsset: watchAssetView
+};
+
+function revealHiddenText(body: ApprovalViewBody): ApprovalViewBody {
+  const details = body.details?.map((detail) => ({
+    ...detail,
+    label: revealHiddenCharacters(detail.label),
+    value: revealHiddenCharacters(detail.value)
+  }));
+  const highlights = body.highlights?.map(revealHiddenCharacters);
+  const payload = revealHiddenCharacters(body.payload);
+  const revealed =
+    payload !== body.payload ||
+    JSON.stringify([details, highlights]) !==
+      JSON.stringify([body.details, body.highlights]);
+  return {
+    ...body,
+    details,
+    highlights,
+    payload,
+    warnings: revealed
+      ? [HIDDEN_CHARACTERS_WARNING, ...(body.warnings ?? [])]
+      : body.warnings
+  };
+}
+
 export function buildApprovalView(
   approval: PendingApprovalRecord,
-  options?: {
-    account?: string;
-    chainId?: string;
-    targetChainId?: string;
-    chiRate?: number | null;
-  }
+  options?: ApprovalViewOptions
 ): ApprovalView {
-  const payload = payloadForRequest(approval.request);
-
-  switch (approval.kind) {
-    case "connect":
-      return {
-        id: approval.id,
-        origin: approval.origin,
-        kind: approval.kind,
-        title: "Connect wallet",
-        description:
-          "Allow this site to view your active address and request wallet actions.",
-        approveLabel: "Connect",
-        details: compactDetails([
-          siteDetail(approval),
-          compactDetail("Account", options?.account, { monospace: true }),
-          compactDetail("Network", options?.chainId),
-          compactDetail("Access", "View your address and request approvals")
-        ]),
-        highlights: [
-          "Connection does not send a transaction or move funds.",
-          "Future signing and transaction requests will still need explicit approval."
-        ],
-        warnings: [
-          "Only connect sites you trust. You can revoke site access from the wallet at any time."
-        ],
-        payload: prettyJson({
-          origin: approval.origin,
-          account: options?.account ?? null,
-          chainId: options?.chainId ?? null
-        }),
-        payloadLabel: "Connection request",
-        account: options?.account,
-        chainId: options?.chainId,
-        createdAt: approval.createdAt
-      };
-    case "switchChain":
-      {
-        const switchRequest =
-          typeof payload === "object" && payload != null
-            ? (payload as Record<string, unknown>)
-            : {};
-        const targetChainId =
-          options?.targetChainId ??
-          (typeof switchRequest.chainId === "string"
-            ? switchRequest.chainId
-            : undefined);
-        return {
-          id: approval.id,
-          origin: approval.origin,
-          kind: approval.kind,
-          title: "Switch network",
-          description:
-            "Allow this site to change the wallet network used by every connected site.",
-          approveLabel: "Switch network",
-          details: compactDetails([
-            siteDetail(approval),
-            compactDetail("Account", options?.account, { monospace: true }),
-            compactDetail("Current network", options?.chainId),
-            compactDetail("Requested network", targetChainId)
-          ]),
-          highlights: [
-            `Switch from ${stringifyValue(options?.chainId)} to ${stringifyValue(
-              targetChainId
-            )}`
-          ],
-          warnings: [
-            "Switching changes the signing and transaction context for all connected sites."
-          ],
-          payload: prettyJson({
-            origin: approval.origin,
-            account: options?.account ?? null,
-            fromChainId: options?.chainId ?? null,
-            toChainId: targetChainId ?? null
-          }),
-          payloadLabel: "Network switch request",
-          account: options?.account,
-          chainId: options?.chainId,
-          createdAt: approval.createdAt
-        };
-      }
-    case "signMessage":
-      {
-        const message =
-          typeof payload === "object" && payload != null
-            ? String((payload as { message?: unknown }).message ?? "")
-            : String(payload ?? "");
-        return {
-          id: approval.id,
-          origin: approval.origin,
-          kind: approval.kind,
-          title: "Sign message",
-          description:
-            "Review the exact message carefully. Message signing should never be used as a substitute for transaction approval.",
-          approveLabel: "Sign message",
-          details: compactDetails([
-            siteDetail(approval),
-            compactDetail("Account", options?.account, { monospace: true }),
-            compactDetail("Network", options?.chainId),
-            compactDetail("Length", `${message.length} characters`),
-            compactDetail("Preview", messagePreview(message))
-          ]),
-          highlights: message.length > 0 ? [messagePreview(message)] : [],
-          warnings: [
-            "Do not sign messages you do not understand.",
-            "Never sign a message that looks like a transaction payload or seed phrase request."
-          ],
-          payload: message,
-          payloadLabel: "Full message",
-          account: options?.account,
-          chainId: options?.chainId,
-          createdAt: approval.createdAt
-        };
-      }
-    case "signTransaction":
-      {
-        const txPayload = txPayloadFromRequestPayload(payload);
-        return {
-          id: approval.id,
-          origin: approval.origin,
-          kind: approval.kind,
-          title: "Sign prepared transaction",
-          description:
-            "The site already prepared a full transaction payload. Verify the sender, target contract, function, and chi budget before signing.",
-          approveLabel: "Sign transaction",
-          details: compactDetails([
-            siteDetail(approval),
-            compactDetail("Sender", txPayload.sender, { monospace: true }),
-            compactDetail("Contract", txPayload.contract, { monospace: true }),
-            compactDetail("Function", txPayload.function),
-            compactDetail("Network", txPayload.chain_id ?? options?.chainId),
-            compactDetail("Nonce", txPayload.nonce),
-            compactDetail(
-              "Chi",
-              formatChiWithXianCost(txPayload.chi_supplied, options?.chiRate)
-            )
-          ]),
-          highlights: [
-            `${stringifyValue(txPayload.contract ?? "unknown")}.${stringifyValue(
-              txPayload.function ?? "unknown"
-            )}`
-          ],
-          warnings: [
-            "Prepared transactions may perform arbitrary contract actions. Inspect the raw payload if anything looks unfamiliar."
-          ],
-          trustSuggestion:
-            typeof txPayload.contract === "string" &&
-            typeof txPayload.function === "string"
-              ? trustedDappSuggestion(
-                  txPayload.contract,
-                  txPayload.function,
-                  "prepared-signature requests"
-                )
-              : undefined,
-          payload: prettyJson(payload),
-          payloadLabel: "Raw transaction",
-          account: options?.account,
-          chainId: options?.chainId,
-          createdAt: approval.createdAt
-        };
-      }
-    case "sendTransaction":
-      {
-        const txPayload = txPayloadFromRequestPayload(payload);
-        return {
-          id: approval.id,
-          origin: approval.origin,
-          kind: approval.kind,
-          title: "Send prepared transaction",
-          description:
-            "The site supplied a full unsigned transaction. Approving will sign and broadcast it from your wallet.",
-          approveLabel: "Send transaction",
-          details: compactDetails([
-            siteDetail(approval),
-            compactDetail("Sender", txPayload.sender, { monospace: true }),
-            compactDetail("Contract", txPayload.contract, { monospace: true }),
-            compactDetail("Function", txPayload.function),
-            compactDetail("Network", txPayload.chain_id ?? options?.chainId),
-            compactDetail("Nonce", txPayload.nonce),
-            compactDetail(
-              "Chi",
-              formatChiWithXianCost(txPayload.chi_supplied, options?.chiRate),
-              {
-                tone: "warning"
-              }
-            )
-          ]),
-          highlights: [
-            "This request can broadcast immediately after approval."
-          ],
-          warnings: [
-            "Broadcasting a transaction may move funds or execute irreversible contract logic."
-          ],
-          trustSuggestion:
-            typeof txPayload.contract === "string" &&
-            typeof txPayload.function === "string"
-              ? trustedDappSuggestion(
-                  txPayload.contract,
-                  txPayload.function,
-                  "prepared-transaction broadcasts"
-                )
-              : undefined,
-          payload: prettyJson(payload),
-          payloadLabel: "Raw transaction",
-          account: options?.account,
-          chainId: options?.chainId,
-          createdAt: approval.createdAt
-        };
-      }
-    case "sendCall":
-      {
-        const intent = intentFromRequestPayload(payload);
-        const kwargs =
-          typeof intent.kwargs === "object" && intent.kwargs != null
-            ? (intent.kwargs as Record<string, unknown>)
-            : undefined;
-        return {
-          id: approval.id,
-          origin: approval.origin,
-          kind: approval.kind,
-          title: "Send contract call",
-          description:
-            "The wallet will prepare, sign, and broadcast this intent on your behalf using the active account and latest nonce.",
-          approveLabel: "Approve call",
-          details: compactDetails([
-            siteDetail(approval),
-            compactDetail("Account", options?.account, { monospace: true }),
-            compactDetail("Contract", intent.contract),
-            compactDetail("Function", intent.function),
-            compactDetail("Network", intent.chainId ?? options?.chainId),
-            compactDetail(
-              "Chi",
-              formatChiWithXianCost(
-                intent.chiSupplied ?? intent.chi,
-                options?.chiRate
-              ),
-              { tone: "warning" }
-            ),
-            compactDetail(
-              "Arguments",
-              kwargs ? `${Object.keys(kwargs).length} field(s)` : undefined
-            )
-          ]),
-          highlights: [
-            `${stringifyValue(intent.contract ?? "unknown")}.${stringifyValue(
-              intent.function ?? "unknown"
-            )}`
-          ],
-          warnings: [
-            "The wallet will fill the sender and nonce at approval time. Confirm the contract and arguments match your intent."
-          ],
-          trustSuggestion:
-            typeof intent.contract === "string" &&
-            typeof intent.function === "string"
-              ? trustedDappSuggestion(
-                  intent.contract,
-                  intent.function,
-                  "contract calls"
-                )
-              : undefined,
-          payload: prettyJson(payload),
-          payloadLabel: "Raw call intent",
-          account: options?.account,
-          chainId: options?.chainId,
-          createdAt: approval.createdAt
-        };
-      }
-    case "watchAsset":
-      {
-        const asset = assetFromRequestPayload(payload);
-        return {
-          id: approval.id,
-          origin: approval.origin,
-          kind: approval.kind,
-          title: "Add asset to wallet",
-          description:
-            "Allow this site to add an asset to your wallet list. This does not verify the asset’s legitimacy.",
-          approveLabel: "Add asset",
-          details: compactDetails([
-            siteDetail(approval),
-            compactDetail("Name", asset.name),
-            compactDetail("Symbol", asset.symbol),
-            compactDetail("Contract", asset.contract, { monospace: true }),
-            compactDetail("Decimals", asset.decimals)
-          ]),
-          highlights: [
-            "Always verify the asset contract from an independent trusted source."
-          ],
-          warnings: [
-            "Token metadata can be spoofed. Matching names and symbols do not prove authenticity."
-          ],
-          payload: prettyJson(payload),
-          payloadLabel: "Asset metadata",
-          account: options?.account,
-          chainId: options?.chainId,
-          createdAt: approval.createdAt
-        };
-      }
-  }
+  const body = APPROVAL_VIEW_BUILDERS[approval.kind](
+    approval,
+    payloadForRequest(approval.request),
+    options
+  );
+  return {
+    id: approval.id,
+    origin: approval.origin,
+    kind: approval.kind,
+    ...revealHiddenText(body),
+    account: options?.account,
+    chainId: options?.chainId,
+    createdAt: approval.createdAt
+  };
 }

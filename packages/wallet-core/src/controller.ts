@@ -11,10 +11,12 @@ import {
 import {
   createXianDappPolicyForRequest,
   findMatchingXianDappPolicy,
+  parseXianDappAction,
   ProviderChainMismatchError,
   ProviderUnauthorizedError,
   ProviderUnsupportedMethodError,
   xianDappPoliciesHaveSameScope,
+  XianProviderError,
   type BroadcastMode,
   type TransactionSubmission,
   type XianDappPolicy,
@@ -102,6 +104,14 @@ interface RequestWaiter {
 
 const SAFE_CHAIN_ID_LOOKUP_TIMEOUT_MS = 2_000;
 const TRUSTED_DAPP_POLICY_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+// A site may have one connect prompt and a few other prompts open at a time.
+const MAX_PENDING_APPROVALS_PER_ORIGIN = 3;
+
+class ProviderRequestPendingError extends XianProviderError {
+  constructor(message: string) {
+    super(-32002, message);
+  }
+}
 const MAX_DAPP_METADATA_TEXT_LENGTH = 120;
 const MAX_DAPP_ICON_URL_LENGTH = 2048;
 const DEX_ROUTER_CONTRACT = "con_dex";
@@ -162,7 +172,7 @@ export interface WalletNetworkClient {
     contract: string;
     function: string;
     kwargs: Record<string, unknown>;
-  }): Promise<{ estimated: number }>;
+  }): Promise<{ estimated: number; suggested?: number }>;
   getContractMethods(contract: string): Promise<{ name: string; arguments: { name: string; type: string }[] }[]>;
   getContractSource?(contract: string): Promise<string | null>;
   getContractIr?(contract: string): Promise<string | null>;
@@ -257,6 +267,14 @@ function parseIntentNumber(
     return parsed <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : parsed;
   }
   throw new TypeError(`${fieldName} must be a non-negative integer`);
+}
+
+// The chi to supply: the client's suggestion (estimate plus headroom) when it
+// provides one, else the bare estimate from older custom clients.
+function chiToSupply(result: { estimated: number; suggested?: number }): number {
+  return typeof result.suggested === "number" && Number.isFinite(result.suggested)
+    ? result.suggested
+    : result.estimated;
 }
 
 function trimOptionalString(value: string | undefined): string | undefined {
@@ -1187,7 +1205,9 @@ export class WalletController {
     );
   }
 
-  private async getUnlockedSigner(): Promise<Ed25519Signer> {
+  // Requires an unlocked wallet without counting as user activity: dapp
+  // requests must not keep the auto-lock timer from expiring.
+  private async requireUnlockedSigner(): Promise<Ed25519Signer> {
     await this.restoreUnlockedSession();
     if (!this.unlockedPrivateKey) {
       throw new ProviderUnauthorizedError("wallet is locked");
@@ -1195,8 +1215,16 @@ export class WalletController {
     if (!this.unlockedSigner) {
       this.unlockedSigner = new Ed25519Signer(this.unlockedPrivateKey);
     }
-    await this.persistUnlockedSession();
     return this.unlockedSigner;
+  }
+
+  /** Record explicit wallet activity: extends an unlocked session's auto-lock timer. */
+  async touchUnlockedSession(): Promise<boolean> {
+    if (!(await this.restoreUnlockedSession())) {
+      return false;
+    }
+    await this.persistUnlockedSession();
+    return true;
   }
 
   private currentClient(state: StoredWalletState): WalletNetworkClient {
@@ -1782,7 +1810,8 @@ export class WalletController {
     }
 
     const match = findMatchingXianDappPolicy(
-      state.trustedDappPolicies ?? [],
+      // Rules without a chi cap predate the cap requirement and are not honoured.
+      (state.trustedDappPolicies ?? []).filter((policy) => policy.maxChi != null),
       {
         origin,
         account,
@@ -1810,6 +1839,10 @@ export class WalletController {
   ): Promise<XianDappPolicy | null> {
     const context = approval.context;
     if (!context?.network.chainId) {
+      return null;
+    }
+    const chi = parseXianDappAction(approval.record.request)?.chi;
+    if (chi == null || chi === "") {
       return null;
     }
     const activeChainId = context.network.chainId;
@@ -2067,7 +2100,7 @@ export class WalletController {
     state: StoredWalletState,
     intent: XianTransactionIntent
   ): Promise<XianUnsignedTransaction> {
-    const signer = await this.getUnlockedSigner();
+    const signer = await this.requireUnlockedSigner();
     const client = this.currentClient(state);
     const activeChainId = await client.getChainId();
 
@@ -2121,7 +2154,7 @@ export class WalletController {
       onPreparedTransaction?: (prepared: PreparedTransaction) => Promise<void>;
     }
   ): Promise<TransactionSubmission> {
-    const signer = await this.getUnlockedSigner();
+    const signer = await this.requireUnlockedSigner();
     const client = this.currentClient(state);
     const activeChainId = await client.getChainId();
     if (intent.chainId && intent.chainId !== activeChainId) {
@@ -2162,7 +2195,7 @@ export class WalletController {
     state: StoredWalletState,
     tx: XianUnsignedTransaction
   ): Promise<XianSignedTransaction> {
-    const signer = await this.getUnlockedSigner();
+    const signer = await this.requireUnlockedSigner();
     const activeChainId = await this.currentClient(state).getChainId();
     if (tx.payload.sender !== signer.address) {
       throw new ProviderUnauthorizedError(
@@ -2231,7 +2264,7 @@ export class WalletController {
 
     switch (request.method) {
       case "xian_requestAccounts": {
-        await this.getUnlockedSigner();
+        await this.requireUnlockedSigner();
         const chainId = this.displayChainId(
           this.activeNetworkPreset(state),
           await this.safeGetChainId(state)
@@ -2251,7 +2284,7 @@ export class WalletController {
 
       case "xian_switchChain": {
         this.requireConnectedOrigin(state, origin);
-        await this.getUnlockedSigner();
+        await this.requireUnlockedSigner();
         const { chainId } = firstParamObject(request.params);
         const requestedChainId =
           typeof chainId === "string" ? chainId.trim() : "";
@@ -2293,7 +2326,7 @@ export class WalletController {
 
       case "xian_watchAsset": {
         this.requireConnectedOrigin(state, origin);
-        await this.getUnlockedSigner();
+        await this.requireUnlockedSigner();
         const assetRequest = firstParamObject(
           request.params
         ) as unknown as XianWatchAssetRequest;
@@ -2308,7 +2341,7 @@ export class WalletController {
 
       case "xian_signMessage": {
         this.requireConnectedOrigin(state, origin);
-        const signer = await this.getUnlockedSigner();
+        const signer = await this.requireUnlockedSigner();
         const { message } = firstParamObject(request.params);
         if (typeof message !== "string") {
           throw new TypeError("xian_signMessage requires a message string");
@@ -2330,14 +2363,14 @@ export class WalletController {
 
       case "xian_signTransaction": {
         this.requireConnectedOrigin(state, origin);
-        await this.getUnlockedSigner();
+        await this.requireUnlockedSigner();
         const { tx } = firstParamObject(request.params);
         return this.signPreparedTransaction(state, tx as XianUnsignedTransaction);
       }
 
       case "xian_sendTransaction": {
         this.requireConnectedOrigin(state, origin);
-        await this.getUnlockedSigner();
+        await this.requireUnlockedSigner();
         const { tx, mode, waitForTx, timeoutMs, pollIntervalMs } =
           firstParamObject(request.params);
 
@@ -2352,7 +2385,7 @@ export class WalletController {
 
       case "xian_sendCall": {
         this.requireConnectedOrigin(state, origin);
-        await this.getUnlockedSigner();
+        await this.requireUnlockedSigner();
         const { intent, mode, waitForTx, timeoutMs, pollIntervalMs } =
           firstParamObject(request.params);
         return this.sendCallTransaction(state, intent as XianTransactionIntent, {
@@ -2449,13 +2482,15 @@ export class WalletController {
     const kwargs = isRecord(intent.kwargs) ? intent.kwargs : {};
     try {
       const state = this.requireStoredWallet(await this.loadWalletState());
-      const estimated = await this.currentClient(state).estimateChi({
-        sender: account,
-        contract: intent.contract,
-        function: intent.function,
-        kwargs
-      });
-      if (!Number.isFinite(estimated.estimated) || estimated.estimated <= 0) {
+      const chi = chiToSupply(
+        await this.currentClient(state).estimateChi({
+          sender: account,
+          contract: intent.contract,
+          function: intent.function,
+          kwargs
+        })
+      );
+      if (!Number.isFinite(chi) || chi <= 0) {
         return request;
       }
 
@@ -2464,7 +2499,7 @@ export class WalletController {
         intent: {
           ...intent,
           kwargs,
-          chi: estimated.estimated
+          chi
         }
       };
 
@@ -2476,6 +2511,24 @@ export class WalletController {
       };
     } catch {
       return request;
+    }
+  }
+
+  private async assertApprovalCapacity(origin: string, method: string): Promise<void> {
+    const kind = approvalKindFromMethod(method);
+    const pending = (await this.store.listApprovalStates()).filter(
+      (approval) => approval.record.origin === origin
+    );
+    const pendingOfKind = pending.filter((approval) =>
+      kind === "connect" ? approval.record.kind === "connect" : approval.record.kind !== "connect"
+    ).length;
+    const limit = kind === "connect" ? 1 : MAX_PENDING_APPROVALS_PER_ORIGIN;
+    if (pendingOfKind >= limit) {
+      throw new ProviderRequestPendingError(
+        kind === "connect"
+          ? "a connect request from this site is already pending"
+          : "too many requests from this site are already pending"
+      );
     }
   }
 
@@ -2563,7 +2616,7 @@ export class WalletController {
 
       case "xian_requestAccounts": {
         const walletState = this.requireStoredWallet(state);
-        await this.getUnlockedSigner();
+        await this.requireUnlockedSigner();
         if (walletState.connectedOrigins.includes(origin)) {
           const nextState = await this.updateConnectedOrigin(
             origin,
@@ -2624,7 +2677,7 @@ export class WalletController {
       case "xian_switchChain": {
         const walletState = this.requireStoredWallet(state);
         this.requireConnectedOrigin(walletState, origin);
-        await this.getUnlockedSigner();
+        await this.requireUnlockedSigner();
         const { chainId } = firstParamObject(request.params);
         const requestedChainId =
           typeof chainId === "string" ? chainId.trim() : "";
@@ -2668,7 +2721,7 @@ export class WalletController {
       case "xian_watchAsset": {
         const walletState = this.requireStoredWallet(state);
         this.requireConnectedOrigin(walletState, origin);
-        await this.getUnlockedSigner();
+        await this.requireUnlockedSigner();
         return {
           kind: "approval",
           context: await this.captureApprovalContext(walletState)
@@ -2678,7 +2731,7 @@ export class WalletController {
       case "xian_signMessage": {
         const walletState = this.requireStoredWallet(state);
         this.requireConnectedOrigin(walletState, origin);
-        await this.getUnlockedSigner();
+        await this.requireUnlockedSigner();
         return {
           kind: "approval",
           context: await this.captureApprovalContext(walletState)
@@ -2688,7 +2741,7 @@ export class WalletController {
       case "xian_prepareTransaction": {
         const walletState = this.requireStoredWallet(state);
         this.requireConnectedOrigin(walletState, origin);
-        await this.getUnlockedSigner();
+        await this.requireUnlockedSigner();
         const { intent } = firstParamObject(request.params);
         return {
           kind: "result",
@@ -2704,7 +2757,7 @@ export class WalletController {
       case "xian_sendCall": {
         const walletState = this.requireStoredWallet(state);
         this.requireConnectedOrigin(walletState, origin);
-        await this.getUnlockedSigner();
+        await this.requireUnlockedSigner();
         const activeChainId = this.displayChainId(
           this.activeNetworkPreset(walletState),
           await this.safeGetChainId(walletState)
@@ -2932,15 +2985,16 @@ export class WalletController {
     contract: string;
     function: string;
     kwargs: Record<string, unknown>;
-  }): Promise<{ estimated: number }> {
+  }): Promise<{ estimated: number; suggested: number }> {
     const state = this.requireStoredWallet(await this.loadWalletState());
     const client = this.currentClient(state);
-    return client.estimateChi({
+    const result = await client.estimateChi({
       sender: state.publicKey,
       contract: request.contract,
       function: request.function,
       kwargs: request.kwargs
     });
+    return { estimated: result.estimated, suggested: chiToSupply(result) };
   }
 
   async getChiRate(): Promise<number | null> {
@@ -2965,7 +3019,7 @@ export class WalletController {
     chi?: number;
   }): Promise<unknown> {
     const state = this.requireStoredWallet(await this.loadWalletState());
-    await this.getUnlockedSigner();
+    await this.requireUnlockedSigner();
     return this.sendCallTransaction(
       state,
       {
@@ -4178,10 +4232,10 @@ export class WalletController {
         return fulfilled;
       }
 
-      return this.createApprovalRequest(
-        requestState,
-        immediate.context
-      );
+      return await this.runAutomaticSendExclusive(`approvals\u0000${origin}`, async () => {
+        await this.assertApprovalCapacity(origin, request.method);
+        return this.createApprovalRequest(requestState, immediate.context);
+      });
     } catch (error) {
       const rejected = await this.rejectRequest(requestState, error);
       if (rejected.status !== "rejected") {
@@ -4275,7 +4329,10 @@ export class WalletController {
   ): Promise<null> {
     const release = beginApprovalResolution(this.store, approvalId);
     if (!release) return null;
-    try { return await this.resolveClaimedApproval(approvalId, approved, options); }
+    try {
+      await this.touchUnlockedSession();
+      return await this.resolveClaimedApproval(approvalId, approved, options);
+    }
     finally { release(); }
   }
 

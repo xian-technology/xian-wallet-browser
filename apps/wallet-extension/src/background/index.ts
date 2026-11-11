@@ -1,4 +1,5 @@
 import { authorizeRuntimeMessage, type MessageSender } from "./message-sender";
+import { countsAsWalletActivity } from "./session-activity";
 import {
   UNLOCKED_SESSION_TIMEOUT_MS,
   WalletController
@@ -519,6 +520,9 @@ chrome.runtime.onMessage.addListener(
     void (async () => {
       try {
         message = authorizeRuntimeMessage(message, sender, chrome.runtime.id);
+        if (countsAsWalletActivity(message.type)) {
+          await controller.touchUnlockedSession();
+        }
         if (
           message.type !== "approval_get" &&
           message.type !== "approval_resolve"

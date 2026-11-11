@@ -261,7 +261,7 @@ let sendArgs: TxArg[] = [];
 let sendEstimateMode = true;
 let sendManualChi = "";
 let sendParsedKwargs: Record<string, unknown> | null = null;
-let sendEstimate: { estimated: number } | null = null;
+let sendEstimate: { estimated: number; suggested: number } | null = null;
 let sendChiRate: number | null = null;
 let sendResult: SendTransactionResult | null = null;
 let argIdCounter = 0;
@@ -292,7 +292,7 @@ let tradeToToken = "";
 let tradeAmount = "";
 let tradeSlippageBps = DEFAULT_SLIPPAGE_BPS;
 let tradeDeadlineMinutes = DEFAULT_DEADLINE_MINUTES;
-let tradeEstimate: { estimated: number } | null = null;
+let tradeEstimate: { estimated: number; suggested: number } | null = null;
 let tradeChiRate: number | null = null;
 let tradeQuoteForReview: DexQuote | null = null;
 let tradeKwargsForReview: Record<string, unknown> | null = null;
@@ -3745,7 +3745,7 @@ async function reviewSimpleSend(
 
   try {
     [sendEstimate, sendChiRate] = await Promise.all([
-      sendRuntimeMessage<{ estimated: number }>({
+      sendRuntimeMessage<{ estimated: number; suggested: number }>({
         type: "wallet_estimate_transaction",
         contract: sendContract,
         function: sendFunction,
@@ -4034,7 +4034,7 @@ function renderSendDraft(): string {
 function renderSendReview(): string {
   const entries = sendParsedKwargs ? Object.entries(sendParsedKwargs) : [];
   const chiNum = sendEstimate
-    ? sendEstimate.estimated
+    ? sendEstimate.suggested
     : Number(sendManualChi);
   const chiLabel = formatChiWithXianCost(chiNum, sendChiRate) ?? "Not provided";
   const argumentRows = entries
@@ -4441,7 +4441,7 @@ function renderTradeReview(state: PopupRuntimeState): string {
   const quote = tradeQuoteForReview;
   const minOut = (tradeKwargsForReview.amountOutMin as { __fixed__: string }).__fixed__;
   const chiLabel = tradeEstimate
-    ? formatChiWithXianCost(tradeEstimate.estimated, tradeChiRate) ?? "Not available"
+    ? formatChiWithXianCost(tradeEstimate.suggested, tradeChiRate) ?? "Not available"
     : "Not available";
   const fn =
     tradeKwargsForReview.path instanceof Array && tradeKwargsForReview.path.length > 0
@@ -4695,7 +4695,7 @@ async function handleTradeReview(state: PopupRuntimeState): Promise<void> {
   clearFlash();
   try {
     [tradeEstimate, tradeChiRate] = await Promise.all([
-      sendRuntimeMessage<{ estimated: number }>({
+      sendRuntimeMessage<{ estimated: number; suggested: number }>({
         type: "wallet_estimate_transaction",
         contract: DEX_ROUTER,
         function: fn,
@@ -4730,7 +4730,7 @@ async function handleTradeSend(state: PopupRuntimeState): Promise<void> {
   const quote = tradeQuoteForReview;
   const kwargs = tradeKwargsForReview;
   const fn = tradeSwapFunction(tradeSnapshot, quote);
-  const chi = tradeEstimate?.estimated;
+  const chi = tradeEstimate?.suggested;
   const notificationState = currentState?.unlocked ? currentState : state;
   tradeStep = "swapping";
   render(notificationState);
@@ -6123,7 +6123,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       if (sendEstimateMode) {
         try {
           [sendEstimate, sendChiRate] = await Promise.all([
-            sendRuntimeMessage<{ estimated: number }>({
+            sendRuntimeMessage<{ estimated: number; suggested: number }>({
               type: "wallet_estimate_transaction",
               contract: sendContract,
               function: sendFunction,
@@ -6183,7 +6183,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
 
       const chi =
         sendEstimateMode && sendEstimate
-          ? sendEstimate.estimated
+          ? sendEstimate.suggested
           : parseInt(sendManualChi, 10) || undefined;
 
       try {
