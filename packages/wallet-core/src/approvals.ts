@@ -52,10 +52,28 @@ function numericValue(value: unknown): number | null {
   return null;
 }
 
+function exactIntegerValue(value: unknown): bigint | null {
+  if (typeof value === "bigint") {
+    return value;
+  }
+  if (typeof value === "string" && /^-?\d+$/.test(value.trim())) {
+    return BigInt(value.trim());
+  }
+  return null;
+}
+
 function formatNumericValue(value: number): string {
   return value.toLocaleString(undefined, {
     maximumFractionDigits: 8
   });
+}
+
+function formatChiAmount(value: unknown, chi: number | null): string {
+  const exactChi = exactIntegerValue(value);
+  if (exactChi != null) {
+    return exactChi.toLocaleString();
+  }
+  return chi == null ? stringifyValue(value) : formatNumericValue(chi);
 }
 
 export function formatChiWithXianCost(
@@ -71,8 +89,7 @@ export function formatChiWithXianCost(
   }
 
   const chi = numericValue(value);
-  const formattedChi =
-    chi == null ? stringifyValue(value) : formatNumericValue(chi);
+  const formattedChi = formatChiAmount(value, chi);
   if (
     typeof chiRate !== "number" ||
     !Number.isFinite(chiRate) ||
@@ -113,6 +130,10 @@ function compactDetail(
   };
 }
 
+function siteDetail(approval: PendingApprovalRecord): ApprovalDetail | null {
+  return compactDetail("Site", approval.origin, { monospace: true });
+}
+
 function compactDetails(
   details: Array<ApprovalDetail | null>
 ): ApprovalDetail[] {
@@ -139,40 +160,32 @@ function trustedDappSuggestion(
   };
 }
 
+function payloadRecord(payload: unknown): Record<string, unknown> {
+  return typeof payload === "object" && payload != null
+    ? (payload as Record<string, unknown>)
+    : {};
+}
+
+function nestedOrSelf(
+  root: Record<string, unknown>,
+  key: string
+): Record<string, unknown> {
+  const nested = root[key];
+  return typeof nested === "object" && nested != null
+    ? (nested as Record<string, unknown>)
+    : root;
+}
+
 function txPayloadFromRequestPayload(payload: unknown): Record<string, unknown> {
-  if (typeof payload !== "object" || payload == null) {
-    return {};
-  }
-  const root = payload as Record<string, unknown>;
-  const tx =
-    typeof root.tx === "object" && root.tx != null
-      ? (root.tx as Record<string, unknown>)
-      : root;
-  const txPayload =
-    typeof tx.payload === "object" && tx.payload != null
-      ? (tx.payload as Record<string, unknown>)
-      : tx;
-  return txPayload;
+  return nestedOrSelf(nestedOrSelf(payloadRecord(payload), "tx"), "payload");
 }
 
 function intentFromRequestPayload(payload: unknown): Record<string, unknown> {
-  if (typeof payload !== "object" || payload == null) {
-    return {};
-  }
-  const root = payload as Record<string, unknown>;
-  return typeof root.intent === "object" && root.intent != null
-    ? (root.intent as Record<string, unknown>)
-    : root;
+  return nestedOrSelf(payloadRecord(payload), "intent");
 }
 
 function assetFromRequestPayload(payload: unknown): Record<string, unknown> {
-  if (typeof payload !== "object" || payload == null) {
-    return {};
-  }
-  const root = payload as Record<string, unknown>;
-  return typeof root.options === "object" && root.options != null
-    ? (root.options as Record<string, unknown>)
-    : root;
+  return nestedOrSelf(payloadRecord(payload), "options");
 }
 
 function messagePreview(message: string): string {
@@ -225,7 +238,7 @@ export function buildApprovalView(
           "Allow this site to view your active address and request wallet actions.",
         approveLabel: "Connect",
         details: compactDetails([
-          compactDetail("Site", approval.origin, { monospace: true }),
+          siteDetail(approval),
           compactDetail("Account", options?.account, { monospace: true }),
           compactDetail("Network", options?.chainId),
           compactDetail("Access", "View your address and request approvals")
@@ -267,6 +280,7 @@ export function buildApprovalView(
             "Allow this site to change the wallet network used by every connected site.",
           approveLabel: "Switch network",
           details: compactDetails([
+            siteDetail(approval),
             compactDetail("Account", options?.account, { monospace: true }),
             compactDetail("Current network", options?.chainId),
             compactDetail("Requested network", targetChainId)
@@ -306,6 +320,7 @@ export function buildApprovalView(
             "Review the exact message carefully. Message signing should never be used as a substitute for transaction approval.",
           approveLabel: "Sign message",
           details: compactDetails([
+            siteDetail(approval),
             compactDetail("Account", options?.account, { monospace: true }),
             compactDetail("Network", options?.chainId),
             compactDetail("Length", `${message.length} characters`),
@@ -335,6 +350,7 @@ export function buildApprovalView(
             "The site already prepared a full transaction payload. Verify the sender, target contract, function, and chi budget before signing.",
           approveLabel: "Sign transaction",
           details: compactDetails([
+            siteDetail(approval),
             compactDetail("Sender", txPayload.sender, { monospace: true }),
             compactDetail("Contract", txPayload.contract, { monospace: true }),
             compactDetail("Function", txPayload.function),
@@ -381,6 +397,7 @@ export function buildApprovalView(
             "The site supplied a full unsigned transaction. Approving will sign and broadcast it from your wallet.",
           approveLabel: "Send transaction",
           details: compactDetails([
+            siteDetail(approval),
             compactDetail("Sender", txPayload.sender, { monospace: true }),
             compactDetail("Contract", txPayload.contract, { monospace: true }),
             compactDetail("Function", txPayload.function),
@@ -432,6 +449,8 @@ export function buildApprovalView(
             "The wallet will prepare, sign, and broadcast this intent on your behalf using the active account and latest nonce.",
           approveLabel: "Approve call",
           details: compactDetails([
+            siteDetail(approval),
+            compactDetail("Account", options?.account, { monospace: true }),
             compactDetail("Contract", intent.contract),
             compactDetail("Function", intent.function),
             compactDetail("Network", intent.chainId ?? options?.chainId),
@@ -484,6 +503,7 @@ export function buildApprovalView(
             "Allow this site to add an asset to your wallet list. This does not verify the asset’s legitimacy.",
           approveLabel: "Add asset",
           details: compactDetails([
+            siteDetail(approval),
             compactDetail("Name", asset.name),
             compactDetail("Symbol", asset.symbol),
             compactDetail("Contract", asset.contract, { monospace: true }),

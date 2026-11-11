@@ -159,4 +159,64 @@ describe("@xian-tech/wallet-core approvals", () => {
       ])
     );
   });
+
+  it("formats unsafe-integer chi exactly as it will be signed", () => {
+    expect(formatChiWithXianCost(12345678901234567891n, null)).toBe(
+      (12345678901234567891n).toLocaleString()
+    );
+    expect(formatChiWithXianCost("12345678901234567891", null)).toBe(
+      (12345678901234567891n).toLocaleString()
+    );
+    expect(formatChiWithXianCost(12_000, null)).toBe((12_000).toLocaleString());
+    expect(formatChiWithXianCost("lots", null)).toBe("lots");
+  });
+
+  it.each([
+    ["switchChain", { method: "xian_switchChain", params: [{ chainId: "xian-testnet-5" }] }],
+    ["signMessage", { method: "xian_signMessage", params: [{ message: "hello" }] }],
+    ["signTransaction", { method: "xian_signTransaction", params: [{ tx: { payload: { contract: "currency", function: "transfer" } } }] }],
+    ["sendTransaction", { method: "xian_sendTransaction", params: [{ tx: { payload: { contract: "currency", function: "transfer" } } }] }],
+    ["sendCall", { method: "xian_sendCall", params: [{ intent: { contract: "currency", function: "transfer", kwargs: {} } }] }],
+    ["watchAsset", { method: "xian_watchAsset", params: [{ options: { contract: "con_token" } }] }]
+  ] as const)("names the requesting site in %s approval details", (kind, request) => {
+    const view = buildApprovalView(makeRecord(kind, request as PendingApprovalRecord["request"]), {
+      account: "abc123",
+      chainId: "xian-local"
+    });
+
+    expect(view.details?.[0]).toEqual(
+      expect.objectContaining({ label: "Site", value: "https://app.example", monospace: true })
+    );
+  });
+
+  it("names the account that will sign a send-call", () => {
+    const view = buildApprovalView(
+      makeRecord("sendCall", {
+        method: "xian_sendCall",
+        params: [{ intent: { contract: "currency", function: "transfer", kwargs: {} } }]
+      }),
+      { account: "abc123", chainId: "xian-local" }
+    );
+
+    expect(view.details).toContainEqual(
+      expect.objectContaining({ label: "Account", value: "abc123" })
+    );
+  });
+
+  it.each([
+    ["sendCall", "xian_sendCall", null],
+    ["sendCall", "xian_sendCall", { intent: null }],
+    ["sendTransaction", "xian_sendTransaction", { tx: null }],
+    ["signTransaction", "xian_signTransaction", { tx: { payload: null } }],
+    ["watchAsset", "xian_watchAsset", { options: null }]
+  ] as const)("builds a %s view from missing nested params (%s)", (kind, method, param) => {
+    const view = buildApprovalView(
+      makeRecord(kind, { method, params: [param] } as PendingApprovalRecord["request"]),
+      { account: "abc123", chainId: "xian-local" }
+    );
+
+    expect(view.details?.[0]).toEqual(
+      expect.objectContaining({ label: "Site", value: "https://app.example" })
+    );
+  });
 });
