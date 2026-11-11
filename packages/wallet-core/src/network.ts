@@ -31,6 +31,9 @@ export function assertRpcTransportAllowed(
   } catch {
     throw new TypeError("network preset rpcUrl must be a valid URL");
   }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new TypeError("network preset rpcUrl must use HTTP or HTTPS");
+  }
   if (
     parsed.protocol === "http:" &&
     !allowInsecureHttp &&

@@ -38,4 +38,17 @@ describe("@xian-tech/wallet-core network URL helpers", () => {
       "network preset rpcUrl must be a valid URL"
     );
   });
+
+  it.each(["ftp://node.example", "file:///tmp/node", "data:text/plain,node", "javascript:void(0)", "ws://node.example"])(
+    "rejects non-HTTP RPC transport %s even with insecure HTTP enabled",
+    (url) => {
+      expect(() => assertRpcTransportAllowed(url, true)).toThrow(
+        "network preset rpcUrl must use HTTP or HTTPS"
+      );
+    }
+  );
+
+  it("accepts HTTPS RPC URLs without insecure HTTP opt-in", () => {
+    expect(() => assertRpcTransportAllowed("https://node.example", false)).not.toThrow();
+  });
 });

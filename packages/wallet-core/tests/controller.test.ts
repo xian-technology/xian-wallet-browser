@@ -2845,6 +2845,24 @@ def private_helper():
     );
   });
 
+  it("does not persist RPC presets with unsupported transports", async () => {
+    const store = createStore();
+    const controller = new WalletController({
+      wallet: { id: "xian-wallet", name: "Xian Wallet", rdns: "org.xian.wallet" },
+      version: "0.1.0-test",
+      store,
+      createClient: () => createClient(),
+      onApprovalRequested: vi.fn(async () => undefined)
+    });
+    await controller.createOrImportWallet({ password: "secret", privateKey: PRIVATE_KEY });
+    const before = structuredClone(store.current());
+
+    await expect(controller.saveNetworkPreset({
+      name: "Unsupported node", rpcUrl: "ftp://node.example", allowInsecureHttp: true, makeActive: true
+    })).rejects.toThrow("network preset rpcUrl must use HTTP or HTTPS");
+    expect(store.current()).toEqual(before);
+  });
+
   it("accepts bracketed IPv6 loopback RPC presets without remote HTTP opt-in", async () => {
     const store = createStore();
     const controller = new WalletController({

@@ -92,6 +92,9 @@ load `apps/wallet-extension/dist` as an unpacked extension. Use a local node
 from `xian-stack` or an explicitly configured custom RPC in the wallet network
 settings.
 
+RPC presets require HTTP or HTTPS URLs. Remote HTTP endpoints require explicit
+HTTP opt-in; loopback HTTP endpoints work without that opt-in.
+
 For dapp testing, pair it with the `xian-js` browser example:
 
 ```bash
