@@ -7,3 +7,7 @@ playwright-report/
 .DS_Store
 xian-wallet-browser-v*.zip
 graphify-out/
+
+# Quality-tool output (crapper, dryer, mutator)
+.metrics/
+target/
