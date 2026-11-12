@@ -277,6 +277,45 @@ function chiToSupply(result: { estimated: number; suggested?: number }): number 
     : result.estimated;
 }
 
+interface SendCallTarget {
+  firstParam: Record<string, unknown>;
+  intent: Record<string, unknown> & { contract: string; function: string };
+}
+
+// A send-call whose intent names a contract and function but no chi: the
+// wallet estimates chi for it before review.
+function sendCallIntentWithoutChi(request: XianProviderRequest): SendCallTarget | null {
+  if (request.method !== "xian_sendCall") {
+    return null;
+  }
+  const firstParam = firstParamObject(request.params);
+  const intent = firstParam.intent;
+  if (
+    !isRecord(intent) ||
+    intent.chi != null ||
+    intent.chiSupplied != null ||
+    typeof intent.contract !== "string" ||
+    typeof intent.function !== "string"
+  ) {
+    return null;
+  }
+  return { firstParam, intent: intent as SendCallTarget["intent"] };
+}
+
+function withSendCallIntent(
+  request: XianProviderRequest,
+  firstParam: Record<string, unknown>,
+  intent: Record<string, unknown>
+): XianProviderRequest {
+  const nextFirstParam = { ...firstParam, intent };
+  return {
+    ...request,
+    params: Array.isArray(request.params)
+      ? [nextFirstParam, ...request.params.slice(1)]
+      : nextFirstParam
+  };
+}
+
 function trimOptionalString(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
@@ -2463,52 +2502,26 @@ export class WalletController {
     request: XianProviderRequest,
     account: string | undefined
   ): Promise<XianProviderRequest> {
-    if (request.method !== "xian_sendCall" || !account) {
+    const target = sendCallIntentWithoutChi(request);
+    if (!account || !target) {
       return request;
     }
 
-    const firstParam = firstParamObject(request.params);
-    const intent = isRecord(firstParam.intent) ? firstParam.intent : null;
-    if (
-      !intent ||
-      intent.chi != null ||
-      intent.chiSupplied != null ||
-      typeof intent.contract !== "string" ||
-      typeof intent.function !== "string"
-    ) {
-      return request;
-    }
-
-    const kwargs = isRecord(intent.kwargs) ? intent.kwargs : {};
+    const kwargs = isRecord(target.intent.kwargs) ? target.intent.kwargs : {};
     try {
       const state = this.requireStoredWallet(await this.loadWalletState());
       const chi = chiToSupply(
         await this.currentClient(state).estimateChi({
           sender: account,
-          contract: intent.contract,
-          function: intent.function,
+          contract: target.intent.contract,
+          function: target.intent.function,
           kwargs
         })
       );
       if (!Number.isFinite(chi) || chi <= 0) {
         return request;
       }
-
-      const nextFirstParam = {
-        ...firstParam,
-        intent: {
-          ...intent,
-          kwargs,
-          chi
-        }
-      };
-
-      return {
-        ...request,
-        params: Array.isArray(request.params)
-          ? [nextFirstParam, ...request.params.slice(1)]
-          : nextFirstParam
-      };
+      return withSendCallIntent(request, target.firstParam, { ...target.intent, kwargs, chi });
     } catch {
       return request;
     }

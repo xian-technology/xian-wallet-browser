@@ -94,20 +94,17 @@ export function formatChiWithXianCost(
 
   const chi = numericValue(value);
   const formattedChi = formatChiAmount(value, chi);
-  if (
-    typeof chiRate !== "number" ||
-    !Number.isFinite(chiRate) ||
-    chiRate <= 0 ||
-    chi == null
-  ) {
-    return formattedChi;
-  }
+  const cost = xianCost(chi, chiRate);
+  return cost == null ? formattedChi : `${formattedChi} (~${formatNumericValue(cost)} XIAN)`;
+}
 
-  const xianCost = chi / chiRate;
-  if (!Number.isFinite(xianCost)) {
-    return formattedChi;
+/** The XIAN that `chi` costs at `chiRate` chi per XIAN, or null when it has no finite value. */
+function xianCost(chi: number | null, chiRate: number | null | undefined): number | null {
+  if (chi == null || typeof chiRate !== "number" || !Number.isFinite(chiRate) || chiRate <= 0) {
+    return null;
   }
-  return `${formattedChi} (~${formatNumericValue(xianCost)} XIAN)`;
+  const cost = chi / chiRate;
+  return Number.isFinite(cost) ? cost : null;
 }
 
 function compactDetail(
