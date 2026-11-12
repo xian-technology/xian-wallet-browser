@@ -177,16 +177,9 @@ function nestedOrSelf(
     : root;
 }
 
-function txPayloadFromRequestPayload(payload: unknown): Record<string, unknown> {
-  return nestedOrSelf(nestedOrSelf(payloadRecord(payload), "tx"), "payload");
-}
-
-function intentFromRequestPayload(payload: unknown): Record<string, unknown> {
-  return nestedOrSelf(payloadRecord(payload), "intent");
-}
-
-function assetFromRequestPayload(payload: unknown): Record<string, unknown> {
-  return nestedOrSelf(payloadRecord(payload), "options");
+/** `payload[key]` when it is an object, else the payload itself (flat request shapes). */
+function requestPart(payload: unknown, key: "tx" | "intent" | "options"): Record<string, unknown> {
+  return nestedOrSelf(payloadRecord(payload), key);
 }
 
 function messagePreview(message: string): string {
@@ -406,52 +399,57 @@ function targetTrustSuggestion(
     : undefined;
 }
 
-function signTransactionView(
-  approval: PendingApprovalRecord,
-  payload: unknown,
-  options: ApprovalViewOptions | undefined
-): ApprovalViewBody {
-  const txPayload = txPayloadFromRequestPayload(payload);
-  return {
-    title: "Sign prepared transaction",
-    description:
-      "The site already prepared a full transaction payload. Verify the sender, target contract, function, and chi budget before signing.",
-    approveLabel: "Sign transaction",
-    details: preparedTransactionDetails(approval, txPayload, options, undefined),
-    highlights: [targetLabel(txPayload)],
-    warnings: [
-      "Prepared transactions may perform arbitrary contract actions. Inspect the raw payload if anything looks unfamiliar."
-    ],
-    trustSuggestion: targetTrustSuggestion(txPayload, "prepared-signature requests"),
-    payload: prettyJson(payload),
-    payloadLabel: "Raw transaction"
+interface PreparedTransactionWording {
+  title: string;
+  description: string;
+  approveLabel: string;
+  chiTone: ApprovalDetail["tone"];
+  highlights: (txPayload: Record<string, unknown>) => string[];
+  warning: string;
+  trustLabel: string;
+}
+
+function preparedTransactionView(
+  wording: PreparedTransactionWording
+): ApprovalViewBuilder {
+  return (approval, payload, options) => {
+    const txPayload = nestedOrSelf(requestPart(payload, "tx"), "payload");
+    return {
+      title: wording.title,
+      description: wording.description,
+      approveLabel: wording.approveLabel,
+      details: preparedTransactionDetails(approval, txPayload, options, wording.chiTone),
+      highlights: wording.highlights(txPayload),
+      warnings: [wording.warning],
+      trustSuggestion: targetTrustSuggestion(txPayload, wording.trustLabel),
+      payload: prettyJson(payload),
+      payloadLabel: "Raw transaction"
+    };
   };
 }
 
-function sendTransactionView(
-  approval: PendingApprovalRecord,
-  payload: unknown,
-  options: ApprovalViewOptions | undefined
-): ApprovalViewBody {
-  const txPayload = txPayloadFromRequestPayload(payload);
-  return {
-    title: "Send prepared transaction",
-    description:
-      "The site supplied a full unsigned transaction. Approving will sign and broadcast it from your wallet.",
-    approveLabel: "Send transaction",
-    details: preparedTransactionDetails(approval, txPayload, options, "warning"),
-    highlights: ["This request can broadcast immediately after approval."],
-    warnings: [
-      "Broadcasting a transaction may move funds or execute irreversible contract logic."
-    ],
-    trustSuggestion: targetTrustSuggestion(
-      txPayload,
-      "prepared-transaction broadcasts"
-    ),
-    payload: prettyJson(payload),
-    payloadLabel: "Raw transaction"
-  };
-}
+const signTransactionView = preparedTransactionView({
+  title: "Sign prepared transaction",
+  description:
+    "The site already prepared a full transaction payload. Verify the sender, target contract, function, and chi budget before signing.",
+  approveLabel: "Sign transaction",
+  chiTone: undefined,
+  highlights: (txPayload) => [targetLabel(txPayload)],
+  warning:
+    "Prepared transactions may perform arbitrary contract actions. Inspect the raw payload if anything looks unfamiliar.",
+  trustLabel: "prepared-signature requests"
+});
+
+const sendTransactionView = preparedTransactionView({
+  title: "Send prepared transaction",
+  description:
+    "The site supplied a full unsigned transaction. Approving will sign and broadcast it from your wallet.",
+  approveLabel: "Send transaction",
+  chiTone: "warning",
+  highlights: () => ["This request can broadcast immediately after approval."],
+  warning: "Broadcasting a transaction may move funds or execute irreversible contract logic.",
+  trustLabel: "prepared-transaction broadcasts"
+});
 
 const SEND_CALL_INTENT_WARNING =
   "The wallet will fill the sender and nonce at approval time. Confirm the contract and arguments match your intent.";
@@ -488,7 +486,7 @@ function sendCallView(
   payload: unknown,
   options: ApprovalViewOptions | undefined
 ): ApprovalViewBody {
-  const intent = intentFromRequestPayload(payload);
+  const intent = requestPart(payload, "intent");
   const kwargs = intentKwargs(intent);
   const chiDetail = sendCallChiDetail(intent.chiSupplied ?? intent.chi, options);
   const chiKnown = chiDetail?.tone === "warning";
@@ -528,7 +526,7 @@ function watchAssetView(
   payload: unknown,
   _options: ApprovalViewOptions | undefined
 ): ApprovalViewBody {
-  const asset = assetFromRequestPayload(payload);
+  const asset = requestPart(payload, "options");
   return {
     title: "Add asset to wallet",
     description:
