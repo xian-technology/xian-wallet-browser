@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { verifyXianMessage } from "@xian-tech/client";
+
 import type {
   TransactionSubmission,
   XianSignedTransaction,
@@ -3518,3 +3520,112 @@ describe("wallet session cancellation", () => {
   });
 });
 
+
+describe("approved provider requests", () => {
+  async function connectedController(estimate?: { estimated: number; suggested?: number }) {
+    const store = createStore();
+    const client = createClient();
+    if (estimate) {
+      vi.mocked(client.estimateChi).mockResolvedValue(estimate);
+    }
+    let next = 0;
+    const controller = new WalletController({
+      wallet: { id: "xian-wallet", name: "Xian Wallet", rdns: "org.xian.wallet" },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined),
+      createId: () => `approval-${++next}`
+    });
+    await controller.createOrImportWallet({ password: "secret", privateKey: PRIVATE_KEY });
+    await controller.startProviderRequest("request-connect", ORIGIN, { method: "xian_requestAccounts" });
+    await controller.resolveApproval("approval-1", true);
+    return { controller, client, store };
+  }
+
+  it("signs an approved message for the connected account and network", async () => {
+    const { controller, store } = await connectedController();
+    await controller.startProviderRequest("request-sign", ORIGIN, {
+      method: "xian_signMessage",
+      params: [{ message: "hello xian" }]
+    });
+    await controller.resolveApproval("approval-2", true);
+
+    const status = await controller.getProviderRequestStatus("request-sign");
+    const account = store.current()!.publicKey;
+    expect(status.status).toBe("fulfilled");
+    const signature = (status as { result: string }).result;
+    expect(verifyXianMessage(account, { account, chainId: "xian-local", message: "hello xian" }, signature)).toBe(true);
+    expect(verifyXianMessage(account, { account, chainId: "xian-other", message: "hello xian" }, signature)).toBe(false);
+  });
+
+  it("refuses an approved request once the wallet has locked", async () => {
+    const { controller } = await connectedController();
+    await controller.startProviderRequest("request-sign", ORIGIN, {
+      method: "xian_signMessage",
+      params: [{ message: "hello xian" }]
+    });
+    await controller.lockWallet();
+    await controller.resolveApproval("approval-2", true);
+
+    await expect(controller.getProviderRequestStatus("request-sign")).resolves.toEqual({
+      status: "rejected",
+      error: expect.objectContaining({ code: 4100, message: "wallet is locked" })
+    });
+  });
+
+  it("tracks an approved asset once, replacing an earlier entry for the contract", async () => {
+    const { controller, store } = await connectedController();
+    for (const [id, name] of [["request-watch-1", "Old"], ["request-watch-2", " New "]] as const) {
+      await controller.startProviderRequest(id, ORIGIN, {
+        method: "xian_watchAsset",
+        params: [{ type: "token", options: { contract: " con_token ", name, symbol: "TKN" } }]
+      });
+    }
+    await controller.resolveApproval("approval-2", true);
+    await controller.resolveApproval("approval-3", true);
+
+    await expect(controller.getProviderRequestStatus("request-watch-2")).resolves.toEqual({
+      status: "fulfilled",
+      result: true
+    });
+    const tracked = store.current()!.watchedAssets.filter((asset) => asset.contract === "con_token");
+    expect(tracked).toEqual([expect.objectContaining({ contract: "con_token", name: "New", symbol: "TKN" })]);
+  });
+
+  it.each([
+    ["a zero estimate", { estimated: 0 }],
+    ["a non-finite estimate", { estimated: Number.NaN }]
+  ])("leaves send-call chi to the user after %s", async (_label, estimate) => {
+    const { controller, store } = await connectedController(estimate);
+    await controller.startProviderRequest("request-send", ORIGIN, {
+      method: "xian_sendCall",
+      params: [{ intent: { contract: "currency", function: "transfer", kwargs: { amount: 1, to: "bob" } } }]
+    });
+
+    const stored = store.currentApprovals()["approval-2"]!.record.request.params as Array<{ intent: Record<string, unknown> }>;
+    expect(stored[0]!.intent.chi).toBeUndefined();
+  });
+
+  it("supplies the suggested chi to a send-call whose params are a single object", async () => {
+    const { controller, client, store } = await connectedController({ estimated: 500, suggested: 550 });
+    await controller.startProviderRequest("request-send", ORIGIN, {
+      method: "xian_sendCall",
+      params: { intent: { contract: "currency", function: "transfer" } } as never
+    });
+
+    const stored = store.currentApprovals()["approval-2"]!.record.request.params as { intent: Record<string, unknown> };
+    expect(stored.intent).toEqual(expect.objectContaining({ chi: 550, kwargs: {} }));
+    expect(client.estimateChi).toHaveBeenCalledWith(expect.objectContaining({ kwargs: {} }));
+  });
+
+  it("does not re-estimate a send-call that already names its chi", async () => {
+    const { controller, client } = await connectedController({ estimated: 500 });
+    await controller.startProviderRequest("request-send", ORIGIN, {
+      method: "xian_sendCall",
+      params: [{ intent: { contract: "currency", function: "transfer", kwargs: {}, chiSupplied: 900 } }]
+    });
+
+    expect(client.estimateChi).not.toHaveBeenCalled();
+  });
+});

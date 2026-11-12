@@ -23,6 +23,19 @@ describe("@xian-tech/wallet-core approvals", () => {
     expect(formatChiWithXianCost(16, null)).toBe("16");
   });
 
+  it("omits the XIAN cost when there is no usable chi rate or the cost overflows", () => {
+    for (const rate of [0, -5, Number.NaN, Number.POSITIVE_INFINITY, undefined]) {
+      expect(formatChiWithXianCost(500, rate)).toBe("500");
+    }
+    expect(formatChiWithXianCost(Number.MAX_VALUE, Number.MIN_VALUE)).toBe(
+      Number.MAX_VALUE.toLocaleString()
+    );
+    expect(formatChiWithXianCost("lots", 25)).toBe("lots");
+    for (const missing of [null, undefined, "", Number.NaN]) {
+      expect(formatChiWithXianCost(missing, 25)).toBeNull();
+    }
+  });
+
   it.each(["signTransaction", "sendTransaction", "sendCall"] as const)(
     "renders %s approvals with exact nested runtime values",
     (kind) => {
@@ -84,6 +97,99 @@ describe("@xian-tech/wallet-core approvals", () => {
     expect(view.warnings).toContain(
       "Only connect sites you trust. You can revoke site access from the wallet at any time."
     );
+  });
+
+  it("leaves the account and network out of a connect view when they are unknown", () => {
+    const view = buildApprovalView(makeRecord("connect", { method: "xian_requestAccounts" }));
+
+    expect(view.details.map((detail) => detail.label)).toEqual(["Site", "Access"]);
+    expect(JSON.parse(view.payload)).toEqual({
+      origin: "https://app.example",
+      account: null,
+      chainId: null
+    });
+  });
+
+  it("shows the exact message to sign whatever shape the request carries it in", () => {
+    const view = (params: unknown) =>
+      buildApprovalView(
+        makeRecord("signMessage", { method: "xian_signMessage", params: params as never }),
+        { account: "abc123", chainId: "xian-local" }
+      );
+    const long = "x".repeat(161);
+
+    expect(view(["plain text"]).payload).toBe("plain text");
+    expect(view({ message: "object form" }).payload).toBe("object form");
+    expect(view([{}]).payload).toBe("");
+    expect(view([{}]).highlights).toEqual([]);
+    expect(view(undefined).payload).toBe("");
+    expect(view([{ message: long }]).highlights).toEqual([`${"x".repeat(157)}...`]);
+    expect(view([{ message: long }]).payload).toBe(long);
+    expect(view([{ message: "hi" }]).details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "Account", value: "abc123" }),
+        expect.objectContaining({ label: "Network", value: "xian-local" }),
+        expect.objectContaining({ label: "Length", value: "2 characters" }),
+        expect.objectContaining({ label: "Preview", value: "hi" })
+      ])
+    );
+  });
+
+  it.each([
+    [
+      "signTransaction",
+      {
+        title: "Sign prepared transaction",
+        approveLabel: "Sign transaction",
+        highlights: ["currency.transfer"],
+        warnings: [
+          "Prepared transactions may perform arbitrary contract actions. Inspect the raw payload if anything looks unfamiliar."
+        ],
+        chiTone: undefined,
+        trustLabel: "prepared-signature requests"
+      }
+    ],
+    [
+      "sendTransaction",
+      {
+        title: "Send prepared transaction",
+        approveLabel: "Send transaction",
+        highlights: ["This request can broadcast immediately after approval."],
+        warnings: [
+          "Broadcasting a transaction may move funds or execute irreversible contract logic."
+        ],
+        chiTone: "warning",
+        trustLabel: "prepared-transaction broadcasts"
+      }
+    ]
+  ] as const)("describes a %s request with its own wording", (kind, expected) => {
+    const tx = {
+      payload: {
+        contract: "currency",
+        function: "transfer",
+        kwargs: { amount: 1, to: "bob" },
+        sender: "a".repeat(64),
+        chain_id: "xian-local",
+        nonce: 3,
+        chi_supplied: 500
+      }
+    };
+    const view = buildApprovalView(
+      makeRecord(kind, { method: `xian_${kind}`, params: [{ tx }] }),
+      { account: "a".repeat(64), chainId: "xian-local" }
+    );
+
+    expect(view).toMatchObject({
+      title: expected.title,
+      approveLabel: expected.approveLabel,
+      highlights: expected.highlights,
+      warnings: expected.warnings,
+      payloadLabel: "Raw transaction"
+    });
+    expect(view.description.length).toBeGreaterThan(0);
+    expect(JSON.parse(view.payload)).toEqual({ tx: { payload: expect.objectContaining({ nonce: 3 }) } });
+    expect(view.details.find((detail) => detail.label === "Chi")?.tone).toBe(expected.chiTone);
+    expect(JSON.stringify(view.trustSuggestion)).toContain(expected.trustLabel);
   });
 
   it("builds a chain-switch view that names both reviewed networks", () => {
