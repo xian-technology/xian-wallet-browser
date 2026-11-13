@@ -1,4 +1,4 @@
-import { UNLOCKED_SESSION_TIMEOUT_MS } from "@xian-tech/wallet-core";
+import { UNLOCKED_SESSION_TIMEOUT_MS, WalletController, type ApprovalView } from "@xian-tech/wallet-core";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 import type { RuntimeMessage } from "../shared/messages";
@@ -1038,5 +1038,63 @@ describe("approval window synchronization", () => {
     expect(response).toMatchObject({ ok: false, error: { message: "failed to open approval window" } });
     expect(controller("lockWallet")).toHaveBeenCalledTimes(1);
     expect(retry.response).toEqual({ ok: true, result: { from: "lockWallet" } });
+  });
+});
+
+describe("approval requests from the wallet controller", () => {
+  type RemovedListener = (windowId: number) => void;
+  const requestApproval = async (approvalId: string): Promise<void> => {
+    const options = vi.mocked(WalletController).mock.calls[0]![0];
+    await options.onApprovalRequested!(approvalId, {} as ApprovalView);
+  };
+
+  async function closeWindow(windowId: number): Promise<void> {
+    chromeFake.windows.get.mockRejectedValue(new Error("gone"));
+    (chromeFake.windows.onRemoved.addListener.mock.calls[0]![0] as RemovedListener)(windowId);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  it("opens, attaches and tracks an approval window in popup mode", async () => {
+    storage("listApprovalStates").mockResolvedValue([{ id: "q1" }]);
+    chromeFake.windows.create.mockResolvedValue({ id: 31 });
+
+    await requestApproval("q1");
+
+    expect(chromeFake.windows.create).toHaveBeenCalledWith(
+      expect.objectContaining({ url: `chrome-extension://${EXTENSION_ID}/approval.html?approvalId=q1` })
+    );
+    expect(controller("attachApprovalWindow").mock.calls).toEqual([["q1", 31]]);
+    expect(chromeFake.runtime.sendMessage).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(chromeFake.action.setBadgeText).toHaveBeenCalledWith({ text: "1" }));
+    await closeWindow(31);
+    expect(controller("dismissApproval").mock.calls).toEqual([["q1"]]);
+  });
+
+  it("shows the approval inline in an open side panel", async () => {
+    storage("loadWalletShellMode").mockResolvedValue("sidePanel");
+
+    await requestApproval("q2");
+
+    expect(chromeFake.runtime.sendMessage.mock.calls).toEqual([[{ type: "approval_notify", approvalId: "q2" }]]);
+    expect(chromeFake.windows.create).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a tracked window when the side panel is closed", async () => {
+    storage("loadWalletShellMode").mockResolvedValue("sidePanel");
+    chromeFake.runtime.sendMessage.mockRejectedValue(new Error("no receiver"));
+    chromeFake.windows.create.mockResolvedValue({ id: 32 });
+
+    await requestApproval("q3");
+
+    expect(controller("attachApprovalWindow").mock.calls).toEqual([["q3", 32]]);
+    await closeWindow(32);
+    expect(controller("dismissApproval").mock.calls).toEqual([["q3"]]);
+  });
+
+  it("rejects when the approval window cannot be opened", async () => {
+    chromeFake.windows.create.mockResolvedValue({ id: "not-a-number" });
+
+    await expect(requestApproval("q4")).rejects.toThrow("failed to open approval window");
+    expect(controller("attachApprovalWindow")).not.toHaveBeenCalled();
   });
 });
