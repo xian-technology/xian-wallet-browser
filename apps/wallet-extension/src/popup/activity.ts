@@ -51,3 +51,29 @@ export function activityHasTx(txs: ActivityTx[], hash: string): boolean {
     (tx) => normalizedActivityTxHash(tx.tx_hash) === expectedHash
   );
 }
+
+/** Shown for a transaction that ran out of its exactly estimated chi. */
+export const OUT_OF_CHI_MESSAGE =
+  "Out of chi: the chain state changed since the estimate. Review the transaction and try again.";
+
+function failureText(result: unknown): string | null {
+  if (typeof result === "string") return result;
+  if (!result || typeof result !== "object") return null;
+  const record = result as Record<string, unknown>;
+  const message = record.error ?? record.message ?? record.result ?? null;
+  if (typeof message === "string") return message;
+  try {
+    return JSON.stringify(result);
+  } catch {
+    return null;
+  }
+}
+
+/** The message for a failed transaction, or null when it did not fail. */
+export function failedActivityMessage(tx: ActivityTx): string | null {
+  if (tx.success) return null;
+  const text = failureText(tx.result);
+  // Wallets supply exactly the simulated chi, so running out of it means the
+  // state moved between the estimate and execution.
+  return text !== null && /out of chi/i.test(text) ? OUT_OF_CHI_MESSAGE : text;
+}

@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   activityHasTx,
   activityTxTimestampMillis,
-  mergeActivityTxs
+  failedActivityMessage,
+  mergeActivityTxs,
+  OUT_OF_CHI_MESSAGE
 } from "./activity";
 import { classifyTx, type ActivityTx } from "./tx-classify";
 
@@ -51,5 +53,29 @@ describe("transaction activity", () => {
     });
 
     expect(classifyTx(indexed)).toMatchObject({ category: "buy", label: "Buy" });
+  });
+});
+
+describe("failed activity message", () => {
+  it("explains an out-of-chi failure as a state change since the estimate", () => {
+    for (const result of ["Out of chi.", "VmExecutionError('Out of chi.')", { error: "out of chi" }]) {
+      expect(failedActivityMessage(activityTx({ success: false, result }))).toBe(OUT_OF_CHI_MESSAGE);
+    }
+    expect(OUT_OF_CHI_MESSAGE).toMatch(/state changed since the estimate/i);
+  });
+
+  it("shows other failures as the node reported them", () => {
+    expect(failedActivityMessage(activityTx({ success: false, result: "AssertionError('nope')" }))).toBe(
+      "AssertionError('nope')"
+    );
+    expect(failedActivityMessage(activityTx({ success: false, result: { message: "bad" } }))).toBe("bad");
+    expect(failedActivityMessage(activityTx({ success: false, result: { code: 7 } }))).toBe('{"code":7}');
+    expect(failedActivityMessage(activityTx({ success: false, result: { result: "inner" } }))).toBe("inner");
+    expect(failedActivityMessage(activityTx({ success: false, result: 42 }))).toBeNull();
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    expect(failedActivityMessage(activityTx({ success: false, result: circular }))).toBeNull();
+    expect(failedActivityMessage(activityTx({ success: false }))).toBeNull();
+    expect(failedActivityMessage(activityTx({ success: true, result: "Out of chi." }))).toBeNull();
   });
 });

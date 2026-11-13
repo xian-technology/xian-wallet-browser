@@ -128,6 +128,7 @@ import {
 import {
   activityHasTx as activityTxListHasHash,
   activityTxTimestampMillis,
+  failedActivityMessage,
   isLocalUnindexedTx,
   mergeActivityTxs,
   normalizedActivityTxHash
@@ -3235,23 +3236,7 @@ function renderTxDetail(tx: ActivityTx, state: PopupRuntimeState): string {
     }
   }
 
-  const resultMessage = (() => {
-    if (tx.success) return null;
-    const res = tx.result as unknown;
-    if (!res) return null;
-    if (typeof res === "string") return res;
-    if (typeof res === "object") {
-      const obj = res as Record<string, unknown>;
-      const msg = obj.error ?? obj.message ?? obj.result ?? null;
-      if (typeof msg === "string") return msg;
-      try {
-        return JSON.stringify(res);
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  })();
+  const resultMessage = failedActivityMessage(tx);
 
   return `
     <div class="settings-wrap">
