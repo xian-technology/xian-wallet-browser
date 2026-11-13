@@ -1,9 +1,10 @@
+import { WalletController } from "@xian-tech/wallet-core";
+
+import { unlockedSessionExpiry } from "./auto-lock";
 import { authorizeRuntimeMessage, type MessageSender } from "./message-sender";
+import { dispatchRuntimeMessage } from "./runtime-dispatch";
+import { createRuntimeHandlers } from "./runtime-handlers";
 import { countsAsWalletActivity } from "./session-activity";
-import {
-  UNLOCKED_SESSION_TIMEOUT_MS,
-  WalletController
-} from "@xian-tech/wallet-core";
 
 import {
   fail,
@@ -16,7 +17,6 @@ import {
   DEFAULT_WALLET_SHELL_MODE,
   type WalletShellMode
 } from "../shared/preferences";
-import { completedProviderRequestMessage } from "./provider-request-notification";
 import {
   deleteApprovalState,
   listApprovalStates,
@@ -36,10 +36,7 @@ import {
   deleteRequestState,
   clearUnlockedSession,
   clearWalletState,
-  loadContacts,
-  saveContacts,
   loadAutoLock,
-  saveAutoLock,
   saveLocalActivityTx,
   type StoredLocalActivityTx
 } from "../shared/storage";
@@ -49,8 +46,6 @@ const WALLET_METADATA = {
   name: "Xian Wallet",
   rdns: "org.xian.wallet.shell"
 };
-
-const DISABLED_AUTO_LOCK_EXPIRES_AT = Number.MAX_SAFE_INTEGER;
 
 const approvalWindowIds = new Map<number, string>();
 
@@ -385,14 +380,12 @@ const controller = new WalletController({
     listRequestStates,
     loadApprovalState,
     saveApprovalState,
-  claimApprovalExecution,
+    claimApprovalExecution,
     deleteApprovalState,
     listApprovalStates
   },
   getUnlockedSessionExpiry: async (now) =>
-    (await loadAutoLock())
-      ? now + UNLOCKED_SESSION_TIMEOUT_MS
-      : DISABLED_AUTO_LOCK_EXPIRES_AT,
+    unlockedSessionExpiry(await loadAutoLock(), now),
   onApprovalRequested: async (approvalId) => {
     void updateApprovalBadge();
     const shellMode = await loadWalletShellMode();
@@ -413,6 +406,14 @@ const controller = new WalletController({
     await controller.attachApprovalWindow(approvalId, windowId);
   },
   onProviderEvent: broadcastProviderEvent
+});
+
+const runtimeHandlers = createRuntimeHandlers({
+  controller,
+  getPopupRuntimeState,
+  setShellMode,
+  updateApprovalBadge,
+  publishProviderTransaction
 });
 
 async function syncApprovalWindows(): Promise<void> {
@@ -530,236 +531,7 @@ chrome.runtime.onMessage.addListener(
           await syncApprovalWindows();
         }
 
-        switch (message.type) {
-          case "wallet_get_popup_state":
-            sendResponse(ok(await getPopupRuntimeState()));
-            return;
-          case "wallet_get_asset_balances":
-            sendResponse(ok(await controller.getAssetBalanceSnapshot()));
-            return;
-          case "wallet_get_detected_assets":
-            sendResponse(ok(await controller.getDetectedAssets()));
-            return;
-          case "wallet_get_token_metadata":
-            sendResponse(ok(await controller.getTokenMetadata(message.contract)));
-            return;
-          case "wallet_track_asset":
-            sendResponse(ok(await controller.trackAsset(message.asset)));
-            return;
-          case "wallet_update_assets":
-            sendResponse(ok(await controller.updateAssetSettings(message.assets)));
-            return;
-          case "wallet_update_asset_decimals":
-            sendResponse(ok(await controller.updateWatchedAssetDecimals(message.contract, message.decimals)));
-            return;
-          case "wallet_estimate_transaction":
-            sendResponse(ok(await controller.estimateTransactionChi({
-              contract: message.contract,
-              function: message.function,
-              kwargs: message.kwargs
-            })));
-            return;
-          case "wallet_get_chi_rate":
-            sendResponse(ok(await controller.getChiRate()));
-            return;
-          case "wallet_send_direct_transaction":
-            sendResponse(ok(await controller.sendDirectTransaction({
-              contract: message.contract,
-              function: message.function,
-              kwargs: message.kwargs,
-              chi: message.chi
-            })));
-            return;
-          case "wallet_get_contract_methods":
-            sendResponse(ok(await controller.getContractMethods(message.contract)));
-            return;
-          case "wallet_get_dex_snapshot":
-            sendResponse(ok(await controller.getDexSnapshot()));
-            return;
-          case "wallet_create":
-            {
-              const created = await controller.createOrImportWallet(message);
-              sendResponse(
-                ok({
-                  ...created,
-                  popupState: await getPopupRuntimeState()
-                })
-              );
-            }
-            return;
-          case "wallet_unlock":
-            sendResponse(ok(await controller.unlockWallet(message.password)));
-            return;
-          case "wallet_lock":
-            sendResponse(ok(await controller.lockWallet()));
-            return;
-          case "wallet_remove":
-            sendResponse(ok(await controller.removeWallet()));
-            return;
-          case "wallet_update_settings":
-            sendResponse(ok(await controller.updateSettings(message)));
-            return;
-          case "wallet_save_network_preset":
-            sendResponse(ok(await controller.saveNetworkPreset(message)));
-            return;
-          case "wallet_switch_network":
-            sendResponse(ok(await controller.switchNetwork(message.presetId)));
-            return;
-          case "wallet_remove_network_preset":
-            sendResponse(ok(await controller.removeNetworkPreset(message.presetId)));
-            return;
-          case "wallet_disconnect_origin":
-            sendResponse(ok(await controller.disconnectOrigin(message.origin)));
-            return;
-          case "wallet_disconnect_all_origins":
-            sendResponse(ok(await controller.disconnectAllOrigins()));
-            return;
-          case "wallet_remove_trusted_dapp_policy":
-            sendResponse(ok(await controller.removeTrustedDappPolicy(message.policyId)));
-            return;
-          case "wallet_remove_asset":
-            sendResponse(ok(await controller.removeWatchedAsset(message.contract)));
-            return;
-          case "wallet_add_account":
-            sendResponse(ok(await controller.addAccount()));
-            return;
-          case "wallet_switch_account":
-            sendResponse(ok(await controller.switchAccount(message.index)));
-            return;
-          case "wallet_rename_account":
-            sendResponse(ok(await controller.renameAccount(message.index, message.name)));
-            return;
-          case "wallet_remove_account":
-            sendResponse(ok(await controller.removeAccount(message.index)));
-            return;
-          case "wallet_export":
-            sendResponse(ok(await controller.exportWallet(message.password)));
-            return;
-          case "wallet_import_backup":
-            sendResponse(ok(await controller.importWalletBackup(message.backup, message.password)));
-            return;
-          case "wallet_save_shielded_snapshot":
-            sendResponse(
-              ok(
-                await controller.saveShieldedWalletSnapshot(
-                  message.stateSnapshot,
-                  message.label
-                )
-              )
-            );
-            return;
-          case "wallet_export_shielded_snapshot":
-            sendResponse(
-              ok(
-                await controller.exportShieldedWalletSnapshot(
-                  message.snapshotId,
-                  message.password
-                )
-              )
-            );
-            return;
-          case "wallet_remove_shielded_snapshot":
-            sendResponse(
-              ok(
-                await controller.removeShieldedWalletSnapshot(
-                  message.snapshotId
-                )
-              )
-            );
-            return;
-          case "wallet_get_shielded_snapshot_history":
-            sendResponse(
-              ok(
-                await controller.getShieldedWalletSnapshotHistory(
-                  message.snapshotId,
-                  message.limit
-                )
-              )
-            );
-            return;
-          case "wallet_reveal_mnemonic":
-            sendResponse(ok(await controller.revealMnemonic(message.password)));
-            return;
-          case "wallet_reveal_private_key":
-            sendResponse(ok(await controller.revealPrivateKey(message.password)));
-            return;
-          case "wallet_set_shell_mode":
-            sendResponse(ok(await setShellMode(message.shellMode)));
-            return;
-          case "wallet_get_auto_lock":
-            sendResponse(ok(await loadAutoLock()));
-            return;
-          case "wallet_set_auto_lock":
-            await saveAutoLock(message.enabled);
-            {
-              const session = await loadUnlockedSession();
-              if (session) {
-                session.expiresAt = message.enabled
-                  ? Date.now() + UNLOCKED_SESSION_TIMEOUT_MS
-                  : DISABLED_AUTO_LOCK_EXPIRES_AT;
-                await saveUnlockedSession(session);
-              }
-            }
-            sendResponse(ok(await getPopupRuntimeState()));
-            return;
-          case "contacts_get":
-            sendResponse(ok(await loadContacts()));
-            return;
-          case "contacts_save":
-            await saveContacts(message.contacts);
-            sendResponse(ok(null));
-            return;
-          case "approval_get":
-            sendResponse(ok(await controller.getApprovalView(message.approvalId)));
-            return;
-          case "approval_resolve": {
-            const result = await controller.resolveApproval(
-              message.approvalId,
-              message.approved,
-              { trust: message.trust }
-            );
-            void updateApprovalBadge();
-            sendResponse(ok(result));
-            return;
-          }
-          case "provider_request":
-            {
-              const result = await controller.startProviderRequest(
-                message.requestId,
-                message.origin,
-                message.request,
-                { dappMetadata: message.dappMetadata }
-              );
-              if (result.status === "fulfilled") {
-                await publishProviderTransaction(message, result, true);
-              }
-              sendResponse(ok(result));
-            }
-            return;
-          case "provider_request_status":
-            {
-              const storedRequest = await loadRequestState(message.requestId);
-              const result = await controller.getProviderRequestStatus(
-                message.requestId,
-                {
-                  origin: message.origin,
-                  consume: message.consume
-                }
-              );
-              const completedRequest = completedProviderRequestMessage(
-                message,
-                storedRequest,
-                result
-              );
-              if (completedRequest && result.status === "fulfilled") {
-                await publishProviderTransaction(completedRequest, result, false);
-              }
-              sendResponse(ok(result));
-            }
-            return;
-          default:
-            throw new Error("unsupported runtime message");
-        }
+        sendResponse(ok(await dispatchRuntimeMessage(runtimeHandlers, message)));
       } catch (error) {
         sendResponse(fail(error));
       }
