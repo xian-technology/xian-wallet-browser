@@ -2168,6 +2168,7 @@ def private_helper():
   });
 
   it("unlocks without waiting for reconnect lifecycle broadcasts", async () => {
+    const onProviderEvent = vi.fn(() => new Promise<void>(() => undefined));
     const store = createStore();
     const client = createClient();
     const controllerA = new WalletController({
@@ -2202,19 +2203,15 @@ def private_helper():
       store,
       createClient: () => client,
       onApprovalRequested: vi.fn(async () => undefined),
-      onProviderEvent: vi.fn(() => new Promise<void>(() => undefined))
+      onProviderEvent
     });
 
-    const unlocked = await Promise.race([
-      controllerB.unlockWallet("secret"),
-      new Promise<never>((_, reject) => {
-        setTimeout(() => {
-          reject(new Error("unlock timed out"));
-        }, 250);
-      })
-    ]);
+    // The broadcast never settles, so an unlock that awaited it would never
+    // resolve. No wall-clock race: the password KDF is slow under load.
+    const unlocked = await controllerB.unlockWallet("secret");
 
     expect(unlocked.unlocked).toBe(true);
+    await vi.waitFor(() => expect(onProviderEvent).toHaveBeenCalled());
   });
 
   it("treats stalled chain id lookups as unreachable in popup state", async () => {
