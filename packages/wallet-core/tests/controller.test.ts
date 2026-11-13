@@ -3240,6 +3240,29 @@ describe("wallet session cancellation", () => {
     expect((await make().getPopupState()).unlocked).toBe(false);
   });
 
+  it("keeps the wallet unlocked when a session read overlaps an account switch", async () => {
+    const store = createStore(), client = createClient();
+    const controller = new WalletController({ wallet: { id: "xian-wallet", name: "Xian", rdns: "org.xian.wallet" }, version: "test", store, createClient: () => client });
+    await controller.createOrImportWallet({ password: "wallet-password", createWithMnemonic: true });
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    const beforeSwitch = store.currentSession();
+    vi.spyOn(store, "loadUnlockedSession").mockImplementationOnce(async () => {
+      entered(); await gate; return beforeSwitch;
+    });
+    // A popup refresh reads the session for the first account...
+    const refreshing = controller.getPopupState();
+    await waiting;
+    // ...while the user adds (and switches to) a second account.
+    const added = await controller.addAccount();
+    release();
+    expect((await refreshing).unlocked).toBe(true);
+    const after = await controller.getPopupState();
+    expect(after).toMatchObject({ unlocked: true, publicKey: added.publicKey });
+    expect(store.currentSession()?.publicKey).toBe(added.publicKey);
+  });
+
   describe("unlock session activity", () => {
     function makeClockedController(store: MemoryStore, client: WalletNetworkClient) {
       const clock = { now: 1_000_000 };

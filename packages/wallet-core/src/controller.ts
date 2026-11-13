@@ -1147,10 +1147,15 @@ export class WalletController {
   private async restoreUnlockedSession(): Promise<boolean> {
     // Let a lock clear an in-flight save before restoring persisted credentials.
     const generation = this.sessionGeneration;
+    const signer = this.unlockedSigner;
     await this.automaticSendTails.get("wallet-session");
     if (generation !== this.sessionGeneration) return false;
     const session = await this.store.loadUnlockedSession();
     if (generation !== this.sessionGeneration) return false;
+    // An account switch, unlock or import replaced the signer while the
+    // session was read, so the read predates that writer's queued save:
+    // re-read instead of judging the new signer by the old session.
+    if (this.unlockedSigner !== signer) return this.restoreUnlockedSession();
     if (!session) {
       this.resetSessionSecrets();
       return false;
