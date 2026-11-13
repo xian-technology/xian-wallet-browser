@@ -217,10 +217,11 @@ export interface ApprovalViewOptions {
   chiRate?: number | null;
 }
 
+// Every builder lists its details and highlights, even when empty.
 type ApprovalViewBody = Omit<
   ApprovalView,
-  "id" | "origin" | "kind" | "account" | "chainId" | "createdAt"
->;
+  "id" | "origin" | "kind" | "account" | "chainId" | "createdAt" | "details" | "highlights"
+> & { details: ApprovalDetail[]; highlights: string[] };
 
 type ApprovalViewBuilder = (
   approval: PendingApprovalRecord,
@@ -561,12 +562,12 @@ const APPROVAL_VIEW_BUILDERS: Record<ApprovalKind, ApprovalViewBuilder> = {
 };
 
 function revealHiddenText(body: ApprovalViewBody): ApprovalViewBody {
-  const details = body.details?.map((detail) => ({
+  const details = body.details.map((detail) => ({
     ...detail,
     label: revealHiddenCharacters(detail.label),
     value: revealHiddenCharacters(detail.value)
   }));
-  const highlights = body.highlights?.map(revealHiddenCharacters);
+  const highlights = body.highlights.map(revealHiddenCharacters);
   const payload = revealHiddenCharacters(body.payload);
   const revealed =
     payload !== body.payload ||
