@@ -1193,11 +1193,9 @@ export class WalletController {
       : now + UNLOCKED_SESSION_TIMEOUT_MS;
   }
 
-  private assertSessionCurrent(generation: number, publicKey: string, sessionKey: string): void {
-    if (generation !== this.sessionGeneration || this.unlockedSigner?.address !== publicKey ||
-        this.unlockedSessionKey !== sessionKey) {
-      throw new ProviderUnauthorizedError("wallet locked or changed during session save");
-    }
+  private isSessionCurrent(generation: number, publicKey: string, sessionKey: string): boolean {
+    return generation === this.sessionGeneration && this.unlockedSigner?.address === publicKey &&
+      this.unlockedSessionKey === sessionKey;
   }
 
   private async sessionExpiry(publicKey: string, expiresAt?: number): Promise<number> {
@@ -1206,31 +1204,33 @@ export class WalletController {
     return current?.publicKey === publicKey && current.expiresAt > resolved ? current.expiresAt : resolved;
   }
 
-  private async saveCurrentSession(generation: number, publicKey: string, sessionKey: string, expiresAt?: number): Promise<void> {
-    this.assertSessionCurrent(generation, publicKey, sessionKey);
+  /** Saves the session it was queued for; false when a lock or new signer overtook it. */
+  private async saveCurrentSession(generation: number, publicKey: string, sessionKey: string, expiresAt?: number): Promise<boolean> {
     const nextExpiresAt = await this.sessionExpiry(publicKey, expiresAt);
-    this.assertSessionCurrent(generation, publicKey, sessionKey);
+    if (!this.isSessionCurrent(generation, publicKey, sessionKey)) return false;
     await this.store.saveUnlockedSession({ publicKey, expiresAt: nextExpiresAt, sessionKey });
-    try {
-      this.assertSessionCurrent(generation, publicKey, sessionKey);
-    } catch (error) {
+    if (!this.isSessionCurrent(generation, publicKey, sessionKey)) {
       // Still inside the session queue: cleanup cannot erase a newer save.
       await this.store.clearUnlockedSession();
-      throw error;
+      return false;
     }
     this.unlockedSessionExpiresAt = nextExpiresAt;
+    return true;
+  }
+
+  private async writeUnlockedSession(expiresAt?: number): Promise<boolean> {
+    const signer = this.unlockedSigner, sessionKey = this.unlockedSessionKey;
+    if (!signer || !sessionKey) return false;
+    const generation = this.sessionGeneration;
+    return this.runAutomaticSendExclusive("wallet-session", () =>
+      this.saveCurrentSession(generation, signer.address, sessionKey, expiresAt)
+    );
   }
 
   private async persistUnlockedSession(expiresAt?: number): Promise<void> {
-    if (!this.unlockedSigner || !this.unlockedSessionKey) {
-      throw new ProviderUnauthorizedError("wallet is locked");
+    if (!await this.writeUnlockedSession(expiresAt)) {
+      throw new ProviderUnauthorizedError("wallet locked or changed during session save");
     }
-    const generation = this.sessionGeneration;
-    const publicKey = this.unlockedSigner.address;
-    const sessionKey = this.unlockedSessionKey;
-    await this.runAutomaticSendExclusive("wallet-session", () =>
-      this.saveCurrentSession(generation, publicKey, sessionKey, expiresAt)
-    );
   }
 
   private async clearUnlockedSession(): Promise<void> {
@@ -1269,8 +1269,9 @@ export class WalletController {
     if (!(await this.restoreUnlockedSession())) {
       return false;
     }
-    await this.persistUnlockedSession();
-    return true;
+    // A lock or account switch that overtakes the extension queued its own
+    // session write behind it: re-read the session that writer leaves.
+    return await this.writeUnlockedSession() || this.restoreUnlockedSession();
   }
 
   private currentClient(state: StoredWalletState): WalletNetworkClient {

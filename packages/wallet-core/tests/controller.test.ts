@@ -3273,6 +3273,74 @@ describe("wallet session cancellation", () => {
     expect(store.currentSession()?.publicKey).toBe(added.publicKey);
   });
 
+  it("extends the session without failing when an account switch overtakes the extension", async () => {
+    const store = createStore(), client = createClient();
+    const controller = new WalletController({ wallet: { id: "xian-wallet", name: "Xian", rdns: "org.xian.wallet" }, version: "test", store, createClient: () => client });
+    await controller.createOrImportWallet({ password: "wallet-password", createWithMnemonic: true });
+    const hold = () => {
+      let release!: () => void, entered!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const reached = new Promise<void>(resolve => { entered = resolve; });
+      return { release, reached, pass: async () => { entered(); await gate; } };
+    };
+    const loadState = store.loadState.bind(store), loadSession = store.loadUnlockedSession.bind(store);
+    const saveState = store.saveState.bind(store);
+    // The user adds an account: it is past its own session check and deriving the key...
+    const deriving = hold();
+    vi.spyOn(store, "loadState").mockImplementationOnce(async () => { await deriving.pass(); return loadState(); });
+    const adding = controller.addAccount();
+    await deriving.reached;
+    // ...when another user message extends the session for the current account.
+    const extending = hold();
+    vi.spyOn(store, "loadUnlockedSession")
+      .mockImplementationOnce(loadSession)
+      .mockImplementationOnce(async () => { await extending.pass(); return loadSession(); });
+    const touching = controller.touchUnlockedSession();
+    await extending.reached;
+    // The new account's signer replaces the old one while the extension is saving.
+    const before = store.currentSession()!.publicKey, savedKeys: string[] = [];
+    const saveSession = store.saveUnlockedSession.bind(store);
+    vi.spyOn(store, "saveUnlockedSession").mockImplementation(async session => {
+      savedKeys.push(session.publicKey); await saveSession(session);
+    });
+    let stateSaved!: () => void;
+    const switching = new Promise<void>(resolve => { stateSaved = resolve; });
+    vi.spyOn(store, "saveState").mockImplementationOnce(async next => { await saveState(next); stateSaved(); });
+    deriving.release();
+    await switching;
+    // addAccount sets its signer right after saving the state; let that turn run.
+    await new Promise<void>(resolve => setImmediate(resolve));
+    extending.release();
+    await expect(touching).resolves.toBe(true);
+    const added = await adding;
+    expect(await controller.getPopupState()).toMatchObject({ unlocked: true, publicKey: added.publicKey });
+    expect(store.currentSession()?.publicKey).toBe(added.publicKey);
+    // The replaced account's session is never written back, even briefly.
+    expect(savedKeys).not.toContain(before);
+  });
+
+  it("reports a lock that overtakes a session extension as locked", async () => {
+    const store = createStore(), client = createClient();
+    const controller = new WalletController({ wallet: { id: "xian-wallet", name: "Xian", rdns: "org.xian.wallet" }, version: "test", store, createClient: () => client });
+    await controller.createOrImportWallet({ password: "wallet-password", privateKey: PRIVATE_KEY });
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const extending = new Promise<void>(resolve => { entered = resolve; });
+    const loadSession = store.loadUnlockedSession.bind(store);
+    vi.spyOn(store, "loadUnlockedSession")
+      .mockImplementationOnce(loadSession)
+      .mockImplementationOnce(async () => { entered(); await gate; return loadSession(); });
+    const touching = controller.touchUnlockedSession();
+    await extending;
+    const locking = controller.lockWallet();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    release();
+    await expect(touching).resolves.toBe(false);
+    await locking;
+    expect((await controller.getPopupState()).unlocked).toBe(false);
+    expect(store.currentSession()).toBeNull();
+  });
+
   describe("unlock session activity", () => {
     function makeClockedController(store: MemoryStore, client: WalletNetworkClient) {
       const clock = { now: 1_000_000 };
