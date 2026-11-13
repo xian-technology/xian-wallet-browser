@@ -3040,7 +3040,9 @@ export class WalletController {
         kwargs: intent.kwargs,
         chi: intent.chi
       },
-      { mode: "commit" }
+      // Wait for the receipt: it carries an execution failure such as
+      // "Out of chi.", which a commit-mode submission does not surface.
+      { mode: "checktx", waitForTx: true }
     );
   }
 

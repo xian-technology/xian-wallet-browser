@@ -69,11 +69,15 @@ function failureText(result: unknown): string | null {
   }
 }
 
-/** The message for a failed transaction, or null when it did not fail. */
-export function failedActivityMessage(tx: ActivityTx): string | null {
-  if (tx.success) return null;
-  const text = failureText(tx.result);
+/** The user-facing text of a transaction failure result, or null if it has none. */
+export function failureMessage(result: unknown): string | null {
+  const text = failureText(result);
   // Wallets supply exactly the simulated chi, so running out of it means the
   // state moved between the estimate and execution.
   return text !== null && /out of chi/i.test(text) ? OUT_OF_CHI_MESSAGE : text;
+}
+
+/** The message for a failed transaction, or null when it did not fail. */
+export function failedActivityMessage(tx: ActivityTx): string | null {
+  return tx.success ? null : failureMessage(tx.result);
 }

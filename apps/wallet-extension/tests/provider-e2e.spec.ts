@@ -597,9 +597,50 @@ test("shows linked notifications instead of a result panel after direct wallet s
     ).toHaveAttribute("href", expectedTxHref);
     expect(rpc.requests).toEqual(
       expect.arrayContaining([
-        expect.stringContaining("POST /broadcast_tx_commit?tx=%22")
+        expect.stringContaining("POST /broadcast_tx_sync?tx=%22"),
+        expect.stringContaining("/tx?hash=")
       ])
     );
+  } finally {
+    await cleanupExtension(context, userDataDir);
+    await rpc.close();
+  }
+});
+
+test("reports a direct send that ran out of chi as a state change, not a success", async () => {
+  const rpc = await startMockRpcServer({
+    chainId: "xian-local",
+    chiRate: 25,
+    chiEstimate: 500,
+    nextNonce: 12,
+    txHash: "DIRECT124",
+    broadcastDeliverCode: 1,
+    broadcastLog: "Out of chi."
+  });
+  const { context, extensionId, userDataDir } = await launchExtension();
+
+  try {
+    const popup = await openExtensionPage(context, extensionId, "popup.html");
+    await createWalletInPopup(popup, "correct horse battery");
+    await sendRuntimeMessage(popup, {
+      type: "wallet_update_settings",
+      networkName: "Mock local node",
+      expectedChainId: rpc.chainId,
+      rpcUrl: rpc.url,
+      dashboardUrl: rpc.url
+    });
+    await popup.reload();
+
+    await popup.locator("[data-go-send]").click();
+    await popup.locator("#simple-to").fill("b".repeat(64));
+    await popup.locator("#simple-amount").fill("1");
+    await popup.getByRole("button", { name: "Review" }).click();
+    await popup.getByRole("button", { name: "Send Transaction" }).click();
+
+    const toast = popup.locator(".flash-toast");
+    await expect(toast).toContainText("Transaction failed.", { timeout: 4_000 });
+    await expect(toast).toContainText("the chain state changed since the estimate");
+    await expect(popup.getByText("Transaction summary")).toBeVisible();
   } finally {
     await cleanupExtension(context, userDataDir);
     await rpc.close();

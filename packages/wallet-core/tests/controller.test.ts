@@ -3600,6 +3600,27 @@ describe("wallet session cancellation", () => {
       expect(client.buildTx).toHaveBeenCalledWith(expect.objectContaining({ chi: 500 }));
     });
 
+    it("waits for the receipt of a direct wallet send", async () => {
+      const store = createStore();
+      const client = createClient();
+      const controller = makeController(store, client);
+      await controller.createOrImportWallet({ password: "secret", privateKey: PRIVATE_KEY });
+
+      await controller.sendDirectTransaction({
+        contract: "currency",
+        function: "transfer",
+        kwargs: { to: "bob", amount: "5" },
+        chi: 500
+      });
+
+      // The receipt carries an execution failure such as "Out of chi.",
+      // which a commit-mode submission does not surface.
+      expect(client.broadcastTx).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.objectContaining({ mode: "checktx", waitForTx: true })
+      );
+    });
+
     it("reports the simulated chi to supply for wallet sends", async () => {
       const store = createStore();
       const client = createClient();

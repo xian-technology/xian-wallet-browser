@@ -371,10 +371,14 @@ export async function startMockRpcServer(options?: {
         json(response, 200, {
           result: {
             hash: txHash,
-            tx_result: {
-              code: 0,
-              log: ""
-            }
+            tx_result:
+              broadcastDeliverCode === 0
+                ? { code: 0, log: "" }
+                : {
+                    code: broadcastDeliverCode,
+                    log: "",
+                    data: base64(JSON.stringify({ status: broadcastDeliverCode, result: broadcastLog }))
+                  }
           }
         });
         return;

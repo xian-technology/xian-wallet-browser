@@ -126,6 +126,12 @@ import {
   formatTxTimestamp,
 } from "./tx-classify";
 import {
+  transactionAccepted,
+  transactionFinalStatus,
+  type SendTransactionResult,
+  type TransactionFlashLabels
+} from "./transaction-status";
+import {
   activityHasTx as activityTxListHasHash,
   activityTxTimestampMillis,
   failedActivityMessage,
@@ -215,22 +221,6 @@ type ContractMethod = {
   name: string;
   arguments: { name: string; type: string }[];
 };
-
-interface SendTransactionResult {
-  submitted: boolean;
-  accepted: boolean | null;
-  finalized: boolean;
-  txHash?: string;
-  message?: unknown;
-  receipt?: unknown;
-}
-
-interface TransactionFlashLabels {
-  sent?: string;
-  finalized?: string;
-  accepted?: string;
-  failed?: string;
-}
 
 let sendMode: SendMode = "simple";
 let sendStep: SendStep = "draft";
@@ -988,47 +978,6 @@ function setTransactionFlash(
     detail: options.detail ?? (txHash ? truncateHash(txHash) : undefined),
     durationMs: options.durationMs ?? 6000
   });
-}
-
-function transactionAccepted(result: SendTransactionResult): boolean {
-  return result.finalized === true || result.accepted === true;
-}
-
-function transactionFinalStatus(
-  result: SendTransactionResult,
-  labels: TransactionFlashLabels = {}
-): {
-  message: string;
-  tone: FlashTone;
-  icon: FlashIcon;
-  detail?: string;
-} | null {
-  if (result.finalized === true) {
-    return {
-      message: labels.finalized ?? "Transaction finalized.",
-      tone: "success",
-      icon: "success"
-    };
-  }
-  if (result.accepted === true) {
-    return {
-      message: labels.accepted ?? "Transaction accepted.",
-      tone: "success",
-      icon: "success"
-    };
-  }
-  if (result.accepted === false || result.submitted === false) {
-    return {
-      message: labels.failed ?? "Transaction failed.",
-      tone: "danger",
-      icon: "danger",
-      detail:
-        typeof result.message === "string" && result.message.trim()
-          ? result.message.trim()
-          : undefined
-    };
-  }
-  return null;
 }
 
 function scheduleTransactionStatusFlash(
