@@ -1248,11 +1248,9 @@ export class WalletController {
   // requests must not keep the auto-lock timer from expiring.
   private async requireUnlockedSigner(): Promise<Ed25519Signer> {
     await this.restoreUnlockedSession();
-    if (!this.unlockedPrivateKey) {
-      throw new ProviderUnauthorizedError("wallet is locked");
-    }
+    // The key and its signer are always set and cleared together.
     if (!this.unlockedSigner) {
-      this.unlockedSigner = new Ed25519Signer(this.unlockedPrivateKey);
+      throw new ProviderUnauthorizedError("wallet is locked");
     }
     return this.unlockedSigner;
   }
