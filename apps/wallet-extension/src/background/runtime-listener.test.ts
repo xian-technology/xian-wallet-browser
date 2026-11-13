@@ -689,3 +689,354 @@ describe("background runtime message listener", () => {
     });
   });
 });
+
+// Drives a fulfilled, auto-approved provider_request and returns what the
+// background broadcast and stored for it.
+async function publishFulfilled(
+  submission: unknown,
+  request: { method: string; params: unknown } = { method: "xian_sendCall", params: [] }
+) {
+  controller("startProviderRequest").mockResolvedValue({ status: "fulfilled", result: submission });
+  const { response } = await dispatch(
+    { type: "provider_request", requestId: "rp", origin: "https://dapp.example", request },
+    DAPP
+  );
+  expect(response).toEqual({ ok: true, result: { status: "fulfilled", result: submission } });
+  const broadcast = chromeFake.runtime.sendMessage.mock.calls.map(([message]) => message);
+  const stored = storage("saveLocalActivityTx").mock.calls;
+  return { broadcast, stored };
+}
+
+describe("provider transaction publication", () => {
+  it.each([
+    [{ txHash: "A", tx_hash: "B", hash: "C", receipt: { txHash: "D" } }, "A"],
+    [{ txHash: "  ", tx_hash: "B", hash: "C" }, "B"],
+    [{ hash: "C", receipt: { txHash: "D" } }, "C"],
+    [{ txHash: 5, receipt: { txHash: "D", tx_hash: "E" } }, "D"],
+    [{ receipt: { tx_hash: "E", hash: "F" } }, "E"],
+    [{ receipt: { hash: "F" } }, "F"],
+    [{ receipt: "not-a-record", hash: "" }, undefined],
+    [{ receipt: ["D"] }, undefined],
+    ["not-a-record", undefined]
+  ])("takes the transaction hash of %j as %s", async (submission, txHash) => {
+    const { broadcast } = await publishFulfilled(submission);
+
+    expect(broadcast).toHaveLength(1);
+    expect(broadcast[0]).toMatchObject({ type: "wallet_transaction_submitted", txHash });
+  });
+
+  const requestPayload = { sender: "pk_req", contract: "con_req", function: "fn_req", kwargs: { from: "request" } };
+  const sendTransaction = { method: "xian_sendTransaction", params: [{ tx: { payload: requestPayload } }] };
+  it.each([
+    [
+      "the submitted transaction payload",
+      { transaction: { payload: { contract: "con_tx", function: "fn_tx" } }, payload: { contract: "con_p" } },
+      { sender: "pk_req", contract: "con_tx", function: "fn_tx", kwargs: { from: "request" } }
+    ],
+    [
+      "the submission payload when the transaction has none",
+      { transaction: { payload: "x" }, payload: { sender: "pk_p", kwargs: { from: "payload" } } },
+      { sender: "pk_p", contract: "con_req", function: "fn_req", kwargs: { from: "payload" } }
+    ],
+    [
+      "the submission payload when there is no transaction",
+      { transaction: "x", payload: { function: "fn_p" }, receipt: { transaction: { payload: { function: "fn_r" } } } },
+      { sender: "pk_req", contract: "con_req", function: "fn_p", kwargs: { from: "request" } }
+    ],
+    [
+      "the receipt transaction payload as the last resort",
+      { receipt: { transaction: { payload: { contract: "con_r", kwargs: { from: "receipt" } } } } },
+      { sender: "pk_req", contract: "con_r", function: "fn_req", kwargs: { from: "receipt" } }
+    ],
+    [
+      "the request when the receipt transaction has no payload",
+      { receipt: { transaction: { payload: [] } } },
+      requestPayload
+    ],
+    ["the request when the receipt has no transaction", { receipt: { transaction: "x" } }, requestPayload],
+    ["the request for a non-record submission", 42, requestPayload],
+    [
+      "the request, ignoring blank and non-string submission fields",
+      { payload: { sender: " ", contract: 7, function: "", kwargs: ["x"] } },
+      requestPayload
+    ]
+  ])("takes transaction details from %s", async (_case, submission, details) => {
+    const { broadcast } = await publishFulfilled(submission, sendTransaction);
+
+    expect(broadcast[0]).toMatchObject({ type: "wallet_transaction_submitted", ...details });
+  });
+
+  const details = { sender: "pk_x", contract: "con_x", function: "fn_x", kwargs: { k: 1 } };
+  it.each([
+    ["a call intent", { method: "xian_sendCall", params: [{ intent: details }] }, details],
+    ["a bare call", { method: "xian_sendCall", params: [details] }, details],
+    ["call params given as an object", { method: "xian_sendCall", params: details }, details],
+    ["a transaction payload", { method: "xian_sendTransaction", params: [{ tx: { payload: details } }] }, details],
+    ["a bare transaction", { method: "xian_sendTransaction", params: [{ payload: details }] }, details],
+    [
+      "a payload beside a transaction without one",
+      { method: "xian_sendTransaction", params: [{ tx: { chi: 1 }, payload: details }] },
+      details
+    ],
+    ["a transaction without a payload", { method: "xian_sendTransaction", params: [{ tx: {} }] }, {}],
+    ["non-record params", { method: "xian_sendCall", params: ["x"] }, {}],
+    ["missing params", { method: "xian_sendTransaction", params: undefined }, {}]
+  ])("takes request details from %s", async (_case, request, expected) => {
+    const { broadcast } = await publishFulfilled({}, request);
+
+    expect(broadcast[0]).toMatchObject({
+      sender: undefined,
+      contract: undefined,
+      function: undefined,
+      kwargs: undefined,
+      ...expected
+    });
+  });
+
+  it("forwards submission status, message and receipt execution", async () => {
+    const { broadcast } = await publishFulfilled({
+      submitted: "yes",
+      accepted: null,
+      finalized: true,
+      message: { note: 1 },
+      receipt: { execution: { status: 0 } }
+    });
+
+    expect(broadcast[0]).toMatchObject({
+      submitted: undefined,
+      accepted: null,
+      finalized: true,
+      message: { note: 1 },
+      execution: { status: 0 }
+    });
+  });
+
+  it("does not publish provider methods that submit nothing", async () => {
+    const { broadcast, stored } = await publishFulfilled({ txHash: "A" }, { method: "xian_signMessage", params: [] });
+
+    expect(broadcast).toEqual([]);
+    expect(stored).toEqual([]);
+  });
+});
+
+describe("provider transaction activity", () => {
+  const CREATED_AT = new Date(1_700_000_000_000).toISOString();
+
+  beforeEach(() => {
+    vi.useFakeTimers({ now: 1_700_000_000_000, toFake: ["Date"] });
+  });
+
+  it("stores a finalized transaction of the active account with its defaults", async () => {
+    const { stored } = await publishFulfilled({ txHash: "H1", finalized: true, accepted: false });
+
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.[0]).toBe("local|http://127.0.0.1:26657|pk_owner");
+    expect(stored[0]?.[1]).toStrictEqual({
+      tx_hash: "H1",
+      sender: "pk_owner",
+      contract: "unknown",
+      function: "transaction",
+      success: true,
+      created_at: CREATED_AT,
+      payload: { sender: "pk_owner", contract: "unknown", function: "transaction", kwargs: {} },
+      local: true,
+      local_status: "finalized"
+    });
+  });
+
+  it("stores an accepted transaction with its details and message", async () => {
+    const { stored } = await publishFulfilled(
+      { txHash: "H2", accepted: true, message: "queued" },
+      {
+        method: "xian_sendCall",
+        params: [{ intent: { sender: "pk_owner", contract: "currency", function: "transfer", kwargs: { amount: 1 } } }]
+      }
+    );
+
+    expect(stored[0]?.[1]).toStrictEqual({
+      tx_hash: "H2",
+      sender: "pk_owner",
+      contract: "currency",
+      function: "transfer",
+      success: true,
+      created_at: CREATED_AT,
+      payload: { sender: "pk_owner", contract: "currency", function: "transfer", kwargs: { amount: 1 } },
+      local: true,
+      local_status: "accepted",
+      result: { message: "queued" }
+    });
+  });
+
+  it("stores an unconfirmed transaction without a local status", async () => {
+    controller("getPopupState").mockResolvedValue({ ...POPUP_STATE, activeNetworkId: undefined });
+
+    const { stored } = await publishFulfilled({ txHash: "H3", accepted: null, message: null });
+
+    expect(stored[0]?.[0]).toBe("http://127.0.0.1:26657|http://127.0.0.1:26657|pk_owner");
+    expect(stored[0]?.[1]).toStrictEqual({
+      tx_hash: "H3",
+      sender: "pk_owner",
+      contract: "unknown",
+      function: "transaction",
+      success: false,
+      created_at: CREATED_AT,
+      payload: { sender: "pk_owner", contract: "unknown", function: "transaction", kwargs: {} },
+      local: true,
+      result: { message: null }
+    });
+  });
+
+  it("stores nothing without a transaction hash and never reads wallet state", async () => {
+    const { broadcast, stored } = await publishFulfilled({ submitted: true });
+
+    expect(broadcast).toHaveLength(1);
+    expect(stored).toEqual([]);
+    expect(controller("getPopupState")).not.toHaveBeenCalled();
+  });
+
+  it("stores nothing without an active account", async () => {
+    controller("getPopupState").mockResolvedValue({ ...POPUP_STATE, publicKey: undefined });
+
+    const { broadcast, stored } = await publishFulfilled({ txHash: "H4" });
+
+    expect(broadcast).toHaveLength(1);
+    expect(stored).toEqual([]);
+  });
+
+  it("stores nothing for a transaction sent by another account", async () => {
+    const { broadcast, stored } = await publishFulfilled(
+      { txHash: "H5" },
+      { method: "xian_sendCall", params: [{ intent: { sender: "pk_other" } }] }
+    );
+
+    expect(broadcast).toHaveLength(1);
+    expect(stored).toEqual([]);
+  });
+
+  it.each([
+    ["reading wallet state", () => controller("getPopupState").mockRejectedValue(new Error("down"))],
+    ["storing activity", () => storage("saveLocalActivityTx").mockRejectedValue(new Error("full"))],
+    ["broadcasting", () => chromeFake.runtime.sendMessage.mockRejectedValue(new Error("no receiver"))]
+  ])("answers the dapp even when %s fails", async (_step, arrange) => {
+    arrange();
+
+    await publishFulfilled({ txHash: "H6" });
+  });
+});
+
+describe("approval window synchronization", () => {
+  type RemovedListener = (windowId: number) => void;
+  const windowRemoved = (): RemovedListener =>
+    chromeFake.windows.onRemoved.addListener.mock.calls[0]![0] as RemovedListener;
+
+  async function closeWindow(windowId: number): Promise<void> {
+    chromeFake.windows.get.mockRejectedValue(new Error("gone"));
+    windowRemoved()(windowId);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  it("keeps approvals whose window is open and tracks that window", async () => {
+    controller("listApprovalStates").mockResolvedValue([{ id: "a1", windowId: 11 }]);
+    chromeFake.windows.getAll.mockResolvedValue([{ id: 11 }, {}]);
+
+    await dispatch({ type: "wallet_lock" });
+    expect(controller("dismissApproval")).not.toHaveBeenCalled();
+    expect(chromeFake.windows.create).not.toHaveBeenCalled();
+
+    await closeWindow(11);
+    expect(controller("dismissApproval").mock.calls).toEqual([["a1"]]);
+  });
+
+  it("dismisses approvals whose window was closed", async () => {
+    controller("listApprovalStates").mockResolvedValue([{ id: "a2", windowId: 12 }]);
+    chromeFake.windows.getAll.mockResolvedValue([{ id: 99 }]);
+
+    await dispatch({ type: "wallet_lock" });
+
+    expect(controller("dismissApproval").mock.calls).toEqual([["a2"]]);
+    expect(chromeFake.windows.create).not.toHaveBeenCalled();
+  });
+
+  it("opens and attaches a window for an approval without one", async () => {
+    controller("listApprovalStates").mockResolvedValue([{ id: "a3" }]);
+    chromeFake.windows.create.mockResolvedValue({ id: 22 });
+
+    await dispatch({ type: "wallet_lock" });
+
+    expect(chromeFake.windows.create.mock.calls).toEqual([
+      [
+        {
+          url: `chrome-extension://${EXTENSION_ID}/approval.html?approvalId=a3`,
+          type: "popup",
+          width: 420,
+          height: 640
+        }
+      ]
+    ]);
+    expect(controller("attachApprovalWindow").mock.calls).toEqual([["a3", 22]]);
+
+    await closeWindow(22);
+    expect(controller("dismissApproval").mock.calls).toEqual([["a3"]]);
+  });
+
+  it("leaves window-less approvals to the side panel", async () => {
+    storage("loadWalletShellMode").mockResolvedValue("sidePanel");
+    controller("listApprovalStates").mockResolvedValue([{ id: "a4" }]);
+
+    await dispatch({ type: "wallet_lock" });
+
+    expect(chromeFake.windows.create).not.toHaveBeenCalled();
+    expect(controller("attachApprovalWindow")).not.toHaveBeenCalled();
+  });
+
+  it("forgets windows of approvals that are gone", async () => {
+    controller("listApprovalStates").mockResolvedValue([{ id: "a5", windowId: 15 }]);
+    chromeFake.windows.getAll.mockResolvedValue([{ id: 15 }]);
+    await dispatch({ type: "wallet_lock" });
+    controller("listApprovalStates").mockResolvedValue([]);
+    await dispatch({ type: "wallet_lock" });
+
+    await closeWindow(15);
+
+    expect(controller("dismissApproval")).not.toHaveBeenCalled();
+  });
+
+  it("refreshes the badge after synchronizing", async () => {
+    storage("listApprovalStates").mockResolvedValue([{ id: "a6" }]);
+
+    await dispatch({ type: "wallet_lock" });
+    await vi.waitFor(() => expect(chromeFake.action.setBadgeText).toHaveBeenCalledWith({ text: "1" }));
+  });
+
+  it("shares one synchronization between concurrent messages", async () => {
+    let release: (approvals: unknown[]) => void = () => undefined;
+    controller("listApprovalStates").mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      })
+    );
+
+    const first = dispatch({ type: "wallet_lock" });
+    const second = dispatch({ type: "wallet_remove" });
+    await vi.waitFor(() => expect(controller("listApprovalStates")).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    release([]);
+    await Promise.all([first, second]);
+
+    expect(controller("listApprovalStates")).toHaveBeenCalledTimes(1);
+    expect(controller("lockWallet")).toHaveBeenCalledTimes(1);
+    expect(controller("removeWallet")).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails the message when an approval window cannot be opened, then recovers", async () => {
+    controller("listApprovalStates").mockResolvedValueOnce([{ id: "a7" }]).mockResolvedValue([]);
+    chromeFake.windows.create.mockResolvedValue({});
+
+    const { response } = await dispatch({ type: "wallet_lock" });
+    const retry = await dispatch({ type: "wallet_lock" });
+
+    expect(response).toMatchObject({ ok: false, error: { message: "failed to open approval window" } });
+    expect(controller("lockWallet")).toHaveBeenCalledTimes(1);
+    expect(retry.response).toEqual({ ok: true, result: { from: "lockWallet" } });
+  });
+});
