@@ -298,7 +298,9 @@ test("approves connect and send-call requests through the injected provider brid
     });
     const sendApproval = await waitForApprovalPage(context, sendExistingPages);
     await expect(sendApproval.getByText("Send contract call")).toBeVisible();
-    await expect(sendApproval.getByText("500 (~20 XIAN)")).toBeVisible();
+    // The intent carries no chi, so the wallet supplies the simulated 500
+    // plus the SDK's default headroom (max(5%, 10 chi)): 525 chi at 25 chi/XIAN.
+    await expect(sendApproval.getByText("525 (~21 XIAN)")).toBeVisible();
     await expect(
       sendApproval
         .locator(".detail-row", { hasText: "Contract" })
@@ -315,7 +317,7 @@ test("approves connect and send-call requests through the injected provider brid
         accepted: true,
         txHash: "ABC123",
         nonce: 12,
-        chiSupplied: 500
+        chiSupplied: 525
       })
     });
 
