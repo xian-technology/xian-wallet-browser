@@ -886,6 +886,14 @@ describe("provider transaction activity", () => {
     });
   });
 
+  it("keys activity by an empty network id as given", async () => {
+    controller("getPopupState").mockResolvedValue({ ...POPUP_STATE, activeNetworkId: "" });
+
+    const { stored } = await publishFulfilled({ txHash: "H7" });
+
+    expect(stored[0]?.[0]).toBe("|http://127.0.0.1:26657|pk_owner");
+  });
+
   it("stores nothing without a transaction hash and never reads wallet state", async () => {
     const { broadcast, stored } = await publishFulfilled({ submitted: true });
 
@@ -1008,6 +1016,11 @@ describe("approval window synchronization", () => {
     await vi.waitFor(() => expect(chromeFake.action.setBadgeText).toHaveBeenCalledWith({ text: "1" }));
   });
 
+  it("clears the badge when no approvals are pending", async () => {
+    await dispatch({ type: "wallet_lock" });
+    await vi.waitFor(() => expect(chromeFake.action.setBadgeText).toHaveBeenCalledWith({ text: "" }));
+  });
+
   it("shares one synchronization between concurrent messages", async () => {
     let release: (approvals: unknown[]) => void = () => undefined;
     controller("listApprovalStates").mockReturnValue(
@@ -1089,6 +1102,12 @@ describe("approval requests from the wallet controller", () => {
     expect(controller("attachApprovalWindow").mock.calls).toEqual([["q3", 32]]);
     await closeWindow(32);
     expect(controller("dismissApproval").mock.calls).toEqual([["q3"]]);
+  });
+
+  it("rejects when the browser returns no approval window", async () => {
+    chromeFake.windows.create.mockResolvedValue(undefined);
+
+    await expect(requestApproval("q5")).rejects.toThrow("failed to open approval window");
   });
 
   it("rejects when the approval window cannot be opened", async () => {
