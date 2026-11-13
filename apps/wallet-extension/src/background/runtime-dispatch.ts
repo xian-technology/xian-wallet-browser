@@ -28,6 +28,30 @@ export type RuntimeHandlerTable = {
   ) => Promise<unknown>;
 };
 
+type KeysOfEach<T> = T extends unknown ? keyof T : never;
+
+/** Message types that appear in more than one group of the tuple. */
+type SharedHandlerKeys<Groups extends readonly unknown[]> =
+  Groups extends readonly [infer Head, ...infer Tail]
+    ? (keyof Head & KeysOfEach<Tail[number]>) | SharedHandlerKeys<Tail>
+    : never;
+
+type DisjointHandlerGroups<Groups extends readonly unknown[]> =
+  [SharedHandlerKeys<Groups>] extends [never]
+    ? Groups
+    : Groups & { handledByMoreThanOneGroup: SharedHandlerKeys<Groups> };
+
+/**
+ * Returns the handler groups unchanged. A message type handled by more than
+ * one group is a compile error that names it, so merging the groups can never
+ * silently let one handler shadow another.
+ */
+export function disjointHandlerGroups<
+  const Groups extends readonly Partial<RuntimeHandlerTable>[]
+>(...groups: DisjointHandlerGroups<Groups>): Groups {
+  return groups;
+}
+
 function hasHandler(
   handlers: RuntimeHandlerTable,
   message: RuntimeMessage

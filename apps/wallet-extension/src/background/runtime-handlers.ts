@@ -13,7 +13,7 @@ import {
 } from "../shared/storage";
 import { setAutoLock } from "./auto-lock";
 import { completedProviderRequestMessage } from "./provider-request-notification";
-import type { RuntimeHandlerTable } from "./runtime-dispatch";
+import { disjointHandlerGroups, type RuntimeHandlerTable } from "./runtime-dispatch";
 
 /** What the runtime handlers need from the background worker. */
 export interface RuntimeHandlerContext {
@@ -182,18 +182,42 @@ function providerHandlers({
   } satisfies Partial<RuntimeHandlerTable>;
 }
 
-/** The background's answer to every runtime message type, grouped by area. */
+/**
+ * The background's answer to every runtime message type, grouped by area.
+ * Each type is handled by exactly one group: a missing type fails the
+ * RuntimeHandlerTable return type, a type in two groups fails
+ * disjointHandlerGroups.
+ */
 export function createRuntimeHandlers(
   context: RuntimeHandlerContext
 ): RuntimeHandlerTable {
+  const [
+    wallet,
+    shieldedSnapshots,
+    assets,
+    transactions,
+    network,
+    preferences,
+    approvals,
+    provider
+  ] = disjointHandlerGroups(
+    walletHandlers(context),
+    shieldedSnapshotHandlers(context),
+    assetHandlers(context),
+    transactionHandlers(context),
+    networkHandlers(context),
+    preferenceHandlers(context),
+    approvalHandlers(context),
+    providerHandlers(context)
+  );
   return {
-    ...walletHandlers(context),
-    ...shieldedSnapshotHandlers(context),
-    ...assetHandlers(context),
-    ...transactionHandlers(context),
-    ...networkHandlers(context),
-    ...preferenceHandlers(context),
-    ...approvalHandlers(context),
-    ...providerHandlers(context)
+    ...wallet,
+    ...shieldedSnapshots,
+    ...assets,
+    ...transactions,
+    ...network,
+    ...preferences,
+    ...approvals,
+    ...provider
   };
 }
