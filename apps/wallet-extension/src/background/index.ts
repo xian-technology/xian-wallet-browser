@@ -1,7 +1,11 @@
-import { WalletController } from "@xian-tech/wallet-core";
+import { WalletController, type PersistedApproval } from "@xian-tech/wallet-core";
 
 import { unlockedSessionExpiry } from "./auto-lock";
 import { authorizeRuntimeMessage, type MessageSender } from "./message-sender";
+import {
+  buildTransactionSubmittedMessage,
+  localProviderActivity
+} from "./provider-transaction";
 import { dispatchRuntimeMessage } from "./runtime-dispatch";
 import { createRuntimeHandlers } from "./runtime-handlers";
 import { countsAsWalletActivity } from "./session-activity";
@@ -37,8 +41,7 @@ import {
   clearUnlockedSession,
   clearWalletState,
   loadAutoLock,
-  saveLocalActivityTx,
-  type StoredLocalActivityTx
+  saveLocalActivityTx
 } from "../shared/storage";
 
 const WALLET_METADATA = {
@@ -134,206 +137,21 @@ async function broadcastProviderEvent(
   );
 }
 
-type SubmittedProviderMethod = "xian_sendTransaction" | "xian_sendCall";
-
-interface ProviderTransactionDetails {
-  sender?: string;
-  contract?: string;
-  function?: string;
-  kwargs?: Record<string, unknown>;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function readString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value : undefined;
-}
-
-function readBoolean(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined;
-}
-
-function readBooleanOrNull(value: unknown): boolean | null | undefined {
-  return value === null || typeof value === "boolean" ? value : undefined;
-}
-
-function isSubmittedProviderMethod(
-  method: string
-): method is SubmittedProviderMethod {
-  return method === "xian_sendTransaction" || method === "xian_sendCall";
-}
-
-function firstParamRecord(params: unknown): Record<string, unknown> {
-  if (Array.isArray(params)) {
-    const first = params[0];
-    return isRecord(first) ? first : {};
-  }
-  return isRecord(params) ? params : {};
-}
-
-function detailsFromPayload(value: unknown): ProviderTransactionDetails {
-  const payload = isRecord(value) ? value : {};
-  const kwargs = isRecord(payload.kwargs) ? payload.kwargs : undefined;
-  return {
-    sender: readString(payload.sender),
-    contract: readString(payload.contract),
-    function: readString(payload.function),
-    kwargs
-  };
-}
-
-function detailsFromProviderRequest(
-  request: ProviderRequestRuntimeMessage["request"]
-): ProviderTransactionDetails {
-  const params = firstParamRecord(request.params);
-
-  if (request.method === "xian_sendCall") {
-    const intent = isRecord(params.intent) ? params.intent : params;
-    return detailsFromPayload(intent);
-  }
-
-  if (request.method === "xian_sendTransaction") {
-    const tx = isRecord(params.tx) ? params.tx : params;
-    const payload = isRecord(tx.payload)
-      ? tx.payload
-      : isRecord(params.payload)
-        ? params.payload
-        : {};
-    return detailsFromPayload(payload);
-  }
-
-  return {};
-}
-
-function receiptFromSubmission(value: unknown): Record<string, unknown> | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-  return isRecord(value.receipt) ? value.receipt : null;
-}
-
-function executionFromSubmission(value: unknown): unknown {
-  const receipt = receiptFromSubmission(value);
-  return receipt ? receipt.execution : undefined;
-}
-
-function txHashFromSubmission(value: unknown): string | undefined {
-  if (!isRecord(value)) {
-    return undefined;
-  }
-  const receipt = receiptFromSubmission(value);
-  return (
-    readString(value.txHash) ??
-    readString(value.tx_hash) ??
-    readString(value.hash) ??
-    readString(receipt?.txHash) ??
-    readString(receipt?.tx_hash) ??
-    readString(receipt?.hash)
-  );
-}
-
-function detailsFromSubmission(value: unknown): ProviderTransactionDetails {
-  if (!isRecord(value)) {
-    return {};
-  }
-  const receipt = receiptFromSubmission(value);
-  const receiptTransaction = isRecord(receipt?.transaction)
-    ? receipt.transaction
-    : null;
-  const receiptPayload = isRecord(receiptTransaction?.payload)
-    ? receiptTransaction.payload
-    : null;
-  const transaction = isRecord(value.transaction) ? value.transaction : null;
-  const payload = isRecord(transaction?.payload)
-    ? transaction.payload
-    : isRecord(value.payload)
-      ? value.payload
-      : receiptPayload;
-
-  return detailsFromPayload(payload);
-}
-
-function buildTransactionSubmittedMessage(
-  runtimeMessage: ProviderRequestRuntimeMessage,
-  result: { status: "fulfilled"; result: unknown },
-  autoApproved: boolean
-): WalletTransactionSubmittedRuntimeMessage | null {
-  const method = runtimeMessage.request.method;
-  if (!isSubmittedProviderMethod(method)) {
-    return null;
-  }
-
-  const submission = isRecord(result.result) ? result.result : {};
-  const requestDetails = detailsFromProviderRequest(runtimeMessage.request);
-  const submissionDetails = detailsFromSubmission(submission);
-
-  return {
-    type: "wallet_transaction_submitted",
-    origin: runtimeMessage.origin,
-    requestId: runtimeMessage.requestId,
-    method,
-    autoApproved,
-    submitted: readBoolean(submission.submitted),
-    accepted: readBooleanOrNull(submission.accepted),
-    finalized: readBoolean(submission.finalized),
-    txHash: txHashFromSubmission(submission),
-    sender: submissionDetails.sender ?? requestDetails.sender,
-    contract: submissionDetails.contract ?? requestDetails.contract,
-    function: submissionDetails.function ?? requestDetails.function,
-    kwargs: submissionDetails.kwargs ?? requestDetails.kwargs,
-    message: submission.message,
-    execution: executionFromSubmission(submission)
-  };
-}
-
 async function recordProviderTransactionActivity(
   notification: WalletTransactionSubmittedRuntimeMessage
 ): Promise<void> {
-  if (!notification.txHash) {
+  const { txHash } = notification;
+  if (!txHash) {
     return;
   }
-
-  const state = await controller.getPopupState();
-  if (!state.publicKey) {
-    return;
+  const activity = localProviderActivity(
+    notification,
+    txHash,
+    await controller.getPopupState()
+  );
+  if (activity) {
+    await saveLocalActivityTx(activity.networkKey, activity.tx);
   }
-
-  const sender = notification.sender ?? state.publicKey;
-  if (sender !== state.publicKey) {
-    return;
-  }
-
-  const contract = notification.contract ?? "unknown";
-  const functionName = notification.function ?? "transaction";
-  const tx: StoredLocalActivityTx = {
-    tx_hash: notification.txHash,
-    sender,
-    contract,
-    function: functionName,
-    success: notification.finalized === true || notification.accepted === true,
-    created_at: new Date().toISOString(),
-    payload: {
-      sender,
-      contract,
-      function: functionName,
-      kwargs: notification.kwargs ?? {}
-    },
-    local: true
-  };
-
-  if (notification.finalized === true) {
-    tx.local_status = "finalized";
-  } else if (notification.accepted === true) {
-    tx.local_status = "accepted";
-  }
-  if (notification.message !== undefined) {
-    tx.result = { message: notification.message };
-  }
-
-  const networkKey = `${state.activeNetworkId ?? state.rpcUrl}|${state.rpcUrl}|${sender}`;
-  await saveLocalActivityTx(networkKey, tx);
 }
 
 async function publishProviderTransaction(
@@ -395,15 +213,11 @@ const controller = new WalletController({
         await chrome.runtime.sendMessage({ type: "approval_notify", approvalId });
       } catch {
         // Popup/panel not open — fall back to external window
-        const windowId = await openApprovalWindow(approvalId);
-        approvalWindowIds.set(windowId, approvalId);
-        await controller.attachApprovalWindow(approvalId, windowId);
+        await openTrackedApprovalWindow(approvalId);
       }
       return;
     }
-    const windowId = await openApprovalWindow(approvalId);
-    approvalWindowIds.set(windowId, approvalId);
-    await controller.attachApprovalWindow(approvalId, windowId);
+    await openTrackedApprovalWindow(approvalId);
   },
   onProviderEvent: broadcastProviderEvent
 });
@@ -416,44 +230,62 @@ const runtimeHandlers = createRuntimeHandlers({
   publishProviderTransaction
 });
 
+async function openTrackedApprovalWindow(approvalId: string): Promise<void> {
+  const windowId = await openApprovalWindow(approvalId);
+  approvalWindowIds.set(windowId, approvalId);
+  await controller.attachApprovalWindow(approvalId, windowId);
+}
+
+async function listOpenWindowIds(): Promise<Set<number>> {
+  const windows = (await chrome.windows.getAll()) as Array<{ id?: number }>;
+  return new Set(
+    windows
+      .map((windowInfo) => windowInfo.id)
+      .filter((value): value is number => typeof value === "number")
+  );
+}
+
+async function reconcileApprovalWindow(
+  approval: PersistedApproval,
+  openWindowIds: Set<number>,
+  shellMode: WalletShellMode
+): Promise<void> {
+  if (typeof approval.windowId === "number") {
+    if (openWindowIds.has(approval.windowId)) {
+      approvalWindowIds.set(approval.windowId, approval.id);
+      return;
+    }
+    await controller.dismissApproval(approval.id);
+    return;
+  }
+
+  if (shellMode === "sidePanel") {
+    // Side panel handles approvals inline — don't open a window
+    return;
+  }
+
+  await openTrackedApprovalWindow(approval.id);
+}
+
+async function reconcileApprovalWindows(): Promise<void> {
+  const shellMode = await loadWalletShellMode();
+  const approvals = await controller.listApprovalStates();
+  const openWindowIds = await listOpenWindowIds();
+
+  approvalWindowIds.clear();
+
+  for (const approval of approvals) {
+    await reconcileApprovalWindow(approval, openWindowIds, shellMode);
+  }
+}
+
 async function syncApprovalWindows(): Promise<void> {
   if (syncApprovalsPromise) {
     await syncApprovalsPromise;
     return;
   }
 
-  syncApprovalsPromise = (async () => {
-    const shellMode = await loadWalletShellMode();
-    const approvals = await controller.listApprovalStates();
-    const windows = (await chrome.windows.getAll()) as Array<{ id?: number }>;
-    const openWindowIds = new Set(
-      windows
-        .map((windowInfo) => windowInfo.id)
-        .filter((value): value is number => typeof value === "number")
-    );
-
-    approvalWindowIds.clear();
-
-    for (const approval of approvals) {
-      if (typeof approval.windowId === "number") {
-        if (openWindowIds.has(approval.windowId)) {
-          approvalWindowIds.set(approval.windowId, approval.id);
-          continue;
-        }
-        await controller.dismissApproval(approval.id);
-        continue;
-      }
-
-      if (shellMode === "sidePanel") {
-        // Side panel handles approvals inline — don't open a window
-        continue;
-      }
-
-      const windowId = await openApprovalWindow(approval.id);
-      approvalWindowIds.set(windowId, approval.id);
-      await controller.attachApprovalWindow(approval.id, windowId);
-    }
-  })();
+  syncApprovalsPromise = reconcileApprovalWindows();
 
   try {
     await syncApprovalsPromise;
