@@ -172,7 +172,7 @@ export interface WalletNetworkClient {
     contract: string;
     function: string;
     kwargs: Record<string, unknown>;
-  }): Promise<{ estimated: number; suggested?: number }>;
+  }): Promise<{ estimated: number }>;
   getContractMethods(contract: string): Promise<{ name: string; arguments: { name: string; type: string }[] }[]>;
   getContractSource?(contract: string): Promise<string | null>;
   getContractIr?(contract: string): Promise<string | null>;
@@ -267,14 +267,6 @@ function parseIntentNumber(
     return parsed <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : parsed;
   }
   throw new TypeError(`${fieldName} must be a non-negative integer`);
-}
-
-// The chi to supply: the client's suggestion (estimate plus headroom) when it
-// provides one, else the bare estimate from older custom clients.
-function chiToSupply(result: { estimated: number; suggested?: number }): number {
-  return typeof result.suggested === "number" && Number.isFinite(result.suggested)
-    ? result.suggested
-    : result.estimated;
 }
 
 interface SendCallTarget {
@@ -2518,14 +2510,13 @@ export class WalletController {
     const kwargs = isRecord(target.intent.kwargs) ? target.intent.kwargs : {};
     try {
       const state = this.requireStoredWallet(await this.loadWalletState());
-      const chi = chiToSupply(
-        await this.currentClient(state).estimateChi({
-          sender: account,
-          contract: target.intent.contract,
-          function: target.intent.function,
-          kwargs
-        })
-      );
+      // Exactly the simulated chi: execution charges what the simulation reports.
+      const { estimated: chi } = await this.currentClient(state).estimateChi({
+        sender: account,
+        contract: target.intent.contract,
+        function: target.intent.function,
+        kwargs
+      });
       if (!Number.isFinite(chi) || chi <= 0) {
         return request;
       }
@@ -3006,16 +2997,16 @@ export class WalletController {
     contract: string;
     function: string;
     kwargs: Record<string, unknown>;
-  }): Promise<{ estimated: number; suggested: number }> {
+  }): Promise<{ estimated: number }> {
     const state = this.requireStoredWallet(await this.loadWalletState());
     const client = this.currentClient(state);
-    const result = await client.estimateChi({
+    const { estimated } = await client.estimateChi({
       sender: state.publicKey,
       contract: request.contract,
       function: request.function,
       kwargs: request.kwargs
     });
-    return { estimated: result.estimated, suggested: chiToSupply(result) };
+    return { estimated };
   }
 
   async getChiRate(): Promise<number | null> {

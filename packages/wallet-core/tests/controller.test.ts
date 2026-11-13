@@ -3560,7 +3560,7 @@ describe("wallet session cancellation", () => {
     });
   });
 
-  describe("chi headroom", () => {
+  describe("chi supply", () => {
     function makeController(store: MemoryStore, client: WalletNetworkClient) {
       let id = 0;
       return new WalletController({
@@ -3574,10 +3574,10 @@ describe("wallet session cancellation", () => {
       });
     }
 
-    it("supplies the suggested chi, not the bare estimate, for dapp calls", async () => {
+    it("supplies exactly the simulated chi for dapp calls", async () => {
       const store = createStore();
       const client = createClient();
-      vi.mocked(client.estimateChi).mockResolvedValue({ estimated: 500, suggested: 525 });
+      vi.mocked(client.estimateChi).mockResolvedValue({ estimated: 500 });
       const controller = makeController(store, client);
       await controller.createOrImportWallet({ password: "secret", privateKey: PRIVATE_KEY });
       const connect = await controller.startProviderRequest("connect", ORIGIN, {
@@ -3592,35 +3592,31 @@ describe("wallet session cancellation", () => {
       const approvalId = (start as { approvalId: string }).approvalId;
       await expect(controller.getApprovalView(approvalId)).resolves.toEqual(
         expect.objectContaining({
-          details: expect.arrayContaining([expect.objectContaining({ label: "Chi", value: "525" })])
+          details: expect.arrayContaining([expect.objectContaining({ label: "Chi", value: "500" })])
         })
       );
       await controller.resolveApproval(approvalId, true);
 
-      expect(client.buildTx).toHaveBeenCalledWith(expect.objectContaining({ chi: 525 }));
+      expect(client.buildTx).toHaveBeenCalledWith(expect.objectContaining({ chi: 500 }));
     });
 
-    it("reports both the estimate and the chi to supply for wallet sends", async () => {
+    it("reports the simulated chi to supply for wallet sends", async () => {
       const store = createStore();
       const client = createClient();
-      vi.mocked(client.estimateChi).mockResolvedValue({ estimated: 500, suggested: 525 });
+      vi.mocked(client.estimateChi).mockResolvedValue({ estimated: 500 });
       const controller = makeController(store, client);
       await controller.createOrImportWallet({ password: "secret", privateKey: PRIVATE_KEY });
 
       await expect(
         controller.estimateTransactionChi({ contract: "currency", function: "transfer", kwargs: {} })
-      ).resolves.toEqual({ estimated: 500, suggested: 525 });
-      vi.mocked(client.estimateChi).mockResolvedValue({ estimated: 500 });
-      await expect(
-        controller.estimateTransactionChi({ contract: "currency", function: "transfer", kwargs: {} })
-      ).resolves.toEqual({ estimated: 500, suggested: 500 });
+      ).resolves.toEqual({ estimated: 500 });
     });
   });
 });
 
 
 describe("approved provider requests", () => {
-  async function connectedController(estimate?: { estimated: number; suggested?: number }) {
+  async function connectedController(estimate?: { estimated: number }) {
     const store = createStore();
     const client = createClient();
     if (estimate) {
@@ -3729,8 +3725,8 @@ describe("approved provider requests", () => {
     expect(stored[0]!.intent.chi).toBeUndefined();
   });
 
-  it("supplies the suggested chi to a send-call whose params are a single object", async () => {
-    const { controller, client, store } = await connectedController({ estimated: 500, suggested: 550 });
+  it("supplies the simulated chi to a send-call whose params are a single object", async () => {
+    const { controller, client, store } = await connectedController({ estimated: 550 });
     await controller.startProviderRequest("request-send", ORIGIN, {
       method: "xian_sendCall",
       params: { intent: { contract: "currency", function: "transfer" } } as never
@@ -3755,15 +3751,6 @@ describe("approved provider requests", () => {
     const params = store.currentApprovals()[approvalId]!.record.request.params as Array<{ intent: Record<string, unknown> }>;
     return params[0]!.intent;
   };
-
-  it("falls back to the bare estimate when the client suggests no usable chi", async () => {
-    const { controller, store } = await connectedController({ estimated: 500, suggested: Number.NaN });
-    await controller.startProviderRequest("request-send", ORIGIN, {
-      method: "xian_sendCall",
-      params: [{ intent: { contract: "currency", function: "transfer", kwargs: {} } }]
-    });
-    expect(storedIntent(store).chi).toBe(500);
-  });
 
   it("accepts an estimate of a single chi", async () => {
     const { controller, store } = await connectedController({ estimated: 1 });
