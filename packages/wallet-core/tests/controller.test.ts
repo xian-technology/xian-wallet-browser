@@ -3559,6 +3559,30 @@ describe("approved provider requests", () => {
     expect(verifyXianMessage(account, { account, chainId: "xian-other", message: "hello xian" }, signature)).toBe(false);
   });
 
+  it("signs with the key a restarted controller restores from the session", async () => {
+    const { store, client } = await connectedController();
+    let next = 10;
+    const restarted = new WalletController({
+      wallet: { id: "xian-wallet", name: "Xian Wallet", rdns: "org.xian.wallet" },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined),
+      createId: () => `approval-${++next}`
+    });
+    await restarted.startProviderRequest("request-sign", ORIGIN, {
+      method: "xian_signMessage",
+      params: [{ message: "hello xian" }]
+    });
+    await restarted.resolveApproval("approval-11", true);
+
+    const status = await restarted.getProviderRequestStatus("request-sign");
+    const account = store.current()!.publicKey;
+    expect(status.status).toBe("fulfilled");
+    const signature = (status as { result: string }).result;
+    expect(verifyXianMessage(account, { account, chainId: "xian-local", message: "hello xian" }, signature)).toBe(true);
+  });
+
   it("refuses an approved request once the wallet has locked", async () => {
     const { controller } = await connectedController();
     await controller.startProviderRequest("request-sign", ORIGIN, {
@@ -3627,5 +3651,61 @@ describe("approved provider requests", () => {
     });
 
     expect(client.estimateChi).not.toHaveBeenCalled();
+  });
+
+  const storedIntent = (store: ReturnType<typeof createStore>, approvalId = "approval-2") => {
+    const params = store.currentApprovals()[approvalId]!.record.request.params as Array<{ intent: Record<string, unknown> }>;
+    return params[0]!.intent;
+  };
+
+  it("falls back to the bare estimate when the client suggests no usable chi", async () => {
+    const { controller, store } = await connectedController({ estimated: 500, suggested: Number.NaN });
+    await controller.startProviderRequest("request-send", ORIGIN, {
+      method: "xian_sendCall",
+      params: [{ intent: { contract: "currency", function: "transfer", kwargs: {} } }]
+    });
+    expect(storedIntent(store).chi).toBe(500);
+  });
+
+  it("accepts an estimate of a single chi", async () => {
+    const { controller, store } = await connectedController({ estimated: 1 });
+    await controller.startProviderRequest("request-send", ORIGIN, {
+      method: "xian_sendCall",
+      params: [{ intent: { contract: "currency", function: "transfer", kwargs: {} } }]
+    });
+    expect(storedIntent(store).chi).toBe(1);
+  });
+
+  it("does not estimate a send-call that names no contract", async () => {
+    const { controller, client } = await connectedController({ estimated: 500 });
+    await controller.startProviderRequest("request-send", ORIGIN, {
+      method: "xian_sendCall",
+      params: [{ intent: { function: "transfer", kwargs: {} } }]
+    });
+    expect(client.estimateChi).not.toHaveBeenCalled();
+  });
+
+  it("keeps extra send-call params after the estimated intent", async () => {
+    const { controller, store } = await connectedController({ estimated: 500 });
+    await controller.startProviderRequest("request-send", ORIGIN, {
+      method: "xian_sendCall",
+      params: [{ intent: { contract: "currency", function: "transfer", kwargs: {} } }, "extra"]
+    });
+    const params = store.currentApprovals()["approval-2"]!.record.request.params as unknown[];
+    expect(params).toEqual([{ intent: expect.objectContaining({ chi: 500 }) }, "extra"]);
+  });
+
+  it("refuses to prepare an intent for another chain", async () => {
+    const { controller, client } = await connectedController();
+    await expect(
+      controller.startProviderRequest("request-prepare", ORIGIN, {
+        method: "xian_prepareTransaction",
+        params: [{ intent: { contract: "currency", function: "transfer", kwargs: {}, chainId: "xian-other" } }]
+      })
+    ).resolves.toEqual({
+      status: "rejected",
+      error: expect.objectContaining({ message: "wallet is connected to a different chain" })
+    });
+    expect(client.buildTx).not.toHaveBeenCalled();
   });
 });
