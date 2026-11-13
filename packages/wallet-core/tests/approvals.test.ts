@@ -368,6 +368,18 @@ describe("@xian-tech/wallet-core approvals", () => {
     );
   });
 
+  it("labels control and astral tag characters by code point and keeps tabs", () => {
+    const view = buildApprovalView(
+      makeRecord("signMessage", {
+        method: "xian_signMessage",
+        params: [{ message: "a\u0000b\u{E0041}\tc" }]
+      }),
+      { account: "abc123", chainId: "xian-local" }
+    );
+
+    expect(view.payload).toBe("a[U+0000]b[U+E0041]\tc");
+  });
+
   it("reveals invisible and direction-changing characters in a message", () => {
     const view = buildApprovalView(
       makeRecord("signMessage", {
