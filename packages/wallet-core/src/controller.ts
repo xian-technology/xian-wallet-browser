@@ -1115,28 +1115,30 @@ export class WalletController {
   }
 
   private async restoreSessionSecrets(
-    session: StoredUnlockedSession & { sessionKey: string },
+    session: StoredUnlockedSession,
     generation: number
   ): Promise<boolean> {
+    const { sessionKey } = session;
+    if (!sessionKey) return this.discardRestoredSession(generation);
     try {
       const state = await this.loadWalletState();
       if (!state || state.publicKey !== session.publicKey) {
         return this.discardRestoredSession(generation);
       }
       const privateKey = await decryptPrivateKeyWithSessionKey(
-        state.encryptedPrivateKey, session.sessionKey
+        state.encryptedPrivateKey, sessionKey
       );
       const signer = new Ed25519Signer(privateKey);
       if (signer.address !== session.publicKey) {
         return this.discardRestoredSession(generation);
       }
       const mnemonic = state.encryptedMnemonic
-        ? await decryptMnemonicWithSessionKey(state.encryptedMnemonic, session.sessionKey).catch(() => null)
+        ? await decryptMnemonicWithSessionKey(state.encryptedMnemonic, sessionKey).catch(() => null)
         : null;
       if (generation !== this.sessionGeneration) return false;
       this.unlockedPrivateKey = privateKey;
       this.unlockedSigner = signer;
-      this.unlockedSessionKey = session.sessionKey;
+      this.unlockedSessionKey = sessionKey;
       this.unlockedMnemonic = mnemonic;
       return true;
     } catch {
@@ -1164,9 +1166,11 @@ export class WalletController {
       await this.expireUnlockedSession();
       return false;
     }
-    if (!this.unlockedPrivateKey || !this.unlockedSessionKey) {
-      if (!session.sessionKey) return this.discardRestoredSession(generation);
-      if (!await this.restoreSessionSecrets({ ...session, sessionKey: session.sessionKey }, generation)) return false;
+    // A restarted worker holds no secrets yet. Skipping the await when it
+    // does keeps the signer check above and the comparison below in one turn.
+    if (!(this.unlockedPrivateKey && this.unlockedSessionKey) &&
+        !await this.restoreSessionSecrets(session, generation)) {
+      return false;
     }
     return this.acceptRestoredSession(session, generation);
   }

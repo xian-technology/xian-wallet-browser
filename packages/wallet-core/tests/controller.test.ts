@@ -3240,6 +3240,16 @@ describe("wallet session cancellation", () => {
     expect((await make().getPopupState()).unlocked).toBe(false);
   });
 
+  it("locks a restarted controller whose stored session has no session key", async () => {
+    const store = createStore(), client = createClient();
+    const make = () => new WalletController({ wallet: { id: "xian-wallet", name: "Xian", rdns: "org.xian.wallet" }, version: "test", store, createClient: () => client });
+    await make().createOrImportWallet({ password: "wallet-password", privateKey: PRIVATE_KEY });
+    const { sessionKey: _dropped, ...withoutKey } = store.currentSession()!;
+    await store.saveUnlockedSession(withoutKey);
+    expect((await make().getPopupState()).unlocked).toBe(false);
+    expect(store.currentSession()).toBeNull();
+  });
+
   it("keeps the wallet unlocked when a session read overlaps an account switch", async () => {
     const store = createStore(), client = createClient();
     const controller = new WalletController({ wallet: { id: "xian-wallet", name: "Xian", rdns: "org.xian.wallet" }, version: "test", store, createClient: () => client });
