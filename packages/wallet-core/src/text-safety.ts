@@ -4,8 +4,9 @@
 const HIDDEN_CHARACTER =
   /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F­؜ᅟᅠ᠎​-‏‪-‮⁠-⁤⁦-⁯ㅤ﻿ﾠ￹-￻\u{E0000}-\u{E007F}]/gu;
 
+// Called only with a HIDDEN_CHARACTER match, which is never empty.
 function codePointLabel(character: string): string {
-  const codePoint = character.codePointAt(0) ?? 0;
+  const codePoint = character.codePointAt(0)!;
   return `[U+${codePoint.toString(16).toUpperCase().padStart(4, "0")}]`;
 }
 
