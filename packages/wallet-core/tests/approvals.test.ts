@@ -494,3 +494,71 @@ describe("@xian-tech/wallet-core approvals", () => {
   });
 });
 
+
+describe("approval view details", () => {
+  const account = "a".repeat(64);
+  const options = { account, chainId: "xian-local" };
+  const tx = (payload: Record<string, unknown>) => [{ tx: { payload } }];
+  const detail = (view: ReturnType<typeof buildApprovalView>, label: string) =>
+    view.details?.find((entry) => entry.label === label);
+
+  it("shows accounts, senders and contracts in monospace in every view", () => {
+    const monospaced: Array<[PendingApprovalRecord["kind"], string, unknown, string]> = [
+      ["connect", "xian_requestAccounts", undefined, "Account"],
+      ["switchChain", "xian_switchChain", [{ chainId: "xian-other" }], "Account"],
+      ["signMessage", "xian_signMessage", [{ message: "hi" }], "Account"],
+      ["sendCall", "xian_sendCall", [{ intent: { contract: "currency", function: "transfer", chi: 5 } }], "Account"],
+      ["sendTransaction", "xian_sendTransaction", tx({ sender: account, contract: "currency" }), "Sender"],
+      ["sendTransaction", "xian_sendTransaction", tx({ sender: account, contract: "currency" }), "Contract"],
+      ["watchAsset", "xian_watchAsset", [{ options: { contract: "con_token" } }], "Contract"]
+    ];
+    for (const [kind, method, params, label] of monospaced) {
+      const view = buildApprovalView(makeRecord(kind, { method, params: params as never }), options);
+      expect([kind, label, detail(view, label)?.monospace]).toEqual([kind, label, true]);
+    }
+  });
+
+  it("previews even a one-character message and needs no wallet context to do so", () => {
+    const view = buildApprovalView(
+      makeRecord("signMessage", { method: "xian_signMessage", params: [{ message: "x" }] })
+    );
+    expect(view.highlights).toEqual(["x"]);
+    expect(view.details.map((entry) => entry.label)).toEqual(["Site", "Length", "Preview"]);
+  });
+
+  it("names the transaction's own chain, else the wallet's, else none", () => {
+    const record = (payload: Record<string, unknown>) =>
+      makeRecord("signTransaction", { method: "xian_signTransaction", params: tx(payload) });
+    expect(detail(buildApprovalView(record({ chain_id: "xian-tx" }), options), "Network")?.value).toBe("xian-tx");
+    expect(detail(buildApprovalView(record({}), options), "Network")?.value).toBe("xian-local");
+    expect(detail(buildApprovalView(record({})), "Network")).toBeUndefined();
+  });
+
+  it("offers no trust rule for a prepared transaction without a named function", () => {
+    const view = buildApprovalView(
+      makeRecord("sendTransaction", { method: "xian_sendTransaction", params: tx({ contract: "currency" }) }),
+      options
+    );
+    expect(view.trustSuggestion).toBeUndefined();
+    expect(view.highlights).toEqual(["This request can broadcast immediately after approval."]);
+  });
+
+  it("counts send-call arguments only when the intent carries an argument object", () => {
+    const call = (kwargs: unknown) =>
+      buildApprovalView(
+        makeRecord("sendCall", {
+          method: "xian_sendCall",
+          params: [{ intent: { contract: "currency", function: "transfer", chi: 5, kwargs } }]
+        }),
+        options
+      );
+    expect(detail(call({ to: "bob", amount: 1 }), "Arguments")?.value).toBe("2 field(s)");
+    expect(detail(call(null), "Arguments")).toBeUndefined();
+    expect(detail(call("to=bob"), "Arguments")).toBeUndefined();
+  });
+
+  it("prices chi at any positive rate, including one chi per XIAN", () => {
+    expect(formatChiWithXianCost(500, 1)).toBe("500 (~500 XIAN)");
+    expect(formatChiWithXianCost(500, 0.5)).toBe(`500 (~${(1000).toLocaleString()} XIAN)`);
+  });
+});
