@@ -22,7 +22,8 @@
     "dist/*.js",
     "dist/*.js.map",
     "dist/*.d.ts",
-    "dist/*.d.ts.map"
+    "dist/*.d.ts.map",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -32,5 +33,6 @@
     "@scure/bip39": "^2.2.0",
     "@xian-tech/client": "0.3.3",
     "@xian-tech/provider": "0.3.3"
-  }
+  },
+  "license": "MIT"
 }

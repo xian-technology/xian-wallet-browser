@@ -19,5 +19,6 @@
   "devDependencies": {
     "@playwright/test": "^1.59.1",
     "esbuild": "^0.28.0"
-  }
+  },
+  "license": "MIT"
 }
