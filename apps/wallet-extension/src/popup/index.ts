@@ -252,7 +252,7 @@ let sendArgs: TxArg[] = [];
 let sendEstimateMode = true;
 let sendManualChi = "";
 let sendParsedKwargs: Record<string, unknown> | null = null;
-let sendEstimate: { estimated: number } | null = null;
+let sendEstimate: { estimated: number; supply: number } | null = null;
 let sendChiRate: number | null = null;
 let sendResult: SendTransactionResult | null = null;
 let argIdCounter = 0;
@@ -283,7 +283,7 @@ let tradeToToken = "";
 let tradeAmount = "";
 let tradeSlippageBps = DEFAULT_SLIPPAGE_BPS;
 let tradeDeadlineMinutes = DEFAULT_DEADLINE_MINUTES;
-let tradeEstimate: { estimated: number } | null = null;
+let tradeEstimate: { estimated: number; supply: number } | null = null;
 let tradeChiRate: number | null = null;
 let tradeQuoteForReview: DexQuote | null = null;
 let tradeKwargsForReview: Record<string, unknown> | null = null;
@@ -3679,7 +3679,7 @@ async function reviewSimpleSend(
 
   try {
     [sendEstimate, sendChiRate] = await Promise.all([
-      sendRuntimeMessage<{ estimated: number }>({
+      sendRuntimeMessage<{ estimated: number; supply: number }>({
         type: "wallet_estimate_transaction",
         contract: sendContract,
         function: sendFunction,
@@ -4629,7 +4629,7 @@ async function handleTradeReview(state: PopupRuntimeState): Promise<void> {
   clearFlash();
   try {
     [tradeEstimate, tradeChiRate] = await Promise.all([
-      sendRuntimeMessage<{ estimated: number }>({
+      sendRuntimeMessage<{ estimated: number; supply: number }>({
         type: "wallet_estimate_transaction",
         contract: DEX_ROUTER,
         function: fn,
@@ -4664,7 +4664,7 @@ async function handleTradeSend(state: PopupRuntimeState): Promise<void> {
   const quote = tradeQuoteForReview;
   const kwargs = tradeKwargsForReview;
   const fn = tradeSwapFunction(tradeSnapshot, quote);
-  const chi = tradeEstimate?.estimated;
+  const chi = tradeEstimate?.supply;
   const notificationState = currentState?.unlocked ? currentState : state;
   tradeStep = "swapping";
   render(notificationState);
@@ -6057,7 +6057,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
       if (sendEstimateMode) {
         try {
           [sendEstimate, sendChiRate] = await Promise.all([
-            sendRuntimeMessage<{ estimated: number }>({
+            sendRuntimeMessage<{ estimated: number; supply: number }>({
               type: "wallet_estimate_transaction",
               contract: sendContract,
               function: sendFunction,
@@ -6117,7 +6117,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
 
       const chi =
         sendEstimateMode && sendEstimate
-          ? sendEstimate.estimated
+          ? sendEstimate.supply
           : parseInt(sendManualChi, 10) || undefined;
 
       try {

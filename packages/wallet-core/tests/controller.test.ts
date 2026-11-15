@@ -782,7 +782,8 @@ describe("@xian-tech/wallet-core controller", () => {
   it("estimates missing send-call chi before showing and executing approvals", async () => {
     const store = createStore();
     const client = createClient();
-    vi.mocked(client.estimateChi).mockResolvedValue({ estimated: 500 });
+    // 498 simulated + the 2-chi margin = 500 supplied.
+    vi.mocked(client.estimateChi).mockResolvedValue({ estimated: 498 });
     client.getChiRate = vi.fn(async () => 25);
     const controller = new WalletController({
       wallet: {
@@ -3574,7 +3575,7 @@ describe("wallet session cancellation", () => {
       });
     }
 
-    it("supplies exactly the simulated chi for dapp calls", async () => {
+    it("supplies the simulated chi plus the margin for dapp calls", async () => {
       const store = createStore();
       const client = createClient();
       vi.mocked(client.estimateChi).mockResolvedValue({ estimated: 500 });
@@ -3592,12 +3593,12 @@ describe("wallet session cancellation", () => {
       const approvalId = (start as { approvalId: string }).approvalId;
       await expect(controller.getApprovalView(approvalId)).resolves.toEqual(
         expect.objectContaining({
-          details: expect.arrayContaining([expect.objectContaining({ label: "Chi", value: "500" })])
+          details: expect.arrayContaining([expect.objectContaining({ label: "Chi", value: "502" })])
         })
       );
       await controller.resolveApproval(approvalId, true);
 
-      expect(client.buildTx).toHaveBeenCalledWith(expect.objectContaining({ chi: 500 }));
+      expect(client.buildTx).toHaveBeenCalledWith(expect.objectContaining({ chi: 502 }));
     });
 
     it("waits for the receipt of a direct wallet send", async () => {
@@ -3621,7 +3622,7 @@ describe("wallet session cancellation", () => {
       );
     });
 
-    it("reports the simulated chi to supply for wallet sends", async () => {
+    it("reports the estimate and the chi to supply for wallet sends", async () => {
       const store = createStore();
       const client = createClient();
       vi.mocked(client.estimateChi).mockResolvedValue({ estimated: 500 });
@@ -3630,7 +3631,19 @@ describe("wallet session cancellation", () => {
 
       await expect(
         controller.estimateTransactionChi({ contract: "currency", function: "transfer", kwargs: {} })
-      ).resolves.toEqual({ estimated: 500 });
+      ).resolves.toEqual({ estimated: 500, supply: 502 });
+    });
+
+    it("refuses a wallet send whose estimate exceeds the transaction cap", async () => {
+      const store = createStore();
+      const client = createClient();
+      vi.mocked(client.estimateChi).mockResolvedValue({ estimated: 200_001 });
+      const controller = makeController(store, client);
+      await controller.createOrImportWallet({ password: "secret", privateKey: PRIVATE_KEY });
+
+      await expect(
+        controller.estimateTransactionChi({ contract: "currency", function: "transfer", kwargs: {} })
+      ).rejects.toThrow(/exceeds the per-transaction limit/);
     });
   });
 });
@@ -3734,7 +3747,8 @@ describe("approved provider requests", () => {
 
   it.each([
     ["a zero estimate", { estimated: 0 }],
-    ["a non-finite estimate", { estimated: Number.NaN }]
+    ["a non-finite estimate", { estimated: Number.NaN }],
+    ["an estimate above the transaction cap", { estimated: 200_001 }]
   ])("leaves send-call chi to the user after %s", async (_label, estimate) => {
     const { controller, store } = await connectedController(estimate);
     await controller.startProviderRequest("request-send", ORIGIN, {
@@ -3746,7 +3760,7 @@ describe("approved provider requests", () => {
     expect(stored[0]!.intent.chi).toBeUndefined();
   });
 
-  it("supplies the simulated chi to a send-call whose params are a single object", async () => {
+  it("supplies the simulated chi plus the margin to a send-call whose params are a single object", async () => {
     const { controller, client, store } = await connectedController({ estimated: 550 });
     await controller.startProviderRequest("request-send", ORIGIN, {
       method: "xian_sendCall",
@@ -3754,7 +3768,7 @@ describe("approved provider requests", () => {
     });
 
     const stored = store.currentApprovals()["approval-2"]!.record.request.params as { intent: Record<string, unknown> };
-    expect(stored.intent).toEqual(expect.objectContaining({ chi: 550, kwargs: {} }));
+    expect(stored.intent).toEqual(expect.objectContaining({ chi: 552, kwargs: {} }));
     expect(client.estimateChi).toHaveBeenCalledWith(expect.objectContaining({ kwargs: {} }));
   });
 
@@ -3779,7 +3793,7 @@ describe("approved provider requests", () => {
       method: "xian_sendCall",
       params: [{ intent: { contract: "currency", function: "transfer", kwargs: {} } }]
     });
-    expect(storedIntent(store).chi).toBe(1);
+    expect(storedIntent(store).chi).toBe(3);
   });
 
   it("does not estimate a send-call that names no contract", async () => {
@@ -3798,7 +3812,7 @@ describe("approved provider requests", () => {
       params: [{ intent: { contract: "currency", function: "transfer", kwargs: {} } }, "extra"]
     });
     const params = store.currentApprovals()["approval-2"]!.record.request.params as unknown[];
-    expect(params).toEqual([{ intent: expect.objectContaining({ chi: 500 }) }, "extra"]);
+    expect(params).toEqual([{ intent: expect.objectContaining({ chi: 502 }) }, "extra"]);
   });
 
   it("refuses to prepare an intent for another chain", async () => {

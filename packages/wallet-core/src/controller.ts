@@ -1,5 +1,6 @@
 import { beginApprovalResolution, isApprovalResolutionActive } from "./approval-execution.js";
 import {
+  chiToSupply,
   createXianMessageSigningPayload,
   prepareTransaction,
   type PreparedTransaction,
@@ -2510,16 +2511,16 @@ export class WalletController {
     const kwargs = isRecord(target.intent.kwargs) ? target.intent.kwargs : {};
     try {
       const state = this.requireStoredWallet(await this.loadWalletState());
-      // Exactly the simulated chi: execution charges what the simulation reports.
-      const { estimated: chi } = await this.currentClient(state).estimateChi({
+      const { estimated } = await this.currentClient(state).estimateChi({
         sender: account,
         contract: target.intent.contract,
         function: target.intent.function,
         kwargs
       });
-      if (!Number.isFinite(chi) || chi <= 0) {
+      if (!Number.isFinite(estimated) || estimated <= 0) {
         return request;
       }
+      const chi = chiToSupply(estimated);
       return withSendCallIntent(request, target.firstParam, { ...target.intent, kwargs, chi });
     } catch {
       return request;
@@ -2997,7 +2998,7 @@ export class WalletController {
     contract: string;
     function: string;
     kwargs: Record<string, unknown>;
-  }): Promise<{ estimated: number }> {
+  }): Promise<{ estimated: number; supply: number }> {
     const state = this.requireStoredWallet(await this.loadWalletState());
     const client = this.currentClient(state);
     const { estimated } = await client.estimateChi({
@@ -3006,7 +3007,7 @@ export class WalletController {
       function: request.function,
       kwargs: request.kwargs
     });
-    return { estimated };
+    return { estimated, supply: chiToSupply(estimated) };
   }
 
   async getChiRate(): Promise<number | null> {

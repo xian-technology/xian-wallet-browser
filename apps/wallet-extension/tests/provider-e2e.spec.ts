@@ -227,7 +227,8 @@ test("approves connect and send-call requests through the injected provider brid
   const rpc = await startMockRpcServer({
     chainId: "xian-local",
     chiRate: 25,
-    chiEstimate: 500,
+    // 498 simulated + the 2-chi margin = 500 supplied.
+    chiEstimate: 498,
     nextNonce: 12,
     txHash: "ABC123"
   });
@@ -298,8 +299,8 @@ test("approves connect and send-call requests through the injected provider brid
     });
     const sendApproval = await waitForApprovalPage(context, sendExistingPages);
     await expect(sendApproval.getByText("Send contract call")).toBeVisible();
-    // The intent carries no chi, so the wallet supplies exactly the
-    // simulated 500 chi (20 XIAN at 25 chi/XIAN).
+    // The intent carries no chi, so the wallet supplies the simulated 498
+    // chi plus the 2-chi margin: 500 chi (20 XIAN at 25 chi/XIAN).
     await expect(sendApproval.getByText("500 (~20 XIAN)")).toBeVisible();
     await expect(
       sendApproval
@@ -601,11 +602,21 @@ test("shows linked notifications instead of a result panel after direct wallet s
         expect.stringContaining("/tx?hash=")
       ])
     );
+    // The simulated 500 chi plus the 2-chi margin.
+    expect(broadcastChiSupplied(rpc.requests)).toBe(502);
   } finally {
     await cleanupExtension(context, userDataDir);
     await rpc.close();
   }
 });
+
+/** chi_supplied of the transaction a mock RPC received through broadcast_tx_sync. */
+function broadcastChiSupplied(requests: string[]): unknown {
+  const request = requests.find((entry) => entry.startsWith("POST /broadcast_tx_sync?tx="));
+  const tx = new URL(`http://rpc${request!.slice("POST ".length)}`).searchParams.get("tx")!;
+  const json = Buffer.from(tx.replaceAll('"', ""), "hex").toString("utf8");
+  return (JSON.parse(json) as { payload: { chi_supplied: unknown } }).payload.chi_supplied;
+}
 
 test("reports a direct send that ran out of chi as a state change, not a success", async () => {
   const rpc = await startMockRpcServer({
