@@ -116,6 +116,25 @@ function mergeDetails(
   };
 }
 
+/**
+ * Whether the submitted transaction executed and failed (and paid its fee):
+ * its receipt reports a failure, or a commit-mode broadcast was admitted but
+ * not finalized.
+ */
+function executionFailed(submission: JsonRecord): boolean {
+  return (
+    recordPath(submission, "receipt")?.success === false ||
+    (submission.mode === "commit" && submission.accepted === true && submission.finalized !== true)
+  );
+}
+
+/** The submission's message; a failed receipt's message when it has none. */
+function failureMessageOf(submission: JsonRecord, failed: boolean): unknown {
+  return failed && submission.message === undefined
+    ? recordPath(submission, "receipt")?.message
+    : submission.message;
+}
+
 /** The broadcast for a fulfilled submitting request, or null for other methods. */
 export function buildTransactionSubmittedMessage(
   runtimeMessage: ProviderRequestRuntimeMessage,
@@ -128,6 +147,7 @@ export function buildTransactionSubmittedMessage(
   }
 
   const submission = isRecord(result.result) ? result.result : {};
+  const failed = executionFailed(submission);
   return {
     type: "wallet_transaction_submitted",
     origin: runtimeMessage.origin,
@@ -137,12 +157,13 @@ export function buildTransactionSubmittedMessage(
     submitted: readBoolean(submission.submitted),
     accepted: readBooleanOrNull(submission.accepted),
     finalized: readBoolean(submission.finalized),
+    executionFailed: failed,
     txHash: txHashFromSubmission(submission),
     ...mergeDetails(
       detailsFromSubmission(submission),
       detailsFromProviderRequest(method, params)
     ),
-    message: submission.message,
+    message: failureMessageOf(submission, failed),
     execution: recordPath(submission, "receipt")?.execution
   };
 }
@@ -169,7 +190,7 @@ function localActivityTx(
     sender,
     contract,
     function: functionName,
-    success: status !== undefined,
+    success: status !== undefined && notification.executionFailed !== true,
     created_at: new Date().toISOString(),
     payload: {
       sender,

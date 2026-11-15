@@ -78,6 +78,8 @@ export interface WalletTransactionSubmittedRuntimeMessage {
   submitted?: boolean;
   accepted?: boolean | null;
   finalized?: boolean;
+  /** The transaction executed and failed: never shown as a success. */
+  executionFailed?: boolean;
   txHash?: string;
   sender?: string;
   contract?: string;

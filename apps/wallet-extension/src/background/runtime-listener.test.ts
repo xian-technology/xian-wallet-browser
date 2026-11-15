@@ -552,6 +552,7 @@ describe("background runtime message listener", () => {
           submitted: true,
           accepted: true,
           finalized: false,
+          executionFailed: false,
           txHash: "HASH",
           sender: undefined,
           contract: "currency",
@@ -865,6 +866,42 @@ describe("provider transaction activity", () => {
       local_status: "accepted",
       result: { message: "queued" }
     });
+  });
+
+  // A paid transaction can execute and fail: its receipt (waitForTx) or a
+  // commit-mode broadcast that was admitted but not finalized says so.
+  it.each([
+    [
+      "a receipt that reports failure",
+      {
+        txHash: "HF",
+        accepted: true,
+        finalized: true,
+        receipt: { success: false, message: "AssertionError('Not enough coins to send.')" }
+      },
+      "AssertionError('Not enough coins to send.')"
+    ],
+    [
+      "a commit broadcast admitted but not finalized",
+      { txHash: "HF", mode: "commit", accepted: true, finalized: false, message: "Out of chi." },
+      "Out of chi."
+    ]
+  ])("stores a transaction with %s as failed", async (_case, submission, message) => {
+    const { broadcast, stored } = await publishFulfilled(submission);
+
+    expect(broadcast[0]).toMatchObject({ executionFailed: true, message });
+    expect(stored[0]?.[1]).toMatchObject({ tx_hash: "HF", success: false, result: { message } });
+  });
+
+  it.each([
+    ["a successful receipt", { txHash: "HS", accepted: true, finalized: true, receipt: { success: true } }],
+    ["a finalized commit broadcast", { txHash: "HS", mode: "commit", accepted: true, finalized: true }],
+    ["a checktx broadcast still pending", { txHash: "HS", mode: "checktx", accepted: true, finalized: false }]
+  ])("does not mark a transaction with %s as failed", async (_case, submission) => {
+    const { broadcast, stored } = await publishFulfilled(submission);
+
+    expect(broadcast[0]).toMatchObject({ executionFailed: false });
+    expect(stored[0]?.[1]).toMatchObject({ tx_hash: "HS", success: true });
   });
 
   it("stores an unconfirmed transaction without a local status", async () => {
