@@ -3708,7 +3708,7 @@ async function reviewSimpleSend(
         ? nativeSpendShortfall({
             balance: activeState.assetBalances[NATIVE_TOKEN_CONTRACT],
             amount: runtimeNumericText(amount),
-            chi: sendEstimate.estimated,
+            chi: sendEstimate.supply,
             chiRate: sendChiRate
           })
         : null;
@@ -4665,7 +4665,7 @@ async function handleTradeReview(state: PopupRuntimeState): Promise<void> {
         ? nativeSpendShortfall({
             balance: fromToken.balance,
             amount: quote.amountIn,
-            chi: tradeEstimate.estimated,
+            chi: tradeEstimate.supply,
             chiRate: tradeChiRate
           })
         : null;

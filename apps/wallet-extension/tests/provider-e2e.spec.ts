@@ -711,11 +711,11 @@ test("refuses a XIAN send that leaves no balance for the fee, naming the most it
 
   try {
     await expect(popup.locator(".flash-toast")).toContainText(
-      "The amount plus the network fee (12.75 XIAN) exceeds your XIAN balance. You can spend at most 87.2 XIAN."
+      "The amount plus the network fee (12.85 XIAN) exceeds your XIAN balance. You can spend at most 87.1 XIAN."
     );
     await expect(popup.getByText("Transaction summary")).toHaveCount(0);
 
-    await popup.locator("#simple-amount").fill("87.2");
+    await popup.locator("#simple-amount").fill("87.1");
     await popup.getByRole("button", { name: "Review" }).click();
     await expect(popup.getByText("Transaction summary")).toBeVisible();
   } finally {
