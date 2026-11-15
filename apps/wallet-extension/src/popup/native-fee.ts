@@ -40,6 +40,20 @@ function unitsOf(value: string | null | undefined): bigint | null {
   }
 }
 
+function isCount(value: number | null | undefined): value is number {
+  return value != null && Number.isSafeInteger(value) && value >= 0;
+}
+
+/** The spend in exact units, or null when an input is unknown or unreadable. */
+function exactSpend(input: NativeSpendInput): { balance: bigint; amount: bigint; chi: bigint; rate: bigint } | null {
+  const balance = unitsOf(input.balance);
+  const amount = unitsOf(input.amount);
+  if (balance == null || amount == null || !isCount(input.chi) || !isCount(input.chiRate) || input.chiRate === 0) {
+    return null;
+  }
+  return { balance, amount, chi: BigInt(input.chi), rate: BigInt(input.chiRate) };
+}
+
 /**
  * Null when spending `amount` XIAN with `chi` supplied fits the balance (or
  * the inputs are unknown); otherwise the fee and the most the call can spend.
@@ -47,22 +61,13 @@ function unitsOf(value: string | null | undefined): bigint | null {
  * chi more.
  */
 export function nativeSpendShortfall(input: NativeSpendInput): NativeSpendShortfall | null {
-  const { chi, chiRate } = input;
-  const balance = unitsOf(input.balance);
-  const amount = unitsOf(input.amount);
-  if (
-    balance == null || amount == null || chiRate == null ||
-    !Number.isSafeInteger(chiRate) || chiRate <= 0 || !Number.isSafeInteger(chi) || chi < 0
-  ) {
+  const spend = exactSpend(input);
+  if (spend == null || spend.amount * spend.rate + spend.chi * UNITS_PER_XIAN <= spend.balance * spend.rate) {
     return null;
   }
-  const rate = BigInt(chiRate);
-  if (amount * rate + BigInt(chi) * UNITS_PER_XIAN <= balance * rate) {
-    return null;
-  }
-  const spendable = balance - feeUnits(BigInt(chi) + 1n, rate);
+  const spendable = spend.balance - feeUnits(spend.chi + 1n, spend.rate);
   const max = spendable > 0n ? spendable - (spendable % SUGGESTED_STEP) : 0n;
-  return { fee: fixedText(feeUnits(BigInt(chi), rate)), max: fixedText(max) };
+  return { fee: fixedText(feeUnits(spend.chi, spend.rate)), max: fixedText(max) };
 }
 
 export function nativeShortfallMessage(shortfall: NativeSpendShortfall): string {

@@ -486,6 +486,32 @@ function sendCallChiDetail(
       });
 }
 
+function simulationDetail(failure: string | undefined): ApprovalDetail | null {
+  return failure === undefined
+    ? null
+    : compactDetail("Simulation", `Fails: ${failure}`, { tone: "danger" });
+}
+
+// An auto-approval rule needs a chi cap, so none is offered without one;
+// none is offered for a call that fails either.
+function sendCallTrustSuggestion(
+  intent: Record<string, unknown>,
+  chiKnown: boolean,
+  failure: string | undefined
+): ApprovalTrustSuggestion | undefined {
+  return chiKnown && failure === undefined
+    ? targetTrustSuggestion(intent, "contract calls")
+    : undefined;
+}
+
+function sendCallWarnings(chiKnown: boolean, failure: string | undefined): string[] {
+  return [
+    ...(failure === undefined ? [] : [FAILING_SIMULATION_WARNING]),
+    SEND_CALL_INTENT_WARNING,
+    ...(chiKnown ? [] : [UNKNOWN_CHI_WARNING])
+  ];
+}
+
 function sendCallView(
   approval: PendingApprovalRecord,
   payload: unknown,
@@ -508,9 +534,7 @@ function sendCallView(
       compactDetail("Function", intent.function),
       compactDetail("Network", intent.chainId ?? options?.chainId),
       chiDetail,
-      failure === undefined
-        ? null
-        : compactDetail("Simulation", `Fails: ${failure}`, { tone: "danger" }),
+      simulationDetail(failure),
       compactDetail(
         "Arguments",
         kwargs ? `${Object.keys(kwargs).length} field(s)` : undefined
@@ -518,16 +542,8 @@ function sendCallView(
       ...argumentDetails(kwargs)
     ]),
     highlights: [targetLabel(intent)],
-    warnings: [
-      ...(failure === undefined ? [] : [FAILING_SIMULATION_WARNING]),
-      SEND_CALL_INTENT_WARNING,
-      ...(chiKnown ? [] : [UNKNOWN_CHI_WARNING])
-    ],
-    // An auto-approval rule needs a chi cap, so none is offered without one;
-    // none is offered for a call that fails either.
-    trustSuggestion: chiKnown && failure === undefined
-      ? targetTrustSuggestion(intent, "contract calls")
-      : undefined,
+    warnings: sendCallWarnings(chiKnown, failure),
+    trustSuggestion: sendCallTrustSuggestion(intent, chiKnown, failure),
     payload: prettyJson(payload),
     payloadLabel: "Raw call intent"
   };

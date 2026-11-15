@@ -32,6 +32,11 @@ describe("nativeSpendShortfall", () => {
     ).toEqual({ fee: "36.285714285714285714285714285715", max: "63.57142857" });
   });
 
+  it("judges a call that uses no chi by its amount alone", () => {
+    expect(nativeSpendShortfall({ balance: "1", amount: "1", chi: 0, chiRate: 20 })).toBeNull();
+    expect(nativeSpendShortfall({ balance: "1", amount: "2", chi: 0, chiRate: 20 })).toEqual({ fee: "0", max: "0.95" });
+  });
+
   it("suggests nothing to spend when the balance does not cover the fee", () => {
     expect(nativeSpendShortfall({ balance: "10", amount: "1", chi: 254, chiRate: 20 })).toEqual({
       fee: "12.7",
@@ -44,7 +49,10 @@ describe("nativeSpendShortfall", () => {
     ["an unreadable balance", { balance: "n/a", amount: "1", chi: 254, chiRate: 20 }],
     ["an unknown chi rate", { balance: "1", amount: "1", chi: 254, chiRate: null }],
     ["a non-integer chi rate", { balance: "1", amount: "1", chi: 254, chiRate: 2.5 }],
-    ["a zero chi rate", { balance: "1", amount: "1", chi: 254, chiRate: 0 }]
+    ["a zero chi rate", { balance: "1", amount: "1", chi: 254, chiRate: 0 }],
+    ["an unreadable amount", { balance: "1", amount: "1,5", chi: 254, chiRate: 20 }],
+    ["a negative chi", { balance: "1", amount: "2", chi: -1, chiRate: 20 }],
+    ["a fractional chi", { balance: "1", amount: "2", chi: 1.5, chiRate: 20 }]
   ])("does not judge with %s", (_case, input) => {
     expect(nativeSpendShortfall(input)).toBeNull();
   });

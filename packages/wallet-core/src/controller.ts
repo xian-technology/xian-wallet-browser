@@ -2540,7 +2540,7 @@ export class WalletController {
       const chi = chiToSupply(estimated);
       return {
         request: withSendCallIntent(request, target.firstParam, { ...target.intent, kwargs, chi }),
-        simulationFailure: simulationFailure(simulation) ?? undefined
+        simulationFailure: simulationFailure(simulation)
       };
     } catch {
       return { request };
@@ -3029,7 +3029,7 @@ export class WalletController {
       kwargs: request.kwargs
     });
     const failure = simulationFailure(simulation);
-    if (failure !== null) {
+    if (failure !== undefined) {
       throw new Error(`This transaction would fail: ${failure}`);
     }
     return { estimated, supply: chiToSupply(estimated) };

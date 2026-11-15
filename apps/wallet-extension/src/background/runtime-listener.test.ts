@@ -885,12 +885,18 @@ describe("provider transaction activity", () => {
       "a commit broadcast admitted but not finalized",
       { txHash: "HF", mode: "commit", accepted: true, finalized: false, message: "Out of chi." },
       "Out of chi."
+    ],
+    [
+      "a commit broadcast without receipt or message",
+      { txHash: "HF", mode: "commit", accepted: true, finalized: false },
+      undefined
     ]
   ])("stores a transaction with %s as failed", async (_case, submission, message) => {
     const { broadcast, stored } = await publishFulfilled(submission);
 
     expect(broadcast[0]).toMatchObject({ executionFailed: true, message });
-    expect(stored[0]?.[1]).toMatchObject({ tx_hash: "HF", success: false, result: { message } });
+    expect(stored[0]?.[1]).toMatchObject({ tx_hash: "HF", success: false });
+    expect(stored[0]?.[1]?.result).toEqual(message === undefined ? undefined : { message });
   });
 
   it.each([

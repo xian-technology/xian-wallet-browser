@@ -10,13 +10,14 @@ describe("simulationFailure", () => {
     ["no simulation", undefined],
     ["a non-record", "failed"]
   ])("finds no failure in %s", (_case, simulation) => {
-    expect(simulationFailure(simulation)).toBeNull();
+    expect(simulationFailure(simulation)).toBeUndefined();
   });
 
   it.each([
     ["its text result", { status: 1, result: "AssertionError('Not enough coins to send.')" }, "AssertionError('Not enough coins to send.')"],
     ["a structured result as JSON", { status: 1, result: { error: "boom" } }, '{"error":"boom"}'],
-    ["a placeholder without a result", { status: 2 }, '"unknown failure"']
+    ["a placeholder without a result", { status: 2 }, '"unknown failure"'],
+    ["a falsy result as JSON", { status: 1, result: false }, "false"]
   ])("reports a failed simulation with %s", (_case, simulation, failure) => {
     expect(simulationFailure(simulation)).toBe(failure);
   });
