@@ -215,6 +215,8 @@ export interface ApprovalViewOptions {
   chainId?: string;
   targetChainId?: string;
   chiRate?: number | null;
+  /** Why the wallet's simulation of a send-call fails, when it does. */
+  simulationFailure?: string;
 }
 
 // Every builder lists its details and highlights, even when empty.
@@ -454,6 +456,8 @@ const sendTransactionView = preparedTransactionView({
 
 const SEND_CALL_INTENT_WARNING =
   "The wallet will fill the sender and nonce at approval time. Confirm the contract and arguments match your intent.";
+const FAILING_SIMULATION_WARNING =
+  "The wallet simulated this call and it fails. Approving sends it anyway: it will fail and still pay its chi.";
 const UNKNOWN_CHI_WARNING =
   "The wallet could not estimate chi for this call. The chi limit will be chosen when it is sent.";
 
@@ -491,6 +495,7 @@ function sendCallView(
   const kwargs = intentKwargs(intent);
   const chiDetail = sendCallChiDetail(intent.chiSupplied ?? intent.chi, options);
   const chiKnown = chiDetail?.tone === "warning";
+  const failure = options?.simulationFailure;
   return {
     title: "Send contract call",
     description:
@@ -503,6 +508,9 @@ function sendCallView(
       compactDetail("Function", intent.function),
       compactDetail("Network", intent.chainId ?? options?.chainId),
       chiDetail,
+      failure === undefined
+        ? null
+        : compactDetail("Simulation", `Fails: ${failure}`, { tone: "danger" }),
       compactDetail(
         "Arguments",
         kwargs ? `${Object.keys(kwargs).length} field(s)` : undefined
@@ -510,11 +518,14 @@ function sendCallView(
       ...argumentDetails(kwargs)
     ]),
     highlights: [targetLabel(intent)],
-    warnings: chiKnown
-      ? [SEND_CALL_INTENT_WARNING]
-      : [SEND_CALL_INTENT_WARNING, UNKNOWN_CHI_WARNING],
-    // An auto-approval rule needs a chi cap, so none is offered without one.
-    trustSuggestion: chiKnown
+    warnings: [
+      ...(failure === undefined ? [] : [FAILING_SIMULATION_WARNING]),
+      SEND_CALL_INTENT_WARNING,
+      ...(chiKnown ? [] : [UNKNOWN_CHI_WARNING])
+    ],
+    // An auto-approval rule needs a chi cap, so none is offered without one;
+    // none is offered for a call that fails either.
+    trustSuggestion: chiKnown && failure === undefined
       ? targetTrustSuggestion(intent, "contract calls")
       : undefined,
     payload: prettyJson(payload),

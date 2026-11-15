@@ -3622,6 +3622,60 @@ describe("wallet session cancellation", () => {
       );
     });
 
+    // The simulator answers a failing call with status 1 and its chi; sending
+    // it anyway executes, fails and pays that chi.
+    it("refuses a wallet send whose simulation fails", async () => {
+      const store = createStore();
+      const client = createClient();
+      vi.mocked(client.estimateChi).mockResolvedValue({
+        estimated: 130,
+        simulation: { status: 1, chi_used: 130, result: "AssertionError('Not enough coins to send.')" }
+      });
+      const controller = makeController(store, client);
+      await controller.createOrImportWallet({ password: "secret", privateKey: PRIVATE_KEY });
+
+      await expect(
+        controller.estimateTransactionChi({ contract: "currency", function: "transfer", kwargs: {} })
+      ).rejects.toThrow(
+        "This transaction would fail: AssertionError('Not enough coins to send.')"
+      );
+    });
+
+    it("warns before approving a dapp call whose simulation fails", async () => {
+      const store = createStore();
+      const client = createClient();
+      vi.mocked(client.estimateChi).mockResolvedValue({
+        estimated: 130,
+        simulation: { status: 1, chi_used: 130, result: "AssertionError('Not enough coins to send.')" }
+      });
+      const controller = makeController(store, client);
+      await controller.createOrImportWallet({ password: "secret", privateKey: PRIVATE_KEY });
+      const connect = await controller.startProviderRequest("connect", ORIGIN, {
+        method: "xian_requestAccounts"
+      });
+      await controller.resolveApproval((connect as { approvalId: string }).approvalId, true);
+
+      const start = await controller.startProviderRequest("send", ORIGIN, {
+        method: "xian_sendCall",
+        params: [{ intent: { contract: "currency", function: "transfer", kwargs: {} } }]
+      });
+      const view = await controller.getApprovalView((start as { approvalId: string }).approvalId);
+
+      expect(view?.details).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            label: "Simulation",
+            value: "Fails: AssertionError('Not enough coins to send.')",
+            tone: "danger"
+          })
+        ])
+      );
+      expect(view?.warnings?.[0]).toBe(
+        "The wallet simulated this call and it fails. Approving sends it anyway: it will fail and still pay its chi."
+      );
+      expect(view?.trustSuggestion).toBeUndefined();
+    });
+
     it("reports the estimate and the chi to supply for wallet sends", async () => {
       const store = createStore();
       const client = createClient();

@@ -33,6 +33,7 @@ import {
 } from "@xian-tech/provider";
 
 import { approvalKindFromMethod, buildApprovalView } from "./approvals.js";
+import { simulationFailure } from "./simulation.js";
 import {
   DEFAULT_NETWORK_PRESETS,
   DEFAULT_DASHBOARD_URL,
@@ -173,7 +174,7 @@ export interface WalletNetworkClient {
     contract: string;
     function: string;
     kwargs: Record<string, unknown>;
-  }): Promise<{ estimated: number }>;
+  }): Promise<{ estimated: number; simulation?: Record<string, unknown> }>;
   getContractMethods(contract: string): Promise<{ name: string; arguments: { name: string; type: string }[] }[]>;
   getContractSource?(contract: string): Promise<string | null>;
   getContractIr?(contract: string): Promise<string | null>;
@@ -2499,31 +2500,35 @@ export class WalletController {
     };
   }
 
+  /** The request with its simulated chi, and why the simulation fails, if it does. */
   private async requestWithEstimatedSendCallChi(
     request: XianProviderRequest,
     account: string | undefined
-  ): Promise<XianProviderRequest> {
+  ): Promise<{ request: XianProviderRequest; simulationFailure?: string }> {
     const target = sendCallIntentWithoutChi(request);
     if (!account || !target) {
-      return request;
+      return { request };
     }
 
     const kwargs = isRecord(target.intent.kwargs) ? target.intent.kwargs : {};
     try {
       const state = this.requireStoredWallet(await this.loadWalletState());
-      const { estimated } = await this.currentClient(state).estimateChi({
+      const { estimated, simulation } = await this.currentClient(state).estimateChi({
         sender: account,
         contract: target.intent.contract,
         function: target.intent.function,
         kwargs
       });
       if (!Number.isFinite(estimated) || estimated <= 0) {
-        return request;
+        return { request };
       }
       const chi = chiToSupply(estimated);
-      return withSendCallIntent(request, target.firstParam, { ...target.intent, kwargs, chi });
+      return {
+        request: withSendCallIntent(request, target.firstParam, { ...target.intent, kwargs, chi }),
+        simulationFailure: simulationFailure(simulation) ?? undefined
+      };
     } catch {
-      return request;
+      return { request };
     }
   }
 
@@ -2549,7 +2554,7 @@ export class WalletController {
     requestState: StoredProviderRequest,
     context: ApprovalContext
   ): Promise<ProviderRequestStartResult> {
-    const request = await this.requestWithEstimatedSendCallChi(
+    const { request, simulationFailure } = await this.requestWithEstimatedSendCallChi(
       requestState.request,
       context.account
     );
@@ -2570,7 +2575,8 @@ export class WalletController {
       account: context.account,
       chainId: context.network.chainId,
       targetChainId: context.targetNetwork?.chainId,
-      chiRate
+      chiRate,
+      simulationFailure
     });
     const approval: PersistedApproval = {
       id: record.id,
@@ -3001,12 +3007,16 @@ export class WalletController {
   }): Promise<{ estimated: number; supply: number }> {
     const state = this.requireStoredWallet(await this.loadWalletState());
     const client = this.currentClient(state);
-    const { estimated } = await client.estimateChi({
+    const { estimated, simulation } = await client.estimateChi({
       sender: state.publicKey,
       contract: request.contract,
       function: request.function,
       kwargs: request.kwargs
     });
+    const failure = simulationFailure(simulation);
+    if (failure !== null) {
+      throw new Error(`This transaction would fail: ${failure}`);
+    }
     return { estimated, supply: chiToSupply(estimated) };
   }
 
