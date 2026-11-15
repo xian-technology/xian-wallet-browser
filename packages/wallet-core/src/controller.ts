@@ -1521,6 +1521,21 @@ export class WalletController {
     return resolvedChainId ?? preset.chainId;
   }
 
+  /**
+   * The chain the active network's RPC serves, the one every signature is
+   * bound to; refused when the network was configured for another chain.
+   */
+  private async signingChainId(state: StoredWalletState): Promise<string> {
+    const chainId = await this.currentClient(state).getChainId();
+    const configured = this.activeNetworkPreset(state).chainId;
+    if (configured && configured !== chainId) {
+      throw new ProviderChainMismatchError(
+        `the network RPC serves chain ${chainId}, not the configured ${configured}; refusing to sign`
+      );
+    }
+    return chainId;
+  }
+
   private async captureApprovalNetworkContext(
     state: StoredWalletState,
     preset: WalletNetworkPreset
@@ -2143,7 +2158,7 @@ export class WalletController {
   ): Promise<XianUnsignedTransaction> {
     const signer = await this.requireUnlockedSigner();
     const client = this.currentClient(state);
-    const activeChainId = await client.getChainId();
+    const activeChainId = await this.signingChainId(state);
 
     if (intent.chainId && intent.chainId !== activeChainId) {
       throw new ProviderChainMismatchError(
@@ -2197,7 +2212,7 @@ export class WalletController {
   ): Promise<TransactionSubmission> {
     const signer = await this.requireUnlockedSigner();
     const client = this.currentClient(state);
-    const activeChainId = await client.getChainId();
+    const activeChainId = await this.signingChainId(state);
     if (intent.chainId && intent.chainId !== activeChainId) {
       throw new ProviderChainMismatchError(
         "wallet is connected to a different chain"
@@ -2237,7 +2252,7 @@ export class WalletController {
     tx: XianUnsignedTransaction
   ): Promise<XianSignedTransaction> {
     const signer = await this.requireUnlockedSigner();
-    const activeChainId = await this.currentClient(state).getChainId();
+    const activeChainId = await this.signingChainId(state);
     if (tx.payload.sender !== signer.address) {
       throw new ProviderUnauthorizedError(
         "transaction sender does not match the active wallet"
@@ -2392,7 +2407,7 @@ export class WalletController {
             "refusing to sign a transaction-like payload as a plain message"
           );
         }
-        const chainId = await this.currentClient(state).getChainId();
+        const chainId = await this.signingChainId(state);
         return signer.signMessage(
           createXianMessageSigningPayload({
             account: state.publicKey,

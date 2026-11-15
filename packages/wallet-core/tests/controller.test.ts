@@ -3883,3 +3883,68 @@ describe("approved provider requests", () => {
     expect(client.buildTx).not.toHaveBeenCalled();
   });
 });
+
+// A network configured with a chain id is the user's statement of which
+// chain they sign for; an RPC that serves another chain (a wrong URL, a
+// hijacked endpoint) must not get signatures for its chain.
+describe("signing on the configured chain only", () => {
+  const MISMATCH = "the network RPC serves chain xian-local, not the configured xian-expected; refusing to sign";
+
+  async function mismatchedController() {
+    const store = createStore();
+    const client = createClient();
+    let next = 0;
+    const controller = new WalletController({
+      wallet: { id: "xian-wallet", name: "Xian Wallet", rdns: "org.xian.wallet" },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined),
+      createId: () => `approval-${++next}`
+    });
+    await controller.createOrImportWallet({
+      password: "secret",
+      privateKey: PRIVATE_KEY,
+      networkName: "Expected network",
+      expectedChainId: "xian-expected",
+      rpcUrl: "http://127.0.0.1:36657"
+    });
+    return { controller, client };
+  }
+
+  it("refuses a wallet send", async () => {
+    const { controller, client } = await mismatchedController();
+
+    await expect(
+      controller.sendDirectTransaction({ contract: "currency", function: "transfer", kwargs: {}, chi: 500 })
+    ).rejects.toThrow(MISMATCH);
+    expect(client.buildTx).not.toHaveBeenCalled();
+    expect(client.signTx).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a message", { method: "xian_signMessage", params: [{ message: "hello" }] }],
+    ["a send-call", { method: "xian_sendCall", params: [{ intent: { contract: "currency", function: "transfer", kwargs: {}, chi: 500 } }] }],
+    [
+      "a prepared transaction",
+      {
+        method: "xian_signTransaction",
+        params: [{ tx: { payload: { chain_id: "xian-local", contract: "currency", function: "transfer", kwargs: {}, nonce: 1, sender: "x", chi_supplied: 500 } } }]
+      }
+    ]
+  ])("refuses to sign %s for a dapp", async (_case, request) => {
+    const { controller, client } = await mismatchedController();
+    const connect = await controller.startProviderRequest("connect", ORIGIN, { method: "xian_requestAccounts" });
+    await controller.resolveApproval((connect as { approvalId: string }).approvalId, true);
+
+    const start = await controller.startProviderRequest("request", ORIGIN, request);
+    await controller.resolveApproval((start as { approvalId: string }).approvalId, true);
+
+    await expect(controller.getProviderRequestStatus("request")).resolves.toMatchObject({
+      status: "rejected",
+      error: expect.objectContaining({ message: MISMATCH })
+    });
+    expect(client.signTx).not.toHaveBeenCalled();
+    expect(client.broadcastTx).not.toHaveBeenCalled();
+  });
+});
