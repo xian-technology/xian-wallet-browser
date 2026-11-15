@@ -33,7 +33,7 @@ import {
 } from "@xian-tech/provider";
 
 import { approvalKindFromMethod, buildApprovalView } from "./approvals.js";
-import { simulationFailure } from "./simulation.js";
+import { assertSimulationSucceeds } from "./simulation.js";
 import {
   DEFAULT_NETWORK_PRESETS,
   DEFAULT_DASHBOARD_URL,
@@ -294,6 +294,18 @@ function sendCallIntentWithoutChi(request: XianProviderRequest): SendCallTarget 
     return null;
   }
   return { firstParam, intent: intent as SendCallTarget["intent"] };
+}
+
+/** The chi to supply for a positive estimate, or null (none, or above the per-transaction limit). */
+function supplyFor(estimated: number): number | null {
+  if (!Number.isFinite(estimated) || estimated <= 0) {
+    return null;
+  }
+  try {
+    return chiToSupply(estimated);
+  } catch {
+    return null;
+  }
 }
 
 function withSendCallIntent(
@@ -2515,35 +2527,47 @@ export class WalletController {
     };
   }
 
-  /** The request with its simulated chi, and why the simulation fails, if it does. */
+  /**
+   * The request with the chi the wallet supplies for its simulated cost;
+   * unchanged when it cannot be estimated. A call whose simulation fails is
+   * refused: sending it would execute, fail and pay its chi.
+   */
   private async requestWithEstimatedSendCallChi(
     request: XianProviderRequest,
     account: string | undefined
-  ): Promise<{ request: XianProviderRequest; simulationFailure?: string }> {
+  ): Promise<XianProviderRequest> {
     const target = sendCallIntentWithoutChi(request);
     if (!account || !target) {
-      return { request };
+      return request;
     }
-
     const kwargs = isRecord(target.intent.kwargs) ? target.intent.kwargs : {};
+    const estimate = await this.estimateSendCall(account, target.intent, kwargs);
+    if (estimate === null) {
+      return request;
+    }
+    assertSimulationSucceeds(estimate.simulation);
+    const chi = supplyFor(estimate.estimated);
+    return chi === null
+      ? request
+      : withSendCallIntent(request, target.firstParam, { ...target.intent, kwargs, chi });
+  }
+
+  /** The simulation of a send-call, or null when it cannot be run. */
+  private async estimateSendCall(
+    account: string,
+    intent: SendCallTarget["intent"],
+    kwargs: Record<string, unknown>
+  ): Promise<{ estimated: number; simulation?: Record<string, unknown> } | null> {
     try {
       const state = this.requireStoredWallet(await this.loadWalletState());
-      const { estimated, simulation } = await this.currentClient(state).estimateChi({
+      return await this.currentClient(state).estimateChi({
         sender: account,
-        contract: target.intent.contract,
-        function: target.intent.function,
+        contract: intent.contract,
+        function: intent.function,
         kwargs
       });
-      if (!Number.isFinite(estimated) || estimated <= 0) {
-        return { request };
-      }
-      const chi = chiToSupply(estimated);
-      return {
-        request: withSendCallIntent(request, target.firstParam, { ...target.intent, kwargs, chi }),
-        simulationFailure: simulationFailure(simulation)
-      };
     } catch {
-      return { request };
+      return null;
     }
   }
 
@@ -2565,14 +2589,28 @@ export class WalletController {
     }
   }
 
+  /** Rejects a request while it is being started. */
+  private async rejectStart(
+    requestState: StoredProviderRequest,
+    error: unknown
+  ): Promise<ProviderRequestStartResult> {
+    const rejected = await this.rejectRequest(requestState, error);
+    if (rejected.status !== "rejected") {
+      throw new Error("approval request rejection did not settle correctly");
+    }
+    return rejected;
+  }
+
   private async createApprovalRequest(
     requestState: StoredProviderRequest,
     context: ApprovalContext
   ): Promise<ProviderRequestStartResult> {
-    const { request, simulationFailure } = await this.requestWithEstimatedSendCallChi(
-      requestState.request,
-      context.account
-    );
+    let request: XianProviderRequest;
+    try {
+      request = await this.requestWithEstimatedSendCallChi(requestState.request, context.account);
+    } catch (error) {
+      return this.rejectStart(requestState, error);
+    }
     const record: PendingApprovalRecord = {
       id: this.createId(),
       origin: requestState.origin,
@@ -2590,8 +2628,7 @@ export class WalletController {
       account: context.account,
       chainId: context.network.chainId,
       targetChainId: context.targetNetwork?.chainId,
-      chiRate,
-      simulationFailure
+      chiRate
     });
     const approval: PersistedApproval = {
       id: record.id,
@@ -2618,17 +2655,7 @@ export class WalletController {
       };
     } catch (error) {
       await this.store.deleteApprovalState(record.id);
-      const rejected = await this.rejectRequest(
-        {
-          ...requestState,
-          approvalId: record.id
-        },
-        error
-      );
-      if (rejected.status !== "rejected") {
-        throw new Error("approval request rejection did not settle correctly");
-      }
-      return rejected;
+      return this.rejectStart({ ...requestState, approvalId: record.id }, error);
     }
   }
 
@@ -3028,10 +3055,7 @@ export class WalletController {
       function: request.function,
       kwargs: request.kwargs
     });
-    const failure = simulationFailure(simulation);
-    if (failure !== undefined) {
-      throw new Error(`This transaction would fail: ${failure}`);
-    }
+    assertSimulationSucceeds(simulation);
     return { estimated, supply: chiToSupply(estimated) };
   }
 

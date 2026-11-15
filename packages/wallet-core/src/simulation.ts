@@ -1,3 +1,5 @@
+import { SimulationError } from "@xian-tech/client";
+
 /**
  * The failure text of a simulation that did not succeed, or undefined when
  * it succeeded or reports no status. The simulator answers a failing call with a
@@ -13,4 +15,12 @@ export function simulationFailure(simulation: unknown): string | undefined {
     return undefined;
   }
   return typeof result === "string" ? result : JSON.stringify(result ?? "unknown failure");
+}
+
+/** Refuses a failing simulation: sending that call would execute, fail and pay its chi. */
+export function assertSimulationSucceeds(simulation: unknown): void {
+  const failure = simulationFailure(simulation);
+  if (failure !== undefined) {
+    throw new SimulationError(`This transaction would fail: ${failure}`, simulation);
+  }
 }

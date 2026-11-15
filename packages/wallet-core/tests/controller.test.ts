@@ -3636,12 +3636,15 @@ describe("wallet session cancellation", () => {
 
       await expect(
         controller.estimateTransactionChi({ contract: "currency", function: "transfer", kwargs: {} })
-      ).rejects.toThrow(
-        "This transaction would fail: AssertionError('Not enough coins to send.')"
-      );
+      ).rejects.toMatchObject({
+        name: "SimulationError",
+        message: "This transaction would fail: AssertionError('Not enough coins to send.')"
+      });
     });
 
-    it("warns before approving a dapp call whose simulation fails", async () => {
+    // A chi-less dapp call is simulated before the user is asked; one that
+    // fails is answered with the failure and never reaches an approval.
+    it("refuses a dapp call whose simulation fails, before asking the user", async () => {
       const store = createStore();
       const client = createClient();
       vi.mocked(client.estimateChi).mockResolvedValue({
@@ -3655,25 +3658,20 @@ describe("wallet session cancellation", () => {
       });
       await controller.resolveApproval((connect as { approvalId: string }).approvalId, true);
 
-      const start = await controller.startProviderRequest("send", ORIGIN, {
-        method: "xian_sendCall",
-        params: [{ intent: { contract: "currency", function: "transfer", kwargs: {} } }]
+      await expect(
+        controller.startProviderRequest("send", ORIGIN, {
+          method: "xian_sendCall",
+          params: [{ intent: { contract: "currency", function: "transfer", kwargs: {} } }]
+        })
+      ).resolves.toEqual({
+        status: "rejected",
+        error: expect.objectContaining({
+          name: "SimulationError",
+          message: "This transaction would fail: AssertionError('Not enough coins to send.')"
+        })
       });
-      const view = await controller.getApprovalView((start as { approvalId: string }).approvalId);
-
-      expect(view?.details).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            label: "Simulation",
-            value: "Fails: AssertionError('Not enough coins to send.')",
-            tone: "danger"
-          })
-        ])
-      );
-      expect(view?.warnings?.[0]).toBe(
-        "The wallet simulated this call and it fails. Approving sends it anyway: it will fail and still pay its chi."
-      );
-      expect(view?.trustSuggestion).toBeUndefined();
+      await expect(controller.listApprovalStates()).resolves.toEqual([]);
+      expect(client.buildTx).not.toHaveBeenCalled();
     });
 
     it("reports the estimate and the chi to supply for wallet sends", async () => {
@@ -3833,6 +3831,22 @@ describe("approved provider requests", () => {
       params: [{ intent: { contract: "currency", function: "transfer", kwargs: {}, chiSupplied: 900 } }]
     });
 
+    expect(client.estimateChi).not.toHaveBeenCalled();
+  });
+
+  it("asks the user about a send-call with explicit chi without simulating it", async () => {
+    const { controller, client } = await connectedController();
+    vi.mocked(client.estimateChi).mockResolvedValue({
+      estimated: 130,
+      simulation: { status: 1, result: "AssertionError('x')" }
+    } as never);
+
+    await expect(
+      controller.startProviderRequest("request-send", ORIGIN, {
+        method: "xian_sendCall",
+        params: [{ intent: { contract: "currency", function: "transfer", kwargs: {}, chi: 900 } }]
+      })
+    ).resolves.toMatchObject({ status: "pending" });
     expect(client.estimateChi).not.toHaveBeenCalled();
   });
 
