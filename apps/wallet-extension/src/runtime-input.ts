@@ -72,6 +72,14 @@ export function isPositiveRuntimeAmount(value: RuntimeNumeric): boolean {
   return value.__fixed__ !== "0" && !value.__fixed__.startsWith("-");
 }
 
+/** The decimal spelling of a parsed runtime number. */
+export function runtimeNumericText(value: RuntimeNumeric): string {
+  if (typeof value === "number") {
+    return String(value);
+  }
+  return "__big_int__" in value ? value.__big_int__ : value.__fixed__;
+}
+
 export function parseArgValue(val: string, type: RuntimeArgType): unknown {
   switch (type) {
     case "str":

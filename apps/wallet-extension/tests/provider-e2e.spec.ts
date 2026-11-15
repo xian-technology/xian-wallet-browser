@@ -1,6 +1,6 @@
 import { writeFile } from "node:fs/promises";
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 
 import {
   cleanupExtension,
@@ -651,6 +651,72 @@ test("reports a direct send that ran out of chi as a state change, not a success
     const toast = popup.locator(".flash-toast");
     await expect(toast).toContainText("Transaction failed.", { timeout: 4_000 });
     await expect(toast).toContainText("the chain state changed since the estimate");
+    await expect(popup.getByText("Transaction summary")).toBeVisible();
+  } finally {
+    await cleanupExtension(context, userDataDir);
+    await rpc.close();
+  }
+});
+
+async function reviewDirectSend(
+  rpc: Awaited<ReturnType<typeof startMockRpcServer>>,
+  amount: string
+): Promise<{ popup: Page; context: BrowserContext; userDataDir: string }> {
+  const { context, extensionId, userDataDir } = await launchExtension();
+  const popup = await openExtensionPage(context, extensionId, "popup.html");
+  await createWalletInPopup(popup, "correct horse battery");
+  await sendRuntimeMessage(popup, {
+    type: "wallet_update_settings",
+    networkName: "Mock local node",
+    expectedChainId: rpc.chainId,
+    rpcUrl: rpc.url,
+    dashboardUrl: rpc.url
+  });
+  await popup.reload();
+
+  await popup.locator("[data-go-send]").click();
+  await popup.locator("#simple-to").fill("b".repeat(64));
+  await popup.locator("#simple-amount").fill(amount);
+  await popup.getByRole("button", { name: "Review" }).click();
+  return { popup, context, userDataDir };
+}
+
+test("refuses a direct send whose simulation fails, before signing", async () => {
+  const rpc = await startMockRpcServer({
+    chiRate: 20,
+    chiEstimate: 130,
+    simulationFailure: "AssertionError('Not enough coins to send.')"
+  });
+  const { popup, context, userDataDir } = await reviewDirectSend(rpc, "5");
+
+  try {
+    await expect(popup.locator(".flash-toast")).toContainText(
+      "This transaction would fail: AssertionError('Not enough coins to send.')"
+    );
+    await expect(popup.getByText("Transaction summary")).toHaveCount(0);
+    expect(rpc.requests.some((request) => request.includes("broadcast_tx"))).toBe(false);
+  } finally {
+    await cleanupExtension(context, userDataDir);
+    await rpc.close();
+  }
+});
+
+test("refuses a XIAN send that leaves no balance for the fee, naming the most it can send", async () => {
+  const rpc = await startMockRpcServer({
+    chiRate: 20,
+    chiEstimate: 255,
+    balances: { currency: "100" }
+  });
+  const { popup, context, userDataDir } = await reviewDirectSend(rpc, "100");
+
+  try {
+    await expect(popup.locator(".flash-toast")).toContainText(
+      "The amount plus the network fee (12.75 XIAN) exceeds your XIAN balance. You can spend at most 87.2 XIAN."
+    );
+    await expect(popup.getByText("Transaction summary")).toHaveCount(0);
+
+    await popup.locator("#simple-amount").fill("87.2");
+    await popup.getByRole("button", { name: "Review" }).click();
     await expect(popup.getByText("Transaction summary")).toBeVisible();
   } finally {
     await cleanupExtension(context, userDataDir);

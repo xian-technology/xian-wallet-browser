@@ -27,6 +27,7 @@ import {
 } from "../shared/preferences";
 import {
   isPositiveRuntimeAmount,
+  runtimeNumericText,
   isRecognizedXianRecipient,
   parseArgValue,
   parseRuntimeNumberInput
@@ -131,6 +132,11 @@ import {
   type SendTransactionResult,
   type TransactionFlashLabels
 } from "./transaction-status";
+import {
+  NATIVE_TOKEN_CONTRACT,
+  nativeShortfallMessage,
+  nativeSpendShortfall
+} from "./native-fee";
 import {
   activityHasTx as activityTxListHasHash,
   activityTxTimestampMillis,
@@ -3697,6 +3703,20 @@ async function reviewSimpleSend(
     }
     clearTimeout(timeout);
     simpleReviewLoading = false;
+    const shortfall =
+      simpleToken === NATIVE_TOKEN_CONTRACT && sendEstimate
+        ? nativeSpendShortfall({
+            balance: activeState.assetBalances[NATIVE_TOKEN_CONTRACT],
+            amount: runtimeNumericText(amount),
+            chi: sendEstimate.estimated,
+            chiRate: sendChiRate
+          })
+        : null;
+    if (shortfall) {
+      setFlash(nativeShortfallMessage(shortfall), "warning");
+      render(currentState?.unlocked ? currentState : activeState);
+      return;
+    }
     sendStep = "review";
     render(currentState?.unlocked ? currentState : activeState);
   } catch (error) {
@@ -4638,6 +4658,20 @@ async function handleTradeReview(state: PopupRuntimeState): Promise<void> {
       sendRuntimeMessage<number | null>({ type: "wallet_get_chi_rate" }),
     ]);
     if (await reconcileLockedState()) {
+      return;
+    }
+    const shortfall =
+      fromToken?.contract === NATIVE_TOKEN_CONTRACT && tradeEstimate
+        ? nativeSpendShortfall({
+            balance: fromToken.balance,
+            amount: quote.amountIn,
+            chi: tradeEstimate.estimated,
+            chiRate: tradeChiRate
+          })
+        : null;
+    if (shortfall) {
+      setFlash(nativeShortfallMessage(shortfall), "warning");
+      render(currentState?.unlocked ? currentState : state);
       return;
     }
     tradeStep = "review";

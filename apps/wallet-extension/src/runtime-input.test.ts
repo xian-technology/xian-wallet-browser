@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   isPositiveRuntimeAmount,
+  runtimeNumericText,
   isRecognizedXianRecipient,
   parseArgValue,
   parseRuntimeNumberInput
@@ -39,5 +40,15 @@ describe("runtime input parsing", () => {
     expect(isRecognizedXianRecipient("qwe")).toBe(false);
     expect(isRecognizedXianRecipient("external:abc123")).toBe(false);
     expect(isRecognizedXianRecipient("0xabc123")).toBe(false);
+  });
+});
+
+describe("runtimeNumericText", () => {
+  it.each([
+    [12, "12"],
+    [{ __big_int__: "9007199254740993" }, "9007199254740993"],
+    [{ __fixed__: "0.000000000000000000000000000001" }, "0.000000000000000000000000000001"]
+  ] as const)("spells %j as %s", (value, text) => {
+    expect(runtimeNumericText(value)).toBe(text);
   });
 });

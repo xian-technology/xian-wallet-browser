@@ -195,6 +195,31 @@ export async function waitForInjectedProvider(page: Page): Promise<void> {
     .toBe(true);
 }
 
+/** The mock simulator's answer: a balance_of from `balances`, else the estimate (or failure). */
+function simulationValue(
+  payloadHex: string,
+  options?: { chiEstimate?: number | null; balances?: Record<string, string>; simulationFailure?: string }
+): string | null {
+  const call = JSON.parse(Buffer.from(payloadHex, "hex").toString("utf8")) as {
+    contract?: string;
+    function?: string;
+  };
+  const balance = call.function === "balance_of" ? options?.balances?.[call.contract ?? ""] : undefined;
+  if (balance !== undefined) {
+    return base64(JSON.stringify({ status: 0, chi_used: 0, result: { __fixed__: balance } }));
+  }
+  if (options?.chiEstimate == null) {
+    return null;
+  }
+  return base64(
+    JSON.stringify(
+      options.simulationFailure === undefined
+        ? { chi_used: options.chiEstimate }
+        : { status: 1, chi_used: options.chiEstimate, result: options.simulationFailure }
+    )
+  );
+}
+
 export async function startMockRpcServer(options?: {
   chainId?: string;
   contractIrs?: Record<string, string | null>;
@@ -205,6 +230,10 @@ export async function startMockRpcServer(options?: {
   contractSources?: Record<string, string | null>;
   chiRate?: number | string | null;
   chiEstimate?: number | null;
+  /** balance_of answers per token contract (decimal text). */
+  balances?: Record<string, string>;
+  /** Fails every simulated call except balance_of with this result. */
+  simulationFailure?: string;
   nextNonce?: number;
   txHash?: string;
   broadcastCheckCode?: number;
@@ -275,10 +304,7 @@ export async function startMockRpcServer(options?: {
             result: {
               response: {
                 code: 0,
-                value:
-                  options?.chiEstimate == null
-                    ? null
-                    : base64(JSON.stringify({ chi_used: options.chiEstimate }))
+                value: simulationValue(queryPath.slice("/simulate_tx/".length), options)
               }
             }
           });
