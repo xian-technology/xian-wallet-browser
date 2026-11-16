@@ -105,6 +105,7 @@ import {
   type DisplayedAsset
 } from "./assets";
 import { renderAppFavicon } from "./app-favicon";
+import { renderUnusedChiBanner } from "./unused-chi";
 import {
   escapeAttribute,
   escapeHtml,
@@ -260,6 +261,8 @@ let sendEstimateMode = true;
 let sendManualChi = "";
 let sendParsedKwargs: Record<string, unknown> | null = null;
 let sendEstimate: { estimated: number; supply: number } | null = null;
+// The simulation of a call sent with a manual chi limit, to say what its unused chi costs.
+let sendManualEstimate: { estimated: number; supply: number } | null = null;
 let sendChiRate: number | null = null;
 let sendResult: SendTransactionResult | null = null;
 let argIdCounter = 0;
@@ -317,6 +320,7 @@ function resetSendState(): void {
   sendManualChi = "";
   sendParsedKwargs = null;
   sendEstimate = null;
+  sendManualEstimate = null;
   sendChiRate = null;
   sendResult = null;
   contractMethods = [];
@@ -3958,7 +3962,7 @@ function renderSendDraft(): string {
         <div class="s-card-head">
           <div>
             <h3 class="s-card-title">Chi</h3>
-            <p class="s-card-desc">Transaction cost budget.</p>
+            <p class="s-card-desc">Transaction cost budget. Chi you supply but leave unused is half charged.</p>
           </div>
         </div>
         <div class="s-card-body stack">
@@ -3972,7 +3976,7 @@ function renderSendDraft(): string {
           </label>
           ${
             !sendEstimateMode
-              ? `<label>Chi limit<input id="send-chi" type="number" min="1" value="${escapeAttribute(sendManualChi)}" placeholder="e.g. 50000" /></label>`
+              ? `<label>Chi limit<input id="send-chi" type="number" min="1" value="${escapeAttribute(sendManualChi)}" placeholder="Checked against a simulation on review" /></label>`
               : ""
           }
         </div>
@@ -4021,6 +4025,16 @@ function renderSendReview(): string {
       </div>
 
       ${renderTransactionFeeCard(chiLabel)}
+
+      ${
+        sendEstimate
+          ? ""
+          : renderUnusedChiBanner({
+              supplied: Number(sendManualChi),
+              estimate: sendManualEstimate,
+              chiRate: sendChiRate
+            })
+      }
 
       <button class="full-width" data-send-tx>Send Transaction</button>
     </div>
@@ -6120,10 +6134,34 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           return;
         }
         sendEstimate = null;
+        [sendManualEstimate, sendChiRate] = await Promise.all([
+          // Only to tell what the limit's unused chi costs: no simulation, no warning.
+          sendRuntimeMessage<{ estimated: number; supply: number }>({
+            type: "wallet_estimate_transaction",
+            contract: sendContract,
+            function: sendFunction,
+            kwargs: sendParsedKwargs
+          }).catch(() => null),
+          sendRuntimeMessage<number | null>({ type: "wallet_get_chi_rate" }).catch(() => null)
+        ]);
+        if (await reconcileLockedState()) {
+          return;
+        }
         sendStep = "review";
         clearFlash();
         render(currentState?.unlocked ? currentState : state);
       }
+    });
+
+  root
+    .querySelector<HTMLElement>("[data-use-chi-estimate]")
+    ?.addEventListener("click", () => {
+      sendEstimateMode = true;
+      sendEstimate = sendManualEstimate;
+      sendManualEstimate = null;
+      sendManualChi = "";
+      clearFlash();
+      render(state);
     });
 
   root
