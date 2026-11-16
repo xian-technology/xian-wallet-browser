@@ -324,7 +324,7 @@ test("approves connect and send-call requests through the injected provider brid
 
     expect(rpc.requests).toEqual(
       expect.arrayContaining([
-        "GET /genesis",
+        "GET /status",
         expect.stringContaining("POST /abci_query?path=%22%2Fsimulate_tx%2F"),
         expect.stringContaining("POST /abci_query?path=%22%2Fget_next_nonce%2F"),
         expect.stringContaining("POST /broadcast_tx_sync?tx=%22")
