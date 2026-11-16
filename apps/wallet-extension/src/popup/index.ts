@@ -104,6 +104,7 @@ import {
   visibleWatchedAssets,
   type DisplayedAsset
 } from "./assets";
+import { renderAppFavicon } from "./app-favicon";
 import {
   escapeAttribute,
   escapeHtml,
@@ -2505,11 +2506,11 @@ function renderOriginItem(
   const displayName = metadata?.name?.trim() || hostname;
   const displaySubtitle =
     displayName === hostname ? origin : `${hostname} · ${origin}`;
-  const letter = escapeHtml((displayName.charAt(0) || "?").toUpperCase());
-  const fallbackBackground = assetGradient(origin);
-  const faviconUrl =
-    metadata?.iconUrl ??
-    `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=64`;
+  const favicon = renderAppFavicon({
+    letter: (displayName.charAt(0) || "?").toUpperCase(),
+    background: assetGradient(origin),
+    iconUrl: metadata?.iconUrl
+  });
   const policies = trustedDappPolicies.filter(
     (policy) => policy.origin === origin
   );
@@ -2517,10 +2518,7 @@ function renderOriginItem(
   return `
     <div class="app-group">
       <div class="app-item">
-        <div class="app-favicon-frame" style="--app-favicon-bg: ${escapeAttribute(fallbackBackground)}">
-          <span class="app-favicon-placeholder" aria-hidden="true">${letter}</span>
-          <img class="app-favicon" data-app-favicon src="${escapeAttribute(faviconUrl)}" alt="" width="32" height="32" />
-        </div>
+        ${favicon}
         <div class="app-item-info">
           <div class="app-item-host">${escapeHtml(displayName)}</div>
           <div class="app-item-url">${escapeHtml(displaySubtitle)}</div>
