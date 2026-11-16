@@ -16,6 +16,8 @@ import {
   UNLOCKED_SESSION_TIMEOUT_MS,
   unusedChiCost,
   unusedChiWarning,
+  signingContextForPopup,
+  popupSigningContextChanged,
   WalletController,
   type PersistedApproval,
   type StoredProviderRequest,
@@ -189,6 +191,93 @@ function createClient(): WalletNetworkClient {
 }
 
 describe("@xian-tech/wallet-core controller", () => {
+  it("does not substitute an account switched during direct-send context verification", async () => {
+    const store = createStore();
+    const client = createClient();
+    const controller = new WalletController({
+      wallet: { id: "xian-wallet", name: "Xian Wallet", rdns: "org.xian.wallet" },
+      version: "0.1.0-test", store, createClient: () => client
+    });
+    await controller.createOrImportWallet({ password: "secret", createWithMnemonic: true });
+    const second = await controller.addAccount();
+    const first = await controller.switchAccount(0);
+    let finish!: (chain: string) => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    vi.mocked(client.getChainId).mockImplementationOnce(() => {
+      entered();
+      return new Promise<string>((resolve) => { finish = resolve; });
+    });
+    const sending = controller.sendDirectTransaction({
+      reviewedContext: signingContextForPopup(first),
+      contract: "currency", function: "transfer", kwargs: { to: "bob", amount: 1 }, chi: 500
+    });
+    await started;
+    await controller.switchAccount(second.activeAccountIndex);
+    finish("xian-local");
+    await expect(sending).rejects.toThrow("account changed");
+    expect(client.signTx).not.toHaveBeenCalled();
+    expect(client.broadcastTx).not.toHaveBeenCalled();
+  });
+  it("requires the reviewed account for a direct send, including across wallet pages", async () => {
+    const store = createStore();
+    const client = createClient();
+    const controller = new WalletController({
+      wallet: { id: "xian-wallet", name: "Xian Wallet", rdns: "org.xian.wallet" },
+      version: "0.1.0-test", store, createClient: () => client
+    });
+    const created = await controller.createOrImportWallet({ password: "secret", createWithMnemonic: true });
+    const reviewedContext = signingContextForPopup(created.popupState);
+    await controller.addAccount();
+    await expect(controller.sendDirectTransaction({
+      reviewedContext, contract: "currency", function: "transfer", kwargs: { to: "bob", amount: 1 }, chi: 500
+    })).rejects.toThrow("changed after this request was reviewed");
+    expect(client.signTx).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unavailable or missing direct-signing context", async () => {
+    const store = createStore();
+    const client = createClient();
+    const controller = new WalletController({
+      wallet: { id: "xian-wallet", name: "Xian Wallet", rdns: "org.xian.wallet" },
+      version: "0.1.0-test", store, createClient: () => client
+    });
+    const created = await controller.createOrImportWallet({ password: "secret", privateKey: PRIVATE_KEY });
+    expect(popupSigningContextChanged(null, created.popupState)).toBe(false);
+    expect(popupSigningContextChanged(created.popupState, { ...created.popupState })).toBe(false);
+    expect(popupSigningContextChanged(created.popupState, { ...created.popupState, publicKey: undefined })).toBe(false);
+    expect(popupSigningContextChanged(created.popupState, { ...created.popupState, rpcUrl: "http://127.0.0.1:27657" })).toBe(true);
+    expect(() => signingContextForPopup({ ...created.popupState, publicKey: undefined })).toThrow("unavailable");
+    expect(() => signingContextForPopup({ ...created.popupState, activeNetworkId: undefined })).toThrow("unavailable");
+    await expect(controller.sendDirectTransaction({
+      reviewedContext: undefined!, contract: "currency", function: "transfer", kwargs: {}, chi: 500
+    })).rejects.toThrow("signing context is unavailable");
+    expect(client.signTx).not.toHaveBeenCalled();
+  });
+  it("refuses a direct transfer after another wallet page changes the reviewed RPC", async () => {
+    const store = createStore();
+    const client = createClient();
+    const controller = new WalletController({
+      wallet: { id: "xian-wallet", name: "Xian Wallet", rdns: "org.xian.wallet" },
+      version: "0.1.0-test", store, createClient: () => client
+    });
+    const created = await controller.createOrImportWallet({ password: "secret", privateKey: PRIVATE_KEY });
+    const state = created.popupState;
+    const reviewedContext = {
+      account: state.publicKey!,
+      network: {
+        presetId: state.activeNetworkId!, rpcUrl: state.rpcUrl,
+        configuredChainId: state.configuredChainId, chainId: state.chainId
+      }
+    };
+    await controller.updateSettings({ rpcUrl: "http://127.0.0.1:27657" });
+    await expect(controller.sendDirectTransaction({
+      contract: "currency", function: "transfer", kwargs: { to: "bob", amount: 1 },
+      chi: 500, reviewedContext
+    })).rejects.toThrow("changed after this request was reviewed");
+    expect(client.signTx).not.toHaveBeenCalled();
+    expect(client.broadcastTx).not.toHaveBeenCalled();
+  });
   it("creates connect approvals and emits provider lifecycle events", async () => {
     const store = createStore();
     const client = createClient();
@@ -2527,6 +2616,7 @@ def private_helper():
     autoLockEnabled = true;
 
     await controllerA.sendDirectTransaction({
+      reviewedContext: signingContextForPopup(await controllerA.getPopupState()),
       contract: "currency",
       function: "transfer",
       kwargs: { to: "bob", amount: "5" }
@@ -2772,6 +2862,7 @@ def private_helper():
     expect(nextState.unlocked).toBe(true);
 
     await controller.sendDirectTransaction({
+      reviewedContext: signingContextForPopup(await controller.getPopupState()),
       contract: "currency",
       function: "transfer",
       kwargs: { to: "bob", amount: "5" }
@@ -3647,6 +3738,7 @@ describe("wallet session cancellation", () => {
       await controller.createOrImportWallet({ password: "secret", privateKey: PRIVATE_KEY });
 
       await controller.sendDirectTransaction({
+        reviewedContext: signingContextForPopup(await controller.getPopupState()),
         contract: "currency",
         function: "transfer",
         kwargs: { to: "bob", amount: "5" },
@@ -3970,7 +4062,10 @@ describe("signing on the configured chain only", () => {
     const { controller, client } = await mismatchedController();
 
     await expect(
-      controller.sendDirectTransaction({ contract: "currency", function: "transfer", kwargs: {}, chi: 500 })
+      controller.sendDirectTransaction({
+        reviewedContext: signingContextForPopup(await controller.getPopupState()),
+        contract: "currency", function: "transfer", kwargs: {}, chi: 500
+      })
     ).rejects.toThrow(MISMATCH);
     expect(client.buildTx).not.toHaveBeenCalled();
     expect(client.signTx).not.toHaveBeenCalled();

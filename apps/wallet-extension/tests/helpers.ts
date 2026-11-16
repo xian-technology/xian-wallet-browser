@@ -52,6 +52,32 @@ export async function launchExtension(): Promise<{
     serviceWorker = await context.waitForEvent("serviceworker");
   }
 
+  // A developer may already have a real node at the product's default address.
+  // Fixtures must use their own mock RPC even during wallet setup and screenshots.
+  await serviceWorker.evaluate(() => {
+    const isDefaultRpc = (value: string | URL): boolean => {
+      const url = new URL(value, location.href);
+      return url.port === "26657" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
+    };
+    const fetch = globalThis.fetch.bind(globalThis);
+    globalThis.fetch = (input, init) => {
+      const url = typeof input === "string" || input instanceof URL ? input : input.url;
+      if (isDefaultRpc(url)) {
+        return Promise.reject(new TypeError("Browser fixtures require a dedicated mock RPC."));
+      }
+      return fetch(input, init);
+    };
+    const WebSocket = globalThis.WebSocket;
+    globalThis.WebSocket = class extends WebSocket {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        if (isDefaultRpc(url)) {
+          throw new TypeError("Browser fixtures require a dedicated mock RPC.");
+        }
+        super(url, protocols);
+      }
+    };
+  });
+
   return {
     context,
     extensionId: new URL(serviceWorker.url()).host,

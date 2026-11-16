@@ -94,7 +94,8 @@ function transactionHandlers({ controller }: RuntimeHandlerContext) {
         contract: message.contract,
         function: message.function,
         kwargs: message.kwargs,
-        chi: message.chi
+        chi: message.chi,
+        reviewedContext: message.reviewedContext
       }),
     wallet_get_contract_methods: (message) =>
       controller.getContractMethods(message.contract)

@@ -256,10 +256,14 @@ const CONTROLLER_PASSTHROUGH = {
       contract: "currency",
       function: "transfer",
       kwargs: { amount: 2 },
-      chi: 900
+      chi: 900,
+      reviewedContext: { account: "sender", network: { presetId: "local", rpcUrl: "http://127.0.0.1:26657" } }
     },
     "sendDirectTransaction",
-    [{ contract: "currency", function: "transfer", kwargs: { amount: 2 }, chi: 900 }]
+    [{
+      contract: "currency", function: "transfer", kwargs: { amount: 2 }, chi: 900,
+      reviewedContext: { account: "sender", network: { presetId: "local", rpcUrl: "http://127.0.0.1:26657" } }
+    }]
   ],
   wallet_get_contract_methods: [
     { type: "wallet_get_contract_methods", contract: "con_dex" },

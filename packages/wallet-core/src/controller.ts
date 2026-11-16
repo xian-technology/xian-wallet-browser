@@ -1276,6 +1276,14 @@ export class WalletController {
     return this.unlockedSigner;
   }
 
+  private async requireSignerForState(state: StoredWalletState): Promise<Ed25519Signer> {
+    const signer = await this.requireUnlockedSigner();
+    if (signer.address !== state.publicKey) {
+      throw new ProviderUnauthorizedError("wallet account changed; review the transaction again");
+    }
+    return signer;
+  }
+
   /** Record explicit wallet activity: extends an unlocked session's auto-lock timer. */
   async touchUnlockedSession(): Promise<boolean> {
     if (!(await this.restoreUnlockedSession())) {
@@ -1617,18 +1625,7 @@ export class WalletController {
       );
     }
 
-    const current = await this.captureApprovalContext(state);
-    if (
-      approval.context.account !== current.account ||
-      !this.approvalNetworkContextsMatch(
-        approval.context.network,
-        current.network
-      )
-    ) {
-      throw new ProviderUnauthorizedError(
-        "wallet account or network changed after this request was reviewed"
-      );
-    }
+    await this.assertSigningContext(approval.context, state);
 
     if (approval.context.targetNetwork) {
       const targetPreset = state.networkPresets.find(
@@ -1656,6 +1653,16 @@ export class WalletController {
     }
 
     return approval.context;
+  }
+
+  private async assertSigningContext(context: ApprovalContext, state: StoredWalletState): Promise<void> {
+    if (!isApprovalContext(context)) {
+      throw new ProviderUnauthorizedError("wallet signing context is unavailable; review the transaction again");
+    }
+    const current = await this.captureApprovalContext(state);
+    if (context.account !== current.account || !this.approvalNetworkContextsMatch(context.network, current.network)) {
+      throw new ProviderUnauthorizedError("wallet account or network changed after this request was reviewed");
+    }
   }
 
   private networkStatus(
@@ -2174,7 +2181,7 @@ export class WalletController {
     state: StoredWalletState,
     intent: XianTransactionIntent
   ): Promise<XianUnsignedTransaction> {
-    const signer = await this.requireUnlockedSigner();
+    const signer = await this.requireSignerForState(state);
     const client = this.currentClient(state);
     const activeChainId = await this.signingChainId(state);
 
@@ -2228,7 +2235,7 @@ export class WalletController {
       onPreparedTransaction?: (prepared: PreparedTransaction) => Promise<void>;
     }
   ): Promise<TransactionSubmission> {
-    const signer = await this.requireUnlockedSigner();
+    const signer = await this.requireSignerForState(state);
     const client = this.currentClient(state);
     const activeChainId = await this.signingChainId(state);
     if (intent.chainId && intent.chainId !== activeChainId) {
@@ -2269,7 +2276,7 @@ export class WalletController {
     state: StoredWalletState,
     tx: XianUnsignedTransaction
   ): Promise<XianSignedTransaction> {
-    const signer = await this.requireUnlockedSigner();
+    const signer = await this.requireSignerForState(state);
     const activeChainId = await this.signingChainId(state);
     if (tx.payload.sender !== signer.address) {
       throw new ProviderUnauthorizedError(
@@ -2415,7 +2422,7 @@ export class WalletController {
 
       case "xian_signMessage": {
         this.requireConnectedOrigin(state, origin);
-        const signer = await this.requireUnlockedSigner();
+        const signer = await this.requireSignerForState(state);
         const { message } = firstParamObject(request.params);
         if (typeof message !== "string") {
           throw new TypeError("xian_signMessage requires a message string");
@@ -3100,9 +3107,11 @@ export class WalletController {
     function: string;
     kwargs: Record<string, unknown>;
     chi?: number;
+    reviewedContext: ApprovalContext;
   }): Promise<unknown> {
     const state = this.requireStoredWallet(await this.loadWalletState());
     await this.requireUnlockedSigner();
+    await this.assertSigningContext(intent.reviewedContext, state);
     return this.sendCallTransaction(
       state,
       {

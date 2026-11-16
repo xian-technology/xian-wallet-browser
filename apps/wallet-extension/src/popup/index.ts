@@ -1,10 +1,13 @@
 import { fixedUnits } from "@xian-tech/dex";
-import { fixed, XianClient, type WatchSubscription } from "@xian-tech/client";
+import { fixed, normalizeXianRecipient, XianClient, type WatchSubscription } from "@xian-tech/client";
 import {
   assertRpcTransportAllowed,
   formatChiWithXianCost,
+  signingContextForPopup,
+  popupSigningContextChanged,
   truncateAddress,
   type ApprovalView,
+  type ApprovalContext,
   type WalletBackup,
   type WalletDexTokenInfo,
   type PopupState,
@@ -33,6 +36,7 @@ import {
   parseRuntimeNumberInput
 } from "../runtime-input";
 import {
+  walletStorageSigningContextChanged,
   loadLocalActivityTxs,
   loadDexAvailability,
   saveLocalActivityTx,
@@ -260,6 +264,7 @@ let sendArgs: TxArg[] = [];
 let sendEstimateMode = true;
 let sendManualChi = "";
 let sendParsedKwargs: Record<string, unknown> | null = null;
+let sendReviewedContext: ApprovalContext | null = null;
 let sendEstimate: { estimated: number; supply: number } | null = null;
 // The simulation of a call sent with a manual chi limit, to say what its unused chi costs.
 let sendManualEstimate: { estimated: number; supply: number } | null = null;
@@ -297,6 +302,7 @@ let tradeEstimate: { estimated: number; supply: number } | null = null;
 let tradeChiRate: number | null = null;
 let tradeQuoteForReview: DexQuote | null = null;
 let tradeKwargsForReview: Record<string, unknown> | null = null;
+let tradeReviewedContext: ApprovalContext | null = null;
 let tradeApprovalNotice: string | null = null;
 let tradeTokenPicker: TradeTokenSide | null = null;
 
@@ -319,6 +325,7 @@ function resetSendState(): void {
   sendEstimateMode = true;
   sendManualChi = "";
   sendParsedKwargs = null;
+  sendReviewedContext = null;
   sendEstimate = null;
   sendManualEstimate = null;
   sendChiRate = null;
@@ -338,6 +345,7 @@ function resetTradeForm(): void {
   tradeChiRate = null;
   tradeQuoteForReview = null;
   tradeKwargsForReview = null;
+  tradeReviewedContext = null;
   tradeApprovalNotice = null;
   tradeTokenPicker = null;
 }
@@ -599,7 +607,7 @@ function syncSendArgsForSelectedFunction(): void {
 }
 
 function buildSendKwargs(): Record<string, unknown> {
-  const kwargs: Record<string, unknown> = {};
+  const kwargs: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
   for (const arg of sendArgs) {
     if (!arg.name) continue;
     kwargs[arg.name] = parseArgValue(arg.value, arg.type);
@@ -1145,7 +1153,15 @@ async function removeWalletAndApplyState(shellMode: WalletShellMode): Promise<vo
   });
 }
 
+function resetReviewsForContextChange(previous: PopupRuntimeState | null, next: PopupRuntimeState): void {
+  if (popupSigningContextChanged(previous, next)) {
+    resetSendState();
+    resetTradeForm();
+  }
+}
+
 async function applyPopupState(state: PopupRuntimeState): Promise<void> {
+  resetReviewsForContextChange(currentState, state);
   const nextActivityKey =
     state.unlocked && state.publicKey ? activityKey(state, state.publicKey) : null;
   const activityContextChanged =
@@ -2998,17 +3014,6 @@ function isWalletTransactionSubmittedMessage(
   );
 }
 
-function walletStorageWasRemoved(change: unknown): boolean {
-  if (typeof change !== "object" || change === null) {
-    return false;
-  }
-  const storageChange = change as {
-    oldValue?: { wallet?: unknown } | null;
-    newValue?: { wallet?: unknown } | null;
-  };
-  return Boolean(storageChange.oldValue?.wallet) && !storageChange.newValue?.wallet;
-}
-
 async function handleWalletTransactionSubmitted(
   message: WalletTransactionSubmittedRuntimeMessage
 ): Promise<void> {
@@ -3639,6 +3644,7 @@ async function reviewSimpleSend(
     return;
   }
   const activeState = currentState?.unlocked ? currentState : state;
+  simpleTo = normalizeXianRecipient(simpleTo);
   if (!simpleTo) {
     setFlash("Recipient address is required.", "warning");
     render(activeState);
@@ -3669,6 +3675,7 @@ async function reviewSimpleSend(
   sendContract = simpleToken;
   sendFunction = "transfer";
   sendParsedKwargs = { to: simpleTo, amount };
+  sendReviewedContext = signingContextForPopup(activeState);
   sendEstimateMode = true;
   simpleReviewLoading = true;
   const requestId = ++simpleReviewRequestId;
@@ -4559,6 +4566,7 @@ async function handleTradeApproval(state: PopupRuntimeState): Promise<void> {
       SendTransactionResult & Record<string, unknown>
     >({
       type: "wallet_send_direct_transaction",
+      reviewedContext: signingContextForPopup(state),
       contract: tradeFromToken,
       function: "approve",
       kwargs
@@ -4615,6 +4623,7 @@ async function handleTradeApproval(state: PopupRuntimeState): Promise<void> {
 }
 
 async function handleTradeReview(state: PopupRuntimeState): Promise<void> {
+  tradeReviewedContext = signingContextForPopup(state);
   captureTradeFormState();
   if (await reconcileLockedState()) {
     return;
@@ -4698,7 +4707,7 @@ async function handleTradeReview(state: PopupRuntimeState): Promise<void> {
 }
 
 async function handleTradeSend(state: PopupRuntimeState): Promise<void> {
-  if (!tradeSnapshot || !tradeQuoteForReview || !tradeKwargsForReview) {
+  if (!tradeSnapshot || !tradeQuoteForReview || !tradeKwargsForReview || !tradeReviewedContext) {
     tradeStep = "form";
     render(state);
     return;
@@ -4720,6 +4729,7 @@ async function handleTradeSend(state: PopupRuntimeState): Promise<void> {
       SendTransactionResult & Record<string, unknown>
     >({
       type: "wallet_send_direct_transaction",
+      reviewedContext: tradeReviewedContext,
       contract: DEX_ROUTER,
       function: fn,
       kwargs,
@@ -6094,6 +6104,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
 
       try {
         sendParsedKwargs = buildSendKwargs();
+        sendReviewedContext = signingContextForPopup(state);
       } catch (error) {
         setFlash(formatError(error), "warning");
         render(state);
@@ -6175,7 +6186,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
   root
     .querySelector<HTMLElement>("[data-send-tx]")
     ?.addEventListener("click", async () => {
-      if (!sendParsedKwargs) {
+      if (!sendParsedKwargs || !sendReviewedContext) {
         return;
       }
       if (await reconcileLockedState()) {
@@ -6195,6 +6206,7 @@ function bindUnlockedEvents(state: PopupRuntimeState): void {
           SendTransactionResult & Record<string, unknown>
         >({
           type: "wallet_send_direct_transaction",
+          reviewedContext: sendReviewedContext,
           contract: sendContract,
           function: sendFunction,
           kwargs: sendParsedKwargs,
@@ -7102,7 +7114,7 @@ chrome.storage.onChanged.addListener(
     if (
       areaName === "local" &&
       STORAGE_KEY in changes &&
-      walletStorageWasRemoved(changes[STORAGE_KEY])
+      walletStorageSigningContextChanged(changes[STORAGE_KEY])
     ) {
       void refresh(null);
       return;

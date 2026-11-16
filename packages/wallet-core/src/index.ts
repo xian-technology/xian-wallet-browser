@@ -4,3 +4,4 @@ export * from "./controller.js";
 export * from "./crypto.js";
 export * from "./network.js";
 export * from "./types.js";
+export * from "./signing-context.js";

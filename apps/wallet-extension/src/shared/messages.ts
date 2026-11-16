@@ -3,6 +3,7 @@ import type {
   XianProviderRequest
 } from "@xian-tech/provider";
 import type {
+  ApprovalContext,
   ApprovalView,
   PopupState,
   ProviderRequestStartResult,
@@ -220,6 +221,7 @@ export interface WalletSendDirectTransactionRuntimeMessage {
   function: string;
   kwargs: Record<string, unknown>;
   chi?: number;
+  reviewedContext: ApprovalContext;
 }
 
 export interface WalletGetContractMethodsRuntimeMessage {

@@ -223,6 +223,27 @@ async function readLocalActivityTxs(
   );
 }
 
+test("isolates browser fixtures from a developer node at the default RPC", async () => {
+  const { context, userDataDir } = await launchExtension();
+  try {
+    const [worker] = context.serviceWorkers();
+    const blocked = await worker!.evaluate(async () => {
+      const errors: string[] = [];
+      try { await fetch("http://127.0.0.1:26657/status"); }
+      catch (error) { errors.push(String(error)); }
+      try { new WebSocket("ws://127.0.0.1:26657/websocket"); }
+      catch (error) { errors.push(String(error)); }
+      return errors;
+    });
+    expect(blocked).toEqual([
+      "TypeError: Browser fixtures require a dedicated mock RPC.",
+      "TypeError: Browser fixtures require a dedicated mock RPC."
+    ]);
+  } finally {
+    await cleanupExtension(context, userDataDir);
+  }
+});
+
 test("approves connect and send-call requests through the injected provider bridge", async () => {
   const rpc = await startMockRpcServer({
     chainId: "xian-local",
@@ -548,7 +569,7 @@ test("keeps home and receive views inside the compact wallet width", async () =>
   }
 });
 
-test("shows linked notifications instead of a result panel after direct wallet send", async () => {
+test("sends to the canonical recipient and shows linked notifications after direct wallet send", async () => {
   const rpc = await startMockRpcServer({
     chainId: "xian-local",
     chiRate: 25,
@@ -571,7 +592,7 @@ test("shows linked notifications instead of a result panel after direct wallet s
     await popup.reload();
 
     await popup.locator("[data-go-send]").click();
-    await popup.locator("#simple-to").fill("b".repeat(64));
+    await popup.locator("#simple-to").fill("B".repeat(64));
     await popup.locator("#simple-amount").fill("1");
     await popup.getByRole("button", { name: "Review" }).click();
 
@@ -604,6 +625,7 @@ test("shows linked notifications instead of a result panel after direct wallet s
     );
     // The simulated 500 chi plus the 2-chi margin.
     expect(broadcastChiSupplied(rpc.requests)).toBe(502);
+    expect(broadcastPayload(rpc.requests).kwargs).toMatchObject({ to: "b".repeat(64) });
   } finally {
     await cleanupExtension(context, userDataDir);
     await rpc.close();
@@ -612,10 +634,14 @@ test("shows linked notifications instead of a result panel after direct wallet s
 
 /** chi_supplied of the transaction a mock RPC received through broadcast_tx_sync. */
 function broadcastChiSupplied(requests: string[]): unknown {
+  return broadcastPayload(requests).chi_supplied;
+}
+
+function broadcastPayload(requests: string[]): { chi_supplied: unknown; kwargs: unknown } {
   const request = requests.find((entry) => entry.startsWith("POST /broadcast_tx_sync?tx="));
   const tx = new URL(`http://rpc${request!.slice("POST ".length)}`).searchParams.get("tx")!;
   const json = Buffer.from(tx.replaceAll('"', ""), "hex").toString("utf8");
-  return (JSON.parse(json) as { payload: { chi_supplied: unknown } }).payload.chi_supplied;
+  return (JSON.parse(json) as { payload: { chi_supplied: unknown; kwargs: unknown } }).payload;
 }
 
 test("reports a direct send that ran out of chi as a state change, not a success", async () => {
@@ -680,6 +706,27 @@ async function reviewDirectSend(
   await popup.getByRole("button", { name: "Review" }).click();
   return { popup, context, userDataDir };
 }
+
+test("requires a fresh direct-send review after another wallet page changes the network", async () => {
+  const first = await startMockRpcServer({ chiRate: 20, chiEstimate: 100 });
+  const second = await startMockRpcServer({ chiRate: 20, chiEstimate: 100 });
+  const { popup, context, userDataDir } = await reviewDirectSend(first, "1");
+  try {
+    await expect(popup.getByText("Transaction summary")).toBeVisible();
+    const settings = await openExtensionPage(context, new URL(popup.url()).host, "popup.html");
+    await sendRuntimeMessage(settings, {
+      type: "wallet_update_settings", networkName: "Changed network",
+      expectedChainId: second.chainId, rpcUrl: second.url, dashboardUrl: second.url
+    });
+    await expect(popup.locator("[data-send-tx]")).toHaveCount(0);
+    await expect(popup.getByRole("button", { name: "Review", exact: true })).toBeVisible();
+    expect([...first.requests, ...second.requests].some((entry) => entry.includes("broadcast_tx"))).toBe(false);
+  } finally {
+    await cleanupExtension(context, userDataDir);
+    await first.close();
+    await second.close();
+  }
+});
 
 test("refuses a direct send whose simulation fails, before signing", async () => {
   const rpc = await startMockRpcServer({

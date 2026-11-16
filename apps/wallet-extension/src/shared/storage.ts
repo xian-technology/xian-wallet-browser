@@ -49,6 +49,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value != null;
 }
 
+function signingContextKey(envelope: unknown): string | undefined {
+  if (!isRecord(envelope) || !isRecord(envelope.wallet)) return undefined;
+  const wallet = envelope.wallet;
+  const preset = Array.isArray(wallet.networkPresets)
+    ? wallet.networkPresets.find((entry) => isRecord(entry) && entry.id === wallet.activeNetworkId)
+    : undefined;
+  return JSON.stringify([
+    wallet.publicKey, wallet.activeNetworkId, wallet.rpcUrl,
+    preset?.chainId, preset?.allowInsecureHttp
+  ]);
+}
+
+/** Refresh existing pages only when their signing actor changes or is removed. */
+export function walletStorageSigningContextChanged(change: unknown): boolean {
+  if (!isRecord(change)) return false;
+  const previous = signingContextKey(change.oldValue);
+  return previous !== undefined && previous !== signingContextKey(change.newValue);
+}
+
 function normalizeAssetNetworkStates(value: unknown): WalletAssetNetworkStates {
   if (!isRecord(value)) {
     return {};

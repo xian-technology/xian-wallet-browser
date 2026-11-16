@@ -3,7 +3,7 @@
   "components": {
     "xian-js": {
       "repository": "xian-technology/xian-js",
-      "ref": "39812da81a19a8d58584ea0f544c13d57c98b6e7",
+      "ref": "13011470c8c8d2c1faf02525795d5390fbf900ae",
       "packages": {
         "@xian-tech/client": {
           "version": "0.3.3",
@@ -21,7 +21,7 @@
     },
     "xian-contracting": {
       "repository": "xian-technology/xian-contracting",
-      "ref": "12b1c31f98d535a278b0c00e40dd90584f6b52f4",
+      "ref": "83f8f4ea0977dce7f2f48f9eeb28f6b946ad5494",
       "packages": {
         "@xian-tech/compiler": {
           "version": "0.2.1",

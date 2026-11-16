@@ -69,6 +69,12 @@ The browser wallet has two layers:
 
 Typical user-facing flows covered by this repo:
 
+Simple sends normalize hex public-key recipients to their spendable lowercase
+spelling before review. Direct transfers and swaps remain bound to the reviewed
+account and network, including when another wallet page changes settings.
+Changing either requires a fresh review. Advanced call arguments retain their
+exact values.
+
 | Flow | Owned by | Notes |
 | --- | --- | --- |
 | Create / restore wallet | `wallet-core`, popup UI | mnemonic and private-key handling stays inside the wallet |

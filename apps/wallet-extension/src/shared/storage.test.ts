@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  walletStorageSigningContextChanged,
   AUTO_LOCK_STORAGE_KEY,
   PREFERENCES_STORAGE_KEY,
   SESSION_STORAGE_KEY,
@@ -454,5 +455,33 @@ describe("wallet-extension storage", () => {
         status: "rejected"
       })
     );
+  });
+});
+
+
+describe("wallet page signing-context changes", () => {
+  const wallet = {
+    publicKey: "a".repeat(64), rpcUrl: "http://localhost:26657", activeNetworkId: "local",
+    networkPresets: [{ id: "local", chainId: "xian-local", allowInsecureHttp: true }]
+  };
+  const changed = (next: object | null) => walletStorageSigningContextChanged({
+    oldValue: { wallet }, newValue: { wallet: next }
+  });
+
+  it("refreshes for another page's account, RPC, selected network, chain or transport change", () => {
+    expect(changed({ ...wallet, publicKey: "b".repeat(64) })).toBe(true);
+    expect(changed({ ...wallet, rpcUrl: "http://localhost:36657" })).toBe(true);
+    expect(changed({ ...wallet, activeNetworkId: "second" })).toBe(true);
+    expect(changed({ ...wallet, networkPresets: [{ id: "local", chainId: "other" }] })).toBe(true);
+    expect(changed({ ...wallet, networkPresets: [{ ...wallet.networkPresets[0], allowInsecureHttp: false }] })).toBe(true);
+    expect(changed(null)).toBe(true);
+  });
+
+  it("preserves an active form when unrelated wallet storage changes", () => {
+    expect(changed({ ...wallet, watchedAssets: [] })).toBe(false);
+    expect(changed({ ...wallet, networkPresets: [{ id: "other", chainId: "other-chain" }, ...wallet.networkPresets] })).toBe(false);
+    expect(walletStorageSigningContextChanged({ oldValue: { wallet }, newValue: { wallet, approvals: {} } })).toBe(false);
+    expect(walletStorageSigningContextChanged({ newValue: { wallet } })).toBe(false);
+    expect(walletStorageSigningContextChanged(null)).toBe(false);
   });
 });
