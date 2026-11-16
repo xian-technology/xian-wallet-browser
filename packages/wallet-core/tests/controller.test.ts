@@ -14,6 +14,8 @@ import {
   decryptSecretTextWithSessionKey,
   deriveWalletSessionKey,
   UNLOCKED_SESSION_TIMEOUT_MS,
+  unusedChiCost,
+  unusedChiWarning,
   WalletController,
   type PersistedApproval,
   type StoredProviderRequest,
@@ -777,6 +779,43 @@ describe("@xian-tech/wallet-core controller", () => {
         message: "approval predates wallet context binding; request it again"
       })
     });
+  });
+
+  it("simulates a site-chosen send-call chi and warns what its unused chi costs", async () => {
+    const store = createStore();
+    const client = createClient();
+    vi.mocked(client.estimateChi).mockResolvedValue({ estimated: 312 });
+    client.getChiRate = vi.fn(async () => 20);
+    const controller = new WalletController({
+      wallet: { id: "xian-wallet", name: "Xian Wallet", rdns: "org.xian.wallet" },
+      version: "0.1.0-test",
+      store,
+      createClient: () => client,
+      onApprovalRequested: vi.fn(async () => undefined),
+      createId: vi.fn().mockReturnValueOnce("approval-connect").mockReturnValueOnce("approval-send")
+    });
+    await controller.createOrImportWallet({ password: "secret", privateKey: PRIVATE_KEY });
+    await controller.startProviderRequest("request-connect", ORIGIN, { method: "xian_requestAccounts" });
+    await controller.resolveApproval("approval-connect", true);
+
+    const intent = { contract: "currency", function: "transfer", kwargs: { to: "bob", amount: "5" }, chi: 50_000 };
+    await controller.startProviderRequest("request-send", ORIGIN, {
+      method: "xian_sendCall",
+      params: [{ intent }]
+    });
+
+    expect(client.estimateChi).toHaveBeenCalledWith({
+      sender: store.current()?.publicKey,
+      contract: "currency",
+      function: "transfer",
+      kwargs: { to: "bob", amount: "5" }
+    });
+    const view = await controller.getApprovalView("approval-send");
+    expect(view.warnings).toContain(
+      unusedChiWarning(unusedChiCost({ supplied: 50_000, estimated: 312 })!, 20)
+    );
+    // The site's chi stays what it asked for: the warning informs, it does not rewrite.
+    expect(view.payload).toContain('"chi": 50000');
   });
 
   it("estimates missing send-call chi before showing and executing approvals", async () => {
@@ -3824,17 +3863,24 @@ describe("approved provider requests", () => {
     expect(client.estimateChi).toHaveBeenCalledWith(expect.objectContaining({ kwargs: {} }));
   });
 
-  it("does not re-estimate a send-call that already names its chi", async () => {
-    const { controller, client } = await connectedController({ estimated: 500 });
+  const storedIntent = (store: ReturnType<typeof createStore>, approvalId = "approval-2") => {
+    const params = store.currentApprovals()[approvalId]!.record.request.params as Array<{ intent: Record<string, unknown> }>;
+    return params[0]!.intent;
+  };
+
+  it("keeps the chi a send-call already names (the simulation only informs the review)", async () => {
+    const { controller, client, store } = await connectedController({ estimated: 500 });
     await controller.startProviderRequest("request-send", ORIGIN, {
       method: "xian_sendCall",
       params: [{ intent: { contract: "currency", function: "transfer", kwargs: {}, chiSupplied: 900 } }]
     });
 
-    expect(client.estimateChi).not.toHaveBeenCalled();
+    expect(client.estimateChi).toHaveBeenCalledTimes(1);
+    expect(storedIntent(store).chiSupplied).toBe(900);
+    expect(storedIntent(store).chi).toBeUndefined();
   });
 
-  it("asks the user about a send-call with explicit chi without simulating it", async () => {
+  it("asks the user about a send-call with explicit chi even when its simulation fails", async () => {
     const { controller, client } = await connectedController();
     vi.mocked(client.estimateChi).mockResolvedValue({
       estimated: 130,
@@ -3847,13 +3893,7 @@ describe("approved provider requests", () => {
         params: [{ intent: { contract: "currency", function: "transfer", kwargs: {}, chi: 900 } }]
       })
     ).resolves.toMatchObject({ status: "pending" });
-    expect(client.estimateChi).not.toHaveBeenCalled();
   });
-
-  const storedIntent = (store: ReturnType<typeof createStore>, approvalId = "approval-2") => {
-    const params = store.currentApprovals()[approvalId]!.record.request.params as Array<{ intent: Record<string, unknown> }>;
-    return params[0]!.intent;
-  };
 
   it("accepts an estimate of a single chi", async () => {
     const { controller, store } = await connectedController({ estimated: 1 });

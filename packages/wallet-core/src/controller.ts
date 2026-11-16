@@ -276,24 +276,30 @@ interface SendCallTarget {
   intent: Record<string, unknown> & { contract: string; function: string };
 }
 
-// A send-call whose intent names a contract and function but no chi: the
-// wallet estimates chi for it before review.
-function sendCallIntentWithoutChi(request: XianProviderRequest): SendCallTarget | null {
+// A send-call whose intent names a contract and function.
+function sendCallTarget(request: XianProviderRequest): SendCallTarget | null {
   if (request.method !== "xian_sendCall") {
     return null;
   }
   const firstParam = firstParamObject(request.params);
   const intent = firstParam.intent;
-  if (
-    !isRecord(intent) ||
-    intent.chi != null ||
-    intent.chiSupplied != null ||
-    typeof intent.contract !== "string" ||
-    typeof intent.function !== "string"
-  ) {
+  if (!isRecord(intent) || typeof intent.contract !== "string" || typeof intent.function !== "string") {
     return null;
   }
   return { firstParam, intent: intent as SendCallTarget["intent"] };
+}
+
+// A send-call without chi: the wallet estimates chi for it before review.
+function sendCallIntentWithoutChi(request: XianProviderRequest): SendCallTarget | null {
+  const target = sendCallTarget(request);
+  return target && target.intent.chi == null && target.intent.chiSupplied == null ? target : null;
+}
+
+// A send-call whose site chose the chi limit: the wallet simulates it so the
+// review can say what the unused chi costs.
+function sendCallIntentWithSiteChi(request: XianProviderRequest): SendCallTarget | null {
+  const target = sendCallTarget(request);
+  return target && typeof (target.intent.chiSupplied ?? target.intent.chi) === "number" ? target : null;
 }
 
 /** The chi to supply for a positive estimate, or null (none, or above the per-transaction limit). */
@@ -2552,6 +2558,20 @@ export class WalletController {
       : withSendCallIntent(request, target.firstParam, { ...target.intent, kwargs, chi });
   }
 
+  /** The simulated chi of a send-call whose site chose the chi, or null. */
+  private async estimateSiteChosenChi(
+    request: XianProviderRequest,
+    account: string | undefined
+  ): Promise<number | null> {
+    const target = sendCallIntentWithSiteChi(request);
+    if (!account || !target) {
+      return null;
+    }
+    const kwargs = isRecord(target.intent.kwargs) ? target.intent.kwargs : {};
+    const estimate = await this.estimateSendCall(account, target.intent, kwargs);
+    return estimate?.estimated ?? null;
+  }
+
   /** The simulation of a send-call, or null when it cannot be run. */
   private async estimateSendCall(
     account: string,
@@ -2628,7 +2648,8 @@ export class WalletController {
       account: context.account,
       chainId: context.network.chainId,
       targetChainId: context.targetNetwork?.chainId,
-      chiRate
+      chiRate,
+      estimatedChi: await this.estimateSiteChosenChi(request, context.account)
     });
     const approval: PersistedApproval = {
       id: record.id,

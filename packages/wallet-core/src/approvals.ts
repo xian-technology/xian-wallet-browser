@@ -98,6 +98,55 @@ export function formatChiWithXianCost(
   return cost == null ? formattedChi : `${formattedChi} (~${formatNumericValue(cost)} XIAN)`;
 }
 
+export type UnusedChiSeverity = "none" | "caution" | "high";
+
+export interface UnusedChiCost {
+  supplied: number;
+  estimated: number;
+  /** Supplied chi the call leaves unused. */
+  unused: number;
+  /** What the unused chi costs: half of it, rounded down (execution revision 14). */
+  extraChi: number;
+  /** none: at most the SDK margin's 1 chi; high: the extra at least doubles the fee. */
+  severity: UnusedChiSeverity;
+}
+
+function isChiCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+/**
+ * What a chi limit costs beyond what the call needs: a paid transaction pays
+ * the chi it uses plus half of the chi it supplies but leaves unused.
+ */
+export function unusedChiCost(input: { supplied: number; estimated: number }): UnusedChiCost | null {
+  const { supplied, estimated } = input;
+  if (!isChiCount(supplied) || !isChiCount(estimated)) {
+    return null;
+  }
+  const unused = Math.max(supplied - estimated, 0);
+  const extraChi = Math.floor(unused / 2);
+  const severity = extraChi <= 1 ? "none" : extraChi >= estimated ? "high" : "caution";
+  return { supplied, estimated, unused, extraChi, severity };
+}
+
+/** The sentence that tells the user what the unused chi costs, or null when nothing does. */
+export function unusedChiWarning(
+  cost: UnusedChiCost,
+  chiRate: number | null | undefined
+): string | null {
+  if (cost.severity === "none") {
+    return null;
+  }
+  const extra = formatChiWithXianCost(cost.extraChi, chiRate);
+  const needed = `${cost.estimated.toLocaleString()} chi`;
+  if (cost.severity === "high") {
+    const multiple = Math.round(cost.supplied / cost.estimated).toLocaleString();
+    return `This chi limit is ${multiple}x what the call needs (${needed}). Half of unused chi is charged: about ${extra} extra.`;
+  }
+  return `This chi limit leaves ${cost.unused.toLocaleString()} chi unused. Half of unused chi is charged: about ${extra} more than the call needs (${needed}).`;
+}
+
 /** The XIAN that `chi` costs at `chiRate` chi per XIAN, or null when it has no finite value. */
 function xianCost(chi: number | null, chiRate: number | null | undefined): number | null {
   if (chi == null || typeof chiRate !== "number" || !Number.isFinite(chiRate) || chiRate <= 0) {
@@ -215,6 +264,8 @@ export interface ApprovalViewOptions {
   chainId?: string;
   targetChainId?: string;
   chiRate?: number | null;
+  /** The simulated chi of a transaction whose chi limit the site chose. */
+  estimatedChi?: number | null;
 }
 
 // Every builder lists its details and highlights, even when empty.
@@ -473,13 +524,21 @@ function targetLabel(target: Record<string, unknown>): string {
 
 function sendCallChiDetail(
   chi: unknown,
-  options: ApprovalViewOptions | undefined
+  options: ApprovalViewOptions | undefined,
+  unusedCost: UnusedChiCost | null
 ): ApprovalDetail | null {
   return chi == null || chi === ""
     ? compactDetail("Chi", "Not estimated", { tone: "danger" })
     : compactDetail("Chi", formatChiWithXianCost(chi, options?.chiRate), {
-        tone: "warning"
+        tone: unusedCost?.severity === "high" ? "danger" : "warning"
       });
+}
+
+/** What the site's chi limit costs beyond the simulated need, when both are known. */
+function siteChiCost(chi: unknown, options: ApprovalViewOptions | undefined): UnusedChiCost | null {
+  return typeof chi === "number" && typeof options?.estimatedChi === "number"
+    ? unusedChiCost({ supplied: chi, estimated: options.estimatedChi })
+    : null;
 }
 
 function sendCallView(
@@ -489,8 +548,11 @@ function sendCallView(
 ): ApprovalViewBody {
   const intent = requestPart(payload, "intent");
   const kwargs = intentKwargs(intent);
-  const chiDetail = sendCallChiDetail(intent.chiSupplied ?? intent.chi, options);
-  const chiKnown = chiDetail?.tone === "warning";
+  const chi = intent.chiSupplied ?? intent.chi;
+  const unusedCost = siteChiCost(chi, options);
+  const chiDetail = sendCallChiDetail(chi, options, unusedCost);
+  const chiKnown = chi != null && chi !== "";
+  const unusedWarning = unusedCost ? unusedChiWarning(unusedCost, options?.chiRate) : null;
   return {
     title: "Send contract call",
     description:
@@ -510,9 +572,11 @@ function sendCallView(
       ...argumentDetails(kwargs)
     ]),
     highlights: [targetLabel(intent)],
-    warnings: chiKnown
-      ? [SEND_CALL_INTENT_WARNING]
-      : [SEND_CALL_INTENT_WARNING, UNKNOWN_CHI_WARNING],
+    warnings: [
+      SEND_CALL_INTENT_WARNING,
+      ...(chiKnown ? [] : [UNKNOWN_CHI_WARNING]),
+      ...(unusedWarning ? [unusedWarning] : [])
+    ],
     // An auto-approval rule needs a chi cap, so none is offered without one.
     trustSuggestion: chiKnown
       ? targetTrustSuggestion(intent, "contract calls")
