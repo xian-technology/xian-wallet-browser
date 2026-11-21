@@ -1,3 +1,4 @@
+import { fixedValueText } from "@xian-tech/client";
 import type {
   PopupState,
   WalletDetectedAsset
@@ -208,6 +209,8 @@ export function normalizeLiveBalance(value: unknown): string | null {
   if (value == null) {
     return null;
   }
+  const decimal = fixedValueText(value);
+  if (decimal !== undefined) return decimal;
   if (
     typeof value === "string" ||
     typeof value === "number" ||

@@ -58,6 +58,11 @@ npm run test:browser --workspace xian-wallet-extension
 npm run test:visual  --workspace xian-wallet-extension
 ```
 
+To exercise a real transfer through the extension, set `XIAN_LIVE_SDK_RPC`
+to a disposable free-metered V2 node and `XIAN_WALLET_TEST_FUNDING_KEY` to a
+funded development key. Then run
+`npm run test:browser --workspace xian-wallet-extension -- live-node.spec.ts`.
+
 ## Product Workflows
 
 The browser wallet has two layers:
