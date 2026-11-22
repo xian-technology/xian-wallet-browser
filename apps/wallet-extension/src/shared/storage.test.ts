@@ -23,6 +23,7 @@ import {
   saveUnlockedSession,
   saveWalletShellMode,
   saveApprovalState,
+  saveLocalActivityTx,
   saveRequestState
 } from "./storage";
 
@@ -347,6 +348,26 @@ describe("wallet-extension storage", () => {
     await expect(
       loadLocalActivityTxs("local|http://127.0.0.1:26657|sender")
     ).resolves.toEqual([]);
+  });
+
+  it("keeps known transaction status when a later duplicate submission is pending", async () => {
+    const network = "local|http://127.0.0.1:26657|sender";
+    const finalized = {
+      tx_hash: "TX-1",
+      sender: "sender",
+      contract: "currency",
+      function: "transfer",
+      success: true,
+      local: true,
+      local_status: "finalized" as const
+    };
+
+    await saveLocalActivityTx(network, finalized);
+    await saveLocalActivityTx(network, {
+      ...finalized, tx_hash: "tx-1", success: false, local_status: "pending"
+    });
+
+    await expect(loadLocalActivityTxs(network)).resolves.toEqual([finalized]);
   });
 
   it("round-trips unlocked session state through chrome.storage.session", async () => {

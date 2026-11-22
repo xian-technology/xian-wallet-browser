@@ -45,11 +45,20 @@ export function isLocalUnindexedTx(tx: ActivityTx): boolean {
   return tx.local === true && tx.block_height == null;
 }
 
-export function activityHasTx(txs: ActivityTx[], hash: string): boolean {
+export function hasIndexedActivityTx(txs: ActivityTx[], hash: string): boolean {
   const expectedHash = normalizedActivityTxHash(hash);
   return txs.some(
-    (tx) => normalizedActivityTxHash(tx.tx_hash) === expectedHash
+    (tx) => !isLocalUnindexedTx(tx) && normalizedActivityTxHash(tx.tx_hash) === expectedHash
   );
+}
+
+export function activityStatusLabel(tx: ActivityTx): string {
+  if (isLocalUnindexedTx(tx) && tx.local_status === "pending") return "Pending";
+  if (!tx.success) return "Failed";
+  if (isLocalUnindexedTx(tx)) {
+    return tx.local_status === "finalized" ? "Finalized" : "Accepted";
+  }
+  return "Success";
 }
 
 /** Shown for a transaction that ran out of its estimated chi (plus margin). */
@@ -79,5 +88,5 @@ export function failureMessage(result: unknown): string | null {
 
 /** The message for a failed transaction, or null when it did not fail. */
 export function failedActivityMessage(tx: ActivityTx): string | null {
-  return tx.success ? null : failureMessage(tx.result);
+  return activityStatusLabel(tx) === "Failed" ? failureMessage(tx.result) : null;
 }

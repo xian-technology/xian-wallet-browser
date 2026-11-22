@@ -1,4 +1,5 @@
 import { ICONS } from "./icons";
+import type { StoredLocalActivityTx } from "../shared/storage";
 
 /**
  * Transaction activity row returned by the `/txs_by_sender` RPC. Fields are
@@ -22,7 +23,7 @@ export interface ActivityTx {
   payload?: ActivityPayload | string | null;
   envelope?: unknown;
   local?: boolean;
-  local_status?: "accepted" | "finalized";
+  local_status?: StoredLocalActivityTx["local_status"];
 }
 
 export interface ActivityPayload {

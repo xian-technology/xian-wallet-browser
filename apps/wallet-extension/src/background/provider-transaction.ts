@@ -174,7 +174,12 @@ function localStatus(
   if (notification.finalized === true) {
     return "finalized";
   }
-  return notification.accepted === true ? "accepted" : undefined;
+  if (notification.accepted === true) {
+    return "accepted";
+  }
+  return notification.submitted === true && notification.accepted === null && !notification.executionFailed
+    ? "pending"
+    : undefined;
 }
 
 function localActivityTx(
@@ -190,7 +195,7 @@ function localActivityTx(
     sender,
     contract,
     function: functionName,
-    success: status !== undefined && notification.executionFailed !== true,
+    success: (status === "finalized" || status === "accepted") && notification.executionFailed !== true,
     created_at: new Date().toISOString(),
     payload: {
       sender,

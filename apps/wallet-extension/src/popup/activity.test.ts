@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  activityHasTx,
+  activityStatusLabel,
   activityTxTimestampMillis,
   failedActivityMessage,
+  hasIndexedActivityTx,
   mergeActivityTxs,
   OUT_OF_CHI_MESSAGE
 } from "./activity";
@@ -21,6 +22,12 @@ function activityTx(overrides: Partial<ActivityTx> = {}): ActivityTx {
 }
 
 describe("transaction activity", () => {
+  it("keeps waiting for indexed activity when the transaction has only a local row", () => {
+    const local = activityTx({ local: true, local_status: "accepted" });
+
+    expect(hasIndexedActivityTx([local], "tx-1")).toBe(false);
+  });
+
   it("replaces a local submission with the canonical BDS tx_hash row", () => {
     const local = activityTx({
       tx_hash: "tx-1",
@@ -35,7 +42,7 @@ describe("transaction activity", () => {
     });
 
     expect(mergeActivityTxs([indexed], [local])).toEqual([indexed]);
-    expect(activityHasTx([indexed], "tx-1")).toBe(true);
+    expect(hasIndexedActivityTx([indexed], "tx-1")).toBe(true);
   });
 
   it("converts canonical BDS nanosecond block times to milliseconds", () => {
@@ -57,6 +64,17 @@ describe("transaction activity", () => {
 });
 
 describe("failed activity message", () => {
+  it("shows a submitted transaction awaiting finality as pending", () => {
+    const tx = activityTx({
+      local: true,
+      local_status: "pending",
+      success: false,
+      result: { message: "tx already exists in cache" }
+    });
+    expect(activityStatusLabel(tx)).toBe("Pending");
+    expect(failedActivityMessage(tx)).toBeNull();
+  });
+
   it("explains an out-of-chi failure as a state change since the estimate", () => {
     for (const result of ["Out of chi.", "VmExecutionError('Out of chi.')", { error: "out of chi" }]) {
       expect(failedActivityMessage(activityTx({ success: false, result }))).toBe(OUT_OF_CHI_MESSAGE);

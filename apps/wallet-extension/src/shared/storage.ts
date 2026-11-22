@@ -845,7 +845,7 @@ export interface StoredLocalActivityTx {
   kwargs?: Record<string, unknown>;
   envelope?: unknown;
   local?: boolean;
-  local_status?: "accepted" | "finalized";
+  local_status?: "pending" | "accepted" | "finalized";
 }
 
 type LocalActivityStore = Record<string, StoredLocalActivityTx[]>;
@@ -904,6 +904,12 @@ export async function saveLocalActivityTx(
   const store = await loadLocalActivityStore();
   const current = store[networkKey] ?? [];
   const txHash = tx.tx_hash.trim().toUpperCase();
+  if (tx.local_status === "pending" && current.some((item) =>
+    item.tx_hash.trim().toUpperCase() === txHash &&
+    (item.local_status === "accepted" || item.local_status === "finalized" || item.block_height != null)
+  )) {
+    return;
+  }
   store[networkKey] = [
     tx,
     ...current.filter((item) => item.tx_hash.trim().toUpperCase() !== txHash)

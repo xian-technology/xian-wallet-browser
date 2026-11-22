@@ -144,9 +144,10 @@ import {
   nativeSpendShortfall
 } from "./native-fee";
 import {
-  activityHasTx as activityTxListHasHash,
+  activityStatusLabel,
   activityTxTimestampMillis,
   failedActivityMessage,
+  hasIndexedActivityTx,
   isLocalUnindexedTx,
   mergeActivityTxs,
   normalizedActivityTxHash
@@ -2695,14 +2696,6 @@ async function loadLocalActivityForKey(networkKey: string): Promise<ActivityTx[]
   }
 }
 
-function localActivityStatusLabel(tx: ActivityTx): string {
-  if (!tx.success) return "Failed";
-  if (tx.local === true && tx.block_height == null) {
-    return tx.local_status === "finalized" ? "Finalized" : "Accepted";
-  }
-  return "Success";
-}
-
 function formatActivityListTime(tx: ActivityTx): string {
   const raw = tx.created_at ?? tx.block_time;
   const timestamp = activityTxTimestampMillis(tx);
@@ -2957,10 +2950,6 @@ async function recordLocalActivityTx(
   await saveLocalActivityTx(networkKey, tx);
 }
 
-function activityHasTx(hash: string): boolean {
-  return activityTxListHasHash(activityTxs, hash);
-}
-
 function refreshActivityAfterTransaction(
   sourceState: PopupRuntimeState,
   txHash?: string | null
@@ -2993,7 +2982,7 @@ function refreshActivityAfterTransaction(
           showLoading: activeTab === "activity" && attempt === 0
         });
 
-        if (expectedHash && activityHasTx(expectedHash)) {
+        if (expectedHash && hasIndexedActivityTx(activityTxs, expectedHash)) {
           return;
         }
         poll(attempt + 1);
@@ -3199,6 +3188,7 @@ function renderTxDetail(tx: ActivityTx, state: PopupRuntimeState): string {
   }
 
   const resultMessage = failedActivityMessage(tx);
+  const status = activityStatusLabel(tx);
 
   return `
     <div class="settings-wrap">
@@ -3212,7 +3202,7 @@ function renderTxDetail(tx: ActivityTx, state: PopupRuntimeState): string {
               <p class="s-card-desc">${escapeHtml(tx.contract)}.${escapeHtml(tx.function)}</p>
             </div>
           </div>
-          <span class="pill ${tx.success ? "pill-info" : "pill-danger"}">${escapeHtml(localActivityStatusLabel(tx))}</span>
+          <span class="pill ${status === "Failed" ? "pill-danger" : "pill-info"}">${status}</span>
         </div>
         <div class="s-card-body">
           ${rows.join("")}
@@ -3279,13 +3269,19 @@ function renderActivityTab(state: PopupRuntimeState): string {
         const cls = classifyTx(tx);
         const subtitle = activitySubtitle(tx, cls);
         const when = formatActivityListTime(tx);
+        const status = activityStatusLabel(tx);
+        const statusHint = status === "Failed"
+          ? ' <span style="color:var(--danger);font-weight:500;font-size:11px">· Failed</span>'
+          : isLocalUnindexedTx(tx)
+            ? ` <span style="color:var(--warning);font-weight:500;font-size:11px">· ${status}</span>`
+            : "";
         return `
           <div class="token-item" data-select-tx="${escapeAttribute(tx.tx_hash)}" style="cursor:pointer">
             <div class="token-icon" style="background:${TX_ACCENT_BG[cls.accent]};color:${TX_ACCENT_FG[cls.accent]}">
               ${cls.icon}
             </div>
             <div class="token-body">
-              <div class="token-name">${escapeHtml(cls.label)}${tx.success ? "" : ` <span style="color:var(--danger);font-weight:500;font-size:11px">· Failed</span>`}${tx.success && isLocalUnindexedTx(tx) ? ` <span style="color:var(--warning);font-weight:500;font-size:11px">· ${escapeHtml(localActivityStatusLabel(tx))}</span>` : ""}</div>
+              <div class="token-name">${escapeHtml(cls.label)}${statusHint}</div>
               <div class="token-sub">${escapeHtml(subtitle)}</div>
             </div>
             <div class="token-end">

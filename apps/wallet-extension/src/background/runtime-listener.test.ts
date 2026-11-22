@@ -933,6 +933,21 @@ describe("provider transaction activity", () => {
     });
   });
 
+  it("keeps a submitted duplicate transaction pending until finality is available", async () => {
+    const { stored } = await publishFulfilled({
+      txHash: "H4",
+      submitted: true,
+      accepted: null,
+      finalized: false,
+      message: "tx already exists in cache"
+    });
+
+    expect(stored[0]?.[1]).toMatchObject({
+      tx_hash: "H4",
+      local_status: "pending"
+    });
+  });
+
   it("keys activity by an empty network id as given", async () => {
     controller("getPopupState").mockResolvedValue({ ...POPUP_STATE, activeNetworkId: "" });
 
