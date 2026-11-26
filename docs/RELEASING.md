@@ -25,16 +25,16 @@ That means:
 This repo is not lockstepped with `xian-js`.
 
 - `xian-js` and `xian-wallet-browser` release independently
-- `@xian-tech/client` and `@xian-tech/provider` are pinned intentionally in
-  `packages/wallet-core/package.json`
+- the wallet pins its `@xian-tech/client`, `@xian-tech/dex`, and
+  `@xian-tech/provider` dependencies in the consuming package manifests
 - when the wallet needs a newer SDK release, update those dependency versions
   explicitly after `xian-js` has published them
 
 ## Local Development Vs Release Resolution
 
-For local development, the root `package.json` uses `overrides` so this repo
-consumes `@xian-tech/client` and `@xian-tech/provider` from the sibling `../xian-js`
-checkout.
+For local development, the root `package.json` uses `overrides` to resolve
+`@xian-tech/client`, `@xian-tech/dex`, and `@xian-tech/provider` from the
+sibling `../xian-js` checkout.
 
 For published artifacts, the package manifests resolve those dependencies
 normally through npm.
@@ -45,9 +45,9 @@ normally through npm.
 2. Update `package.json`, `packages/wallet-core/package.json`, and
    `apps/wallet-extension/package.json` to the intended release version.
    Update `apps/wallet-extension/public/manifest.json` to the same version.
-3. If the wallet depends on a newer SDK release, update
-   `packages/wallet-core/package.json` and `apps/wallet-extension/package.json`
-   to the new `@xian-tech/client` or `@xian-tech/provider` versions.
+3. If the wallet depends on a newer SDK release, update the SDK dependency
+   pins in `packages/wallet-core/package.json` and
+   `apps/wallet-extension/package.json` where used.
 4. Update `release-manifest.json` with the exact released `xian-js` and
    `xian-contracting` commits. Every declared package version must match the
    pinned source and the lockfile that consumes it.
