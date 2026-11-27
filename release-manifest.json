@@ -3,18 +3,18 @@
   "components": {
     "xian-js": {
       "repository": "xian-technology/xian-js",
-      "ref": "79d02e36bf02e9857f79d13d20dc0b5c33aef427",
+      "ref": "6ed8a82991898f4fb2f50debb625169d5d7d8304",
       "packages": {
         "@xian-tech/client": {
-          "version": "0.3.3",
+          "version": "0.3.4",
           "path": "packages/client/package.json"
         },
         "@xian-tech/dex": {
-          "version": "0.3.3",
+          "version": "0.3.4",
           "path": "packages/dex/package.json"
         },
         "@xian-tech/provider": {
-          "version": "0.3.3",
+          "version": "0.3.4",
           "path": "packages/provider/package.json"
         }
       }
